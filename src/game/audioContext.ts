@@ -50,14 +50,13 @@ export function createAudioContextNow(): AudioContext | null {
 }
 
 export function getAudioContext(): AudioContext | null {
-  if (audioCtx) return audioCtx
-  return createAudioContextNow()
+  return audioCtx
 }
 
 export function resumeAudioContext(): Promise<void> {
   if (audioInitPromise) return audioInitPromise
 
-  const c = getAudioContext()
+  const c = audioCtx
   if (!c) {
     return Promise.resolve()
   }

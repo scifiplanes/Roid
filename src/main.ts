@@ -208,6 +208,24 @@ const viewport = document.createElement('div')
 viewport.id = 'viewport'
 app.appendChild(viewport)
 
+const audioFallbackBtn = document.createElement('button')
+audioFallbackBtn.id = 'audio-fallback-btn'
+audioFallbackBtn.textContent = 'TAP TO ENABLE AUDIO'
+audioFallbackBtn.style.display = 'none'
+audioFallbackBtn.addEventListener('pointerdown', () => {
+  createAudioContextNow()
+  void initializeAudio()
+})
+viewport.appendChild(audioFallbackBtn)
+
+function showAudioFallbackButton(): void {
+  audioFallbackBtn.style.display = 'block'
+}
+
+function hideAudioFallbackButton(): void {
+  audioFallbackBtn.style.display = 'none'
+}
+
 const initializeAudio = async () => {
   await ensureAudioContextInitialized()
   if (isAudioContextReady()) {
@@ -448,24 +466,6 @@ viewport.appendChild(matterHudWrap)
 
 const pickRipple = createMineRippleElement()
 viewport.appendChild(pickRipple)
-
-const audioFallbackBtn = document.createElement('button')
-audioFallbackBtn.id = 'audio-fallback-btn'
-audioFallbackBtn.textContent = 'TAP TO ENABLE AUDIO'
-audioFallbackBtn.style.display = 'none'
-audioFallbackBtn.addEventListener('pointerdown', () => {
-  createAudioContextNow()
-  void initializeAudio()
-})
-viewport.appendChild(audioFallbackBtn)
-
-function showAudioFallbackButton(): void {
-  audioFallbackBtn.style.display = 'block'
-}
-
-function hideAudioFallbackButton(): void {
-  audioFallbackBtn.style.display = 'none'
-}
 
 const overlayVizLoaded = loadOverlayVisualizationPrefs()
 let surfaceScanOverlayVisible = overlayVizLoaded.surfaceScanOverlayVisible
