@@ -1,4 +1,3 @@
-import { resumeAudioContext } from './audioContext'
 import { gameBalance } from './gameBalance'
 import { createReverbImpulseBuffer } from './reverbImpulse'
 
@@ -15,7 +14,6 @@ let lastIrDecay = -1
  * Safe before the bus exists (no-op). Resumes audio context for immediate slider feedback.
  */
 export function applySfxReverbFromBalance(): void {
-  void resumeAudioContext()
   const c = ctxRef
   if (!c || !wetSendGain || !wetOutGain || !convolverNode) return
   const t = c.currentTime

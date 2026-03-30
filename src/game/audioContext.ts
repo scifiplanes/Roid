@@ -29,8 +29,7 @@ export function resumeAudioContext(): Promise<void> {
 
   const c = getAudioContext()
   if (!c) {
-    audioInitPromise = Promise.resolve()
-    return audioInitPromise
+    return Promise.resolve()
   }
 
   audioInitPromise = (async () => {
@@ -41,6 +40,8 @@ export function resumeAudioContext(): Promise<void> {
       audioInitialized = true
     } catch {
       audioInitialized = false
+    } finally {
+      audioInitPromise = null
     }
   })()
 

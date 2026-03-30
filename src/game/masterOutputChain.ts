@@ -1,4 +1,4 @@
-import { getAudioContext, resumeAudioContext } from './audioContext'
+import { getAudioContext } from './audioContext'
 import {
   createDefaultAudioMasterDebug,
   type AudioMasterDebug,
@@ -81,7 +81,6 @@ export function getMusicPostChainInput(c: AudioContext): GainNode {
 }
 
 export function applyAudioMasterDebug(debug: AudioMasterDebug): void {
-  void resumeAudioContext()
   const c = getAudioContext()
   if (!c) return
   if (!masterIn || ctxRef !== c) {
