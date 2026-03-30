@@ -3,6 +3,7 @@ import type { LaserUnlockApply } from './computroniumSim'
 import { applyResearchTierGrant } from './computroniumSim'
 import { RESOURCE_IDS_ORDERED, ROOT_RESOURCE_IDS, type ResourceId } from './resources'
 import type { VoxelKind } from './voxelKinds'
+import type { VoxelPos } from '../scene/asteroid/generateAsteroidVoxels'
 
 /** Lithology voxels that can proc discoveries (not processed matter). */
 export const DISCOVERY_LITHOLOGY_KINDS: ReadonlySet<VoxelKind> = new Set([
@@ -16,6 +17,8 @@ export type DiscoveryArchetype = 'windfall' | 'drain' | 'lore' | 'researchBypass
 export interface DiscoveryOffer {
   /** Stable id for logging */
   id: string
+  /** Grid cell where this discovery was claimed (for anchored UI). */
+  foundAt: VoxelPos
   titleLine: string
   /** Small ASCII illustration (modal only; not stored in lore log). */
   asciiArtLines: string[]
@@ -25,6 +28,12 @@ export interface DiscoveryOffer {
   researchTierGrant: 1 | 2 | 3 | 4 | null
   loreLogLine: string | null
 }
+
+/** Result of attempting to claim a discovery at a voxel (e.g. after mining). */
+export type DiscoveryClaimResult =
+  | { kind: 'none' }
+  | { kind: 'falseSignal' }
+  | { kind: 'offer'; offer: DiscoveryOffer }
 
 function mixU32(a: number, b: number, c: number, d: number): number {
   let x = (Math.imul(a ^ b, 0x9e3779b1) ^ c ^ d) >>> 0
@@ -64,7 +73,8 @@ export function discoveryPosKey(pos: { x: number; y: number; z: number }): strin
 
 /**
  * One-shot claim at `pos`: must be a discovery site and not already consumed.
- * Marks consumed, increments counter, returns an offer or null (modal chance / weights).
+ * Marks consumed and increments counter, then rolls an offer. Rarity is from site density only;
+ * `falseSignal` means the site was spent but no offer was built (e.g. all archetype weights zero).
  */
 export function tryDiscoveryClaim(
   asteroidSeed: number,
@@ -73,13 +83,15 @@ export function tryDiscoveryClaim(
   consumed: Set<string>,
   discoveryCounter: { current: number },
   densityScale = 1,
-): DiscoveryOffer | null {
+): DiscoveryClaimResult {
   const key = discoveryPosKey(pos)
-  if (consumed.has(key)) return null
-  if (!isDiscoverySite(asteroidSeed, pos, balance, densityScale)) return null
+  if (consumed.has(key)) return { kind: 'none' }
+  if (!isDiscoverySite(asteroidSeed, pos, balance, densityScale)) return { kind: 'none' }
   consumed.add(key)
   discoveryCounter.current += 1
-  return rollDiscoveryOffer(asteroidSeed, pos, discoveryCounter.current, balance)
+  const offer = rollDiscoveryOffer(asteroidSeed, pos, discoveryCounter.current, balance)
+  if (!offer) return { kind: 'falseSignal' }
+  return { kind: 'offer', offer }
 }
 
 const PREFIXES = [
@@ -218,7 +230,7 @@ function pickRootResource(h: number): { id: ResourceId; next: number } {
 
 /**
  * Deterministic discovery from asteroid seed, voxel position, and per-run counter.
- * Returns null if this roll does not proc (by chance) or weights are all zero.
+ * Returns null only if all archetype weights are zero (cannot pick an archetype).
  */
 export function rollDiscoveryOffer(
   asteroidSeed: number,
@@ -226,12 +238,8 @@ export function rollDiscoveryOffer(
   discoveryCounter: number,
   balance: GameBalance,
 ): DiscoveryOffer | null {
-  const ch = balance.discoveryChanceOnRockDepthScanner
-  if (ch <= 0) return null
-
   let h = mixU32(asteroidSeed, voxelPos.x, voxelPos.y, voxelPos.z)
   h = mixU32(h, discoveryCounter, 0x4f6e6f6e, 0x44697363)
-  if (u32ToUnit(h) > ch) return null
 
   const ww = balance.discoveryWeightWindfall
   const wd = balance.discoveryWeightDrain
@@ -307,6 +315,7 @@ export function rollDiscoveryOffer(
 
   return {
     id,
+    foundAt: { x: voxelPos.x, y: voxelPos.y, z: voxelPos.z },
     titleLine,
     asciiArtLines,
     bodyLines,

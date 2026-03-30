@@ -4,7 +4,16 @@ import type { VoxelKind } from './voxelKinds'
 import { gameBalance } from './gameBalance'
 import { getKindDef } from './voxelKinds'
 import { computeBulkComposition, latticeHash } from './compositionYields'
+import { applyRareLodeEnrichment } from './rareLodeField'
 import type { ResourceId, RootResourceId } from './resources'
+
+/** Mature replicator → voxel conversion target (paid; completes after delay). */
+export type ReplicatorTransformTarget =
+  | 'reactor'
+  | 'battery'
+  | 'hub'
+  | 'refinery'
+  | 'computronium'
 
 function initialRockHp(kind: VoxelKind, maxDurability: number): number {
   if (
@@ -39,6 +48,11 @@ export interface VoxelCell {
   replicatorEatAccumulatorMs?: number
   /** Per-cell feed cadence while eating (ms per HP); set when eating starts, slight jitter. */
   replicatorMsPerHp?: number
+  /** Mature replicator → structure/computronium conversion in progress (kind stays `replicator` until done). */
+  replicatorTransformTarget?: ReplicatorTransformTarget
+  replicatorTransformElapsedMs?: number
+  /** Snapshot at conversion start; immune to balance slider mid-flight. */
+  replicatorTransformTotalMs?: number
   /** Unrefined resources held at this voxel (replicator output, etc.); consolidated into global root tallies by hubs. */
   storedResources?: Partial<Record<ResourceId, number>>
   /** Fractional passive income accumulator for this mature replicator. */
@@ -49,6 +63,8 @@ export interface VoxelCell {
   processedMatterRootComposition?: Record<RootResourceId, number>
   /** Per-cell mass fractions over root categories (lithology only). */
   bulkComposition?: Record<RootResourceId, number>
+  /** Spectral rare-lode field strength at generation (0–1); preserved on processed matter from parent rock. */
+  rareLodeStrength01?: number
   /** When true, this hub does not pull or spend energy (toggle with Hub tool). */
   hubDisabled?: boolean
   /** When true, this refinery does not process tallies or spend energy (toggle with Refinery tool). */
@@ -127,11 +143,14 @@ export function enrichVoxelCells(positions: VoxelPos[], params: EnrichVoxelCells
 
     const kind = pickKind(seed, pos, crustProximity, profile)
     const def = getKindDef(kind)
+    const baseBulk = computeBulkComposition(seed, pos, kind, profile)
+    const { bulk, rareLodeStrength01 } = applyRareLodeEnrichment(seed, pos, baseBulk, profile)
     out.push({
       pos,
       kind,
       hpRemaining: initialRockHp(kind, def.maxDurability),
-      bulkComposition: computeBulkComposition(seed, pos, kind, profile),
+      bulkComposition: bulk,
+      rareLodeStrength01,
     })
   }
   return out

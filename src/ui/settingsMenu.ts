@@ -58,6 +58,10 @@ export interface SettingsMenuOptions {
   onDebugIncreaseEnergyCap?: () => void
   /** Unlock all tools: research tiers, satellites, structure gates, explosive (debug). */
   onDebugUnlockAllTools?: () => void
+  /** Highlight every voxel with rare-lode strength on the rock (heatmap). */
+  onDebugShowAllLodes?: () => void
+  /** Clear debug “show all lodes” rock highlighting. */
+  onDebugClearLodeDisplay?: () => void
   /** Mutable debug state; sliders write into this object. */
   asteroidMusicDebug: AsteroidMusicDebug
   /** Current asteroid key root (MIDI); used when applying voice macros (diatonic note fold). */
@@ -80,6 +84,8 @@ export interface SettingsMenuOptions {
   /** Music-only post EQ + high-pass (persisted). */
   audioMasterDebug: AudioMasterDebug
   onAudioMasterDebugChange?: () => void
+  /** Live lines for in-progress replicator → structure timers (Debug panel). */
+  getReplicatorTransformDebugLines?: () => string[]
 }
 
 export interface SettingsLightControlsApi {
@@ -104,6 +110,14 @@ type SliderRow = {
 const GAMEPLAY_BALANCE_SLIDERS: SliderRow[] = [
   { key: 'durabilityMult', label: 'Rock durability', min: 0.1, max: 4, step: 0.05 },
   { key: 'replicatorFeedSpeedMult', label: 'Replicator feed speed', min: 0.1, max: 4, step: 0.05 },
+  {
+    key: 'replicatorTransformDurationSec',
+    label: 'Replicator → structure transform time (sec)',
+    min: 0,
+    max: 30,
+    step: 0.1,
+    valueDecimals: 1,
+  },
   {
     key: 'toolCostMult',
     label: 'Structure build costs (reactor / battery / hub / refinery / depth scanner / computronium)',
@@ -292,19 +306,17 @@ const GAMEPLAY_BALANCE_SLIDERS: SliderRow[] = [
     step: 0.02,
     valueDecimals: 2,
   },
-  {
-    key: 'discoveryChanceOnRockDepthScanner',
-    label: 'Discovery modal chance (after claiming a discovery site)',
-    min: 0,
-    max: 1,
-    step: 0.01,
-  },
+]
+
+/** Discovery sites + offer archetypes — own Debug subsection (see also `discoveryDensityScale(profile)`). */
+const DISCOVERY_DEBUG_SLIDERS: SliderRow[] = [
   {
     key: 'discoverySiteDensity',
-    label: 'Discovery site density (scan hint white voxels; claim once per site)',
+    label: 'Discovery site density (fraction of voxels; × profile scale; red overlay when scanned)',
     min: 0,
     max: 1,
-    step: 0.01,
+    step: 0.001,
+    valueDecimals: 3,
   },
   { key: 'discoveryWeightWindfall', label: 'Discovery weight — windfall', min: 0, max: 8, step: 0.05 },
   { key: 'discoveryWeightDrain', label: 'Discovery weight — drain', min: 0, max: 8, step: 0.05 },
@@ -369,6 +381,94 @@ const DEPTH_SCAN_DEBUG_SLIDERS: SliderRow[] = [
     min: 0,
     max: 1,
     step: 0.05,
+  },
+  {
+    key: 'depthOverlayScanSaturationMul',
+    label: 'Depth overlay heatmap saturation (× refined RGB)',
+    min: 0.6,
+    max: 2.2,
+    step: 0.02,
+  },
+  {
+    key: 'depthOverlayScanLightnessMul',
+    label: 'Depth overlay heatmap lightness (× refined RGB)',
+    min: 0.65,
+    max: 1.35,
+    step: 0.02,
+  },
+  {
+    key: 'depthOverlaySolidRevealProgress',
+    label: 'Depth overlay full opacity at reveal progress ≥',
+    min: 0.5,
+    max: 1,
+    step: 0.02,
+  },
+  {
+    key: 'depthOverlayLodeOpaqueStrengthFloor',
+    label: 'Rare lode — min strength (full opacity; heatmap ramp floor)',
+    min: 0,
+    max: 1,
+    step: 0.02,
+  },
+  {
+    key: 'surfaceScanRareLodeLerpBoostMax',
+    label: 'Surface scan — max rare-lode tint lerp boost',
+    min: 0,
+    max: 1,
+    step: 0.02,
+  },
+  {
+    key: 'surfaceScanLodeHeatmapBlend',
+    label: 'Surface scan — lode density heatmap blend (vs composition tint)',
+    min: 0,
+    max: 1,
+    step: 0.02,
+  },
+  {
+    key: 'rareLodeMixMax',
+    label: 'Rare lode max blend toward spectral template',
+    min: 0.15,
+    max: 1,
+    step: 0.02,
+  },
+  {
+    key: 'rareLodeNoiseSmoothLow',
+    label: 'Rare lode field smoothstep low',
+    min: 0.05,
+    max: 0.85,
+    step: 0.02,
+  },
+  {
+    key: 'rareLodeNoiseSmoothHigh',
+    label: 'Rare lode field smoothstep high',
+    min: 0.15,
+    max: 0.99,
+    step: 0.02,
+  },
+  {
+    key: 'depthOverlayHeatmapBlend',
+    label: 'Depth overlay heatmap blend (vs composition tint)',
+    min: 0,
+    max: 1,
+    step: 0.02,
+  },
+  {
+    key: 'depthOverlayHeatmapSaturationMul',
+    label: 'Depth overlay heatmap saturation',
+    min: 0.35,
+    max: 1,
+    step: 0.02,
+  },
+]
+
+/** Rare-lode depth overlay opacity threshold — paired with Debug lode visualization. */
+const LODE_DEBUG_BALANCE_SLIDERS: SliderRow[] = [
+  {
+    key: 'depthOverlayLodeFullOpacityMinDensity',
+    label: 'Depth overlay — full opacity when graded density ≥ (warm vs green band)',
+    min: 0,
+    max: 1,
+    step: 0.02,
   },
 ]
 
@@ -557,7 +657,9 @@ const SFX_REVERB_SLIDERS: SliderRow[] = [
 
 const ALL_DEBUG_SLIDERS: SliderRow[] = [
   ...GAMEPLAY_BALANCE_SLIDERS,
+  ...DISCOVERY_DEBUG_SLIDERS,
   ...DEPTH_SCAN_DEBUG_SLIDERS,
+  ...LODE_DEBUG_BALANCE_SLIDERS,
   ...LASER_AUDIO_SLIDERS,
   ...DIG_LASER_SUSTAIN_AUDIO_SLIDERS,
   ...REPLICATOR_FEED_AUDIO_SLIDERS,
@@ -578,6 +680,8 @@ export function createSettingsMenu(
     onDebugAddEnergy,
     onDebugIncreaseEnergyCap,
     onDebugUnlockAllTools,
+    onDebugShowAllLodes,
+    onDebugClearLodeDisplay,
     asteroidMusicDebug,
     getMusicRootMidi,
     onAsteroidMusicDebugChange,
@@ -594,6 +698,7 @@ export function createSettingsMenu(
     onScanVisualizationDebugChange,
     audioMasterDebug,
     onAudioMasterDebugChange,
+    getReplicatorTransformDebugLines,
   }: SettingsMenuOptions,
 ): SettingsLightControlsApi {
   const overlay = document.createElement('div')
@@ -725,9 +830,24 @@ export function createSettingsMenu(
   const debugDetails = document.createElement('details')
   debugDetails.className = 'settings-details'
 
+  function createDebugSection(
+    title: string,
+    opts?: { open?: boolean; id?: string },
+  ): HTMLDetailsElement {
+    const det = document.createElement('details')
+    det.className = 'settings-details settings-debug-subsection'
+    if (opts?.id) det.id = opts.id
+    if (opts?.open) det.open = true
+    const sum = document.createElement('summary')
+    sum.className = 'settings-details-summary'
+    sum.textContent = title
+    det.appendChild(sum)
+    return det
+  }
+
   const debugSummary = document.createElement('summary')
   debugSummary.className = 'settings-details-summary'
-  debugSummary.textContent = 'Debug — balance'
+  debugSummary.textContent = 'Debug'
 
   const debugHint = document.createElement('p')
   debugHint.className = 'settings-debug-hint'
@@ -969,12 +1089,74 @@ export function createSettingsMenu(
     onBalanceChange?.()
   })
 
-  debugDetails.append(debugSummary)
+  const sectionPersist = createDebugSection('Persistence & cheats', {
+    open: true,
+    id: 'debug-section-persist',
+  })
+  const sectionLodeDebug = createDebugSection('Lodes', {
+    id: 'debug-section-lodes',
+  })
+  const sectionKeyLight = createDebugSection('Key light', { id: 'debug-section-keylight' })
+  const sectionScanDepth = createDebugSection('Scan & depth', { id: 'debug-section-scan' })
+  const sectionDiscovery = createDebugSection('Discovery', { id: 'debug-section-discovery' })
+  const sectionLaserSfx = createDebugSection('Laser & SFX audio', { id: 'debug-section-laser-sfx' })
+  const sectionMusicMaster = createDebugSection('Music output (master)', {
+    id: 'debug-section-music-master',
+  })
+  const sectionAsteroidMusic = createDebugSection('Asteroid music', {
+    id: 'debug-section-asteroid-music',
+  })
+  const sectionGameBalance = createDebugSection('Game balance', { id: 'debug-section-balance' })
+
+  const debugNav = document.createElement('div')
+  debugNav.className = 'settings-debug-nav'
+  debugNav.setAttribute('role', 'navigation')
+  debugNav.setAttribute('aria-label', 'Debug subsections')
+
+  const navTargets: { label: string; el: HTMLDetailsElement }[] = [
+    { label: 'Persist', el: sectionPersist },
+    { label: 'Lodes', el: sectionLodeDebug },
+    { label: 'Light', el: sectionKeyLight },
+    { label: 'Scan', el: sectionScanDepth },
+    { label: 'Discovery', el: sectionDiscovery },
+    { label: 'SFX', el: sectionLaserSfx },
+    { label: 'Master', el: sectionMusicMaster },
+    { label: 'Music', el: sectionAsteroidMusic },
+    { label: 'Balance', el: sectionGameBalance },
+  ]
+  for (const { label, el } of navTargets) {
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'settings-debug-nav-btn'
+    btn.textContent = label
+    btn.addEventListener('click', () => {
+      el.open = true
+      el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    })
+    debugNav.appendChild(btn)
+  }
+
+  debugDetails.append(
+    debugSummary,
+    debugNav,
+    sectionPersist,
+    sectionLodeDebug,
+    sectionKeyLight,
+    sectionScanDepth,
+    sectionDiscovery,
+    sectionLaserSfx,
+    sectionMusicMaster,
+    sectionAsteroidMusic,
+    sectionGameBalance,
+  )
+
   if (
     onDebugAddResources ||
     onDebugAddEnergy ||
     onDebugIncreaseEnergyCap ||
-    onDebugUnlockAllTools
+    onDebugUnlockAllTools ||
+    onDebugShowAllLodes ||
+    onDebugClearLodeDisplay
   ) {
     const cheatRow = document.createElement('div')
     cheatRow.className = 'settings-row settings-debug-row'
@@ -997,9 +1179,11 @@ export function createSettingsMenu(
         onDebugUnlockAllTools,
       )
     }
-    debugDetails.appendChild(cheatRow)
+    if (onDebugShowAllLodes) appendCheatButton('Show all lodes', onDebugShowAllLodes)
+    if (onDebugClearLodeDisplay) appendCheatButton('Clear lode display', onDebugClearLodeDisplay)
+    sectionPersist.appendChild(cheatRow)
   }
-  debugDetails.append(debugHint, autoSaveRow, saveAllRow, saveRow, musicSaveRow, presetRow)
+  sectionPersist.append(debugHint, autoSaveRow, saveAllRow, saveRow, musicSaveRow, presetRow)
 
   function setAzimuthSliderDisabled(disabled: boolean): void {
     azimuthInput.disabled = disabled
@@ -1022,7 +1206,7 @@ export function createSettingsMenu(
   const keyLightHeading = document.createElement('h3')
   keyLightHeading.className = 'settings-debug-subheading'
   keyLightHeading.textContent = 'Key light (debug)'
-  debugDetails.appendChild(keyLightHeading)
+  sectionKeyLight.appendChild(keyLightHeading)
 
   const sunRotRow = document.createElement('div')
   sunRotRow.className = 'settings-row settings-debug-row'
@@ -1036,7 +1220,7 @@ export function createSettingsMenu(
   sunRotText.textContent = 'Rotate sun azimuth (around asteroid)'
   sunRotLabel.append(sunRotInput, sunRotText)
   sunRotRow.appendChild(sunRotLabel)
-  debugDetails.appendChild(sunRotRow)
+  sectionKeyLight.appendChild(sunRotRow)
 
   const sunSpeedRow = document.createElement('div')
   sunSpeedRow.className = 'settings-row settings-debug-row'
@@ -1055,7 +1239,7 @@ export function createSettingsMenu(
   sunSpeedValue.className = 'settings-value'
   sunSpeedValue.textContent = Number(sunSpeedInput.value).toFixed(2)
   sunSpeedRow.append(sunSpeedLabel, sunSpeedInput, sunSpeedValue)
-  debugDetails.appendChild(sunSpeedRow)
+  sectionKeyLight.appendChild(sunSpeedRow)
 
   const sunHelperRow = document.createElement('div')
   sunHelperRow.className = 'settings-row settings-debug-row'
@@ -1069,7 +1253,7 @@ export function createSettingsMenu(
   sunHelperText.textContent = 'Show key light direction (helper)'
   sunHelperLabel.append(sunHelperInput, sunHelperText)
   sunHelperRow.appendChild(sunHelperLabel)
-  debugDetails.appendChild(sunHelperRow)
+  sectionKeyLight.appendChild(sunHelperRow)
 
   sunHelperInput.addEventListener('change', () => {
     sunLightDebug.showSunHelper = sunHelperInput.checked
@@ -1095,7 +1279,7 @@ export function createSettingsMenu(
   const scanVizHeading = document.createElement('h3')
   scanVizHeading.className = 'settings-debug-subheading'
   scanVizHeading.textContent = 'Scan visualization (debug)'
-  debugDetails.appendChild(scanVizHeading)
+  sectionScanDepth.appendChild(scanVizHeading)
 
   type ScanVizNumKey = {
     key: keyof ScanVisualizationDebug
@@ -1173,7 +1357,7 @@ export function createSettingsMenu(
       onScanVisualizationDebugChange?.()
     })
     row.append(label, input, valSpan)
-    debugDetails.appendChild(row)
+    sectionScanDepth.appendChild(row)
   }
 
   const scanSuppressRow = document.createElement('div')
@@ -1188,7 +1372,7 @@ export function createSettingsMenu(
   scanSuppressText.textContent = 'Suppress structure emissive when scan tint active'
   scanSuppressLabel.append(scanSuppressInput, scanSuppressText)
   scanSuppressRow.appendChild(scanSuppressLabel)
-  debugDetails.appendChild(scanSuppressRow)
+  sectionScanDepth.appendChild(scanSuppressRow)
   scanSuppressInput.addEventListener('change', () => {
     scanVisualizationDebug.suppressEmissiveWhenScanned = scanSuppressInput.checked
     onScanVisualizationDebugChange?.()
@@ -1197,9 +1381,9 @@ export function createSettingsMenu(
   const depthScanHeading = document.createElement('h3')
   depthScanHeading.className = 'settings-debug-subheading'
   depthScanHeading.textContent = 'Depth scan (debug)'
-  debugDetails.appendChild(depthScanHeading)
+  sectionScanDepth.appendChild(depthScanHeading)
 
-  function appendBalanceSliderRow(spec: SliderRow): void {
+  function appendBalanceSliderRow(parent: HTMLElement, spec: SliderRow): void {
     const row = document.createElement('div')
     row.className = 'settings-row settings-debug-row'
     const label = document.createElement('label')
@@ -1223,57 +1407,107 @@ export function createSettingsMenu(
       onBalanceChange?.()
     })
     row.append(label, input, valSpan)
-    debugDetails.appendChild(row)
+    parent.appendChild(row)
+  }
+
+  const lodeDebugHint = document.createElement('p')
+  lodeDebugHint.className = 'settings-debug-hint'
+  lodeDebugHint.textContent =
+    'Depth overlay: at or above this graded density, rare-lode voxels use full opacity (same axis as Show all lodes; green band stays faint).'
+  sectionLodeDebug.appendChild(lodeDebugHint)
+  for (const spec of LODE_DEBUG_BALANCE_SLIDERS) {
+    appendBalanceSliderRow(sectionLodeDebug, spec)
   }
 
   for (const spec of DEPTH_SCAN_DEBUG_SLIDERS) {
-    appendBalanceSliderRow(spec)
+    appendBalanceSliderRow(sectionScanDepth, spec)
   }
 
   for (const spec of GAMEPLAY_BALANCE_SLIDERS) {
-    appendBalanceSliderRow(spec)
+    appendBalanceSliderRow(sectionScanDepth, spec)
+  }
+
+  const discoveryHint = document.createElement('p')
+  discoveryHint.className = 'settings-debug-hint'
+  discoveryHint.textContent =
+    'Site density is multiplied by spectral/regime `discoveryDensityScale` from the asteroid profile. Zero density hides red discovery hints. Claiming a site rolls an offer from the weights below (or False Signal if all weights are zero).'
+  sectionDiscovery.appendChild(discoveryHint)
+  for (const spec of DISCOVERY_DEBUG_SLIDERS) {
+    appendBalanceSliderRow(sectionDiscovery, spec)
+  }
+
+  if (getReplicatorTransformDebugLines) {
+    const transformLiveHeading = document.createElement('h3')
+    transformLiveHeading.className = 'settings-debug-subheading'
+    transformLiveHeading.textContent = 'Replicator transforms (live)'
+    sectionScanDepth.appendChild(transformLiveHeading)
+    const transformLivePre = document.createElement('pre')
+    transformLivePre.className = 'settings-debug-replicator-transforms'
+    transformLivePre.style.whiteSpace = 'pre-wrap'
+    transformLivePre.style.margin = '0.35rem 0 0'
+    transformLivePre.style.fontSize = '0.78rem'
+    transformLivePre.style.opacity = '0.92'
+    transformLivePre.textContent = '(open Debug to refresh)'
+    sectionScanDepth.appendChild(transformLivePre)
+    let transformDebugRaf: number | null = null
+    const tickReplicatorTransformDebug = (): void => {
+      if (!debugDetails.open || !getReplicatorTransformDebugLines) {
+        transformDebugRaf = null
+        return
+      }
+      const lines = getReplicatorTransformDebugLines()
+      transformLivePre.textContent = lines.length > 0 ? lines.join('\n') : '(none active)'
+      transformDebugRaf = requestAnimationFrame(tickReplicatorTransformDebug)
+    }
+    debugDetails.addEventListener('toggle', () => {
+      if (debugDetails.open) {
+        if (transformDebugRaf == null) transformDebugRaf = requestAnimationFrame(tickReplicatorTransformDebug)
+      } else if (transformDebugRaf != null) {
+        cancelAnimationFrame(transformDebugRaf)
+        transformDebugRaf = null
+      }
+    })
   }
 
   const laserAudioHeading = document.createElement('h3')
   laserAudioHeading.className = 'settings-debug-subheading'
   laserAudioHeading.textContent = 'Laser audio'
-  debugDetails.appendChild(laserAudioHeading)
+  sectionLaserSfx.appendChild(laserAudioHeading)
 
   for (const spec of LASER_AUDIO_SLIDERS) {
-    appendBalanceSliderRow(spec)
+    appendBalanceSliderRow(sectionLaserSfx, spec)
   }
 
   const digLaserAudioHeading = document.createElement('h3')
   digLaserAudioHeading.className = 'settings-debug-subheading'
   digLaserAudioHeading.textContent = 'Dig laser sustain (audio)'
-  debugDetails.appendChild(digLaserAudioHeading)
+  sectionLaserSfx.appendChild(digLaserAudioHeading)
 
   for (const spec of DIG_LASER_SUSTAIN_AUDIO_SLIDERS) {
-    appendBalanceSliderRow(spec)
+    appendBalanceSliderRow(sectionLaserSfx, spec)
   }
 
   const replicatorFeedAudioHeading = document.createElement('h3')
   replicatorFeedAudioHeading.className = 'settings-debug-subheading'
   replicatorFeedAudioHeading.textContent = 'Replicator feed (audio)'
-  debugDetails.appendChild(replicatorFeedAudioHeading)
+  sectionLaserSfx.appendChild(replicatorFeedAudioHeading)
 
   for (const spec of REPLICATOR_FEED_AUDIO_SLIDERS) {
-    appendBalanceSliderRow(spec)
+    appendBalanceSliderRow(sectionLaserSfx, spec)
   }
 
   const sfxReverbHeading = document.createElement('h3')
   sfxReverbHeading.className = 'settings-debug-subheading'
   sfxReverbHeading.textContent = 'SFX reverb (global)'
-  debugDetails.appendChild(sfxReverbHeading)
+  sectionLaserSfx.appendChild(sfxReverbHeading)
 
   for (const spec of SFX_REVERB_SLIDERS) {
-    appendBalanceSliderRow(spec)
+    appendBalanceSliderRow(sectionLaserSfx, spec)
   }
 
   const asteroidMusicHeading = document.createElement('h3')
   asteroidMusicHeading.className = 'settings-debug-subheading'
   asteroidMusicHeading.textContent = 'Asteroid music (debug)'
-  debugDetails.appendChild(asteroidMusicHeading)
 
   const MASTER_HP_HZ_LO = 20
   const MASTER_HP_HZ_HI = 200
@@ -1293,7 +1527,7 @@ export function createSettingsMenu(
   const musicPostHeading = document.createElement('p')
   musicPostHeading.className = 'settings-debug-subheading'
   musicPostHeading.textContent = 'Output EQ + high-pass (end of music chain)'
-  debugDetails.appendChild(musicPostHeading)
+  sectionMusicMaster.appendChild(musicPostHeading)
 
   const masterHpRow = document.createElement('div')
   masterHpRow.className = 'settings-row settings-debug-row'
@@ -1320,7 +1554,7 @@ export function createSettingsMenu(
     onAudioMasterDebugChange?.()
   })
   masterHpRow.append(masterHpLabel, masterHpInput, masterHpVal)
-  debugDetails.appendChild(masterHpRow)
+  sectionMusicMaster.appendChild(masterHpRow)
 
   type MasterEqKey = 'eqLowDb' | 'eqMidDb' | 'eqHighDb'
   const masterEqSpecs: { id: string; label: string; key: MasterEqKey }[] = [
@@ -1352,8 +1586,10 @@ export function createSettingsMenu(
       onAudioMasterDebugChange?.()
     })
     row.append(label, input, valSpan)
-    debugDetails.appendChild(row)
+    sectionMusicMaster.appendChild(row)
   }
+
+  sectionAsteroidMusic.appendChild(asteroidMusicHeading)
 
   type MusicSliderSpec = {
     label: string
@@ -1962,14 +2198,14 @@ export function createSettingsMenu(
   ]
 
   for (const spec of musicMapSpecs) {
-    appendMusicSliderRow(debugDetails, spec)
+    appendMusicSliderRow(sectionAsteroidMusic, spec)
     if (spec.id === 'settings-music-voice-fade-out') {
-      appendGlideBaseSliderRow(debugDetails)
+      appendGlideBaseSliderRow(sectionAsteroidMusic)
     }
   }
 
-  appendScaleClampModeRow(debugDetails)
-  appendScaleCycleSection(debugDetails)
+  appendScaleClampModeRow(sectionAsteroidMusic)
+  appendScaleCycleSection(sectionAsteroidMusic)
 
   const pitchBpRow = document.createElement('div')
   pitchBpRow.className = 'settings-row settings-debug-row'
@@ -1988,9 +2224,9 @@ export function createSettingsMenu(
     asteroidMusicDebug.voicePitchBandpassEnabled = pitchBpInput.checked
     onAsteroidMusicDebugChange?.()
   })
-  debugDetails.appendChild(pitchBpRow)
+  sectionAsteroidMusic.appendChild(pitchBpRow)
 
-  appendMusicSliderRow(debugDetails, {
+  appendMusicSliderRow(sectionAsteroidMusic, {
     id: 'settings-music-voice-pitch-bandpass-center',
     label: 'Pitch bandpass — center offset (semitones vs fundamental)',
     min: -36,
@@ -2003,7 +2239,7 @@ export function createSettingsMenu(
     },
   })
 
-  appendMusicSliderRow(debugDetails, {
+  appendMusicSliderRow(sectionAsteroidMusic, {
     id: 'settings-music-voice-pitch-bandpass-q',
     label: 'Pitch bandpass — resonance (Q), macro for all voices',
     min: 0.25,
@@ -2020,12 +2256,12 @@ export function createSettingsMenu(
   macroMusicHeading.className = 'settings-debug-subheading'
   macroMusicHeading.style.marginTop = '14px'
   macroMusicHeading.textContent = 'Voice timbre — macros (all 12 voices)'
-  debugDetails.appendChild(macroMusicHeading)
+  sectionAsteroidMusic.appendChild(macroMusicHeading)
   const macroVoiceHint = document.createElement('p')
   macroVoiceHint.className = 'settings-debug-hint'
   macroVoiceHint.textContent =
     'Each control sets a center value; all voices are updated with small deterministic spread. Changing a macro overwrites per-voice tweaks below until you edit them again.'
-  debugDetails.appendChild(macroVoiceHint)
+  sectionAsteroidMusic.appendChild(macroVoiceHint)
 
   const applyVoiceMacros = (): void => {
     applyVoiceMacrosToVoices(asteroidMusicDebug, getMusicRootMidi())
@@ -2204,10 +2440,10 @@ export function createSettingsMenu(
     },
   ]
   for (const spec of macroMusicSpecs) {
-    appendMusicSliderRow(debugDetails, spec)
+    appendMusicSliderRow(sectionAsteroidMusic, spec)
     if (spec.id === 'settings-music-macro-note-jitter-depth') {
       appendPhraseRateLogHzSliderRow(
-        debugDetails,
+        sectionAsteroidMusic,
         'Macro — music phrase rate (starts/sec, log; 0 = off)',
         'settings-music-macro-phrase-rate-hz',
         PHRASE_RATE_HZ_MIN,
@@ -2218,7 +2454,7 @@ export function createSettingsMenu(
           applyVoiceMacros()
         },
       )
-      appendMusicSliderRow(debugDetails, {
+      appendMusicSliderRow(sectionAsteroidMusic, {
         id: 'settings-music-macro-phrase-rate-jitter-depth',
         label: 'Macro — music phrase rate jitter depth (0 = static phrase rate)',
         min: 0,
@@ -2232,7 +2468,7 @@ export function createSettingsMenu(
         },
       })
       appendVoiceLogHzSliderRow(
-        debugDetails,
+        sectionAsteroidMusic,
         'Macro — music phrase rate jitter rate (Hz, log slider; slow)',
         'settings-music-macro-phrase-rate-jitter-hz',
         JITTER_HZ_LO,
@@ -2244,7 +2480,7 @@ export function createSettingsMenu(
         },
       )
       appendMacroJitterModeRow(
-        debugDetails,
+        sectionAsteroidMusic,
         'Macro — music phrase rate jitter mode',
         'settings-music-macro-phrase-rate-jitter-mode',
         () => vm().phraseRateJitterMode,
@@ -2256,7 +2492,7 @@ export function createSettingsMenu(
     }
   }
   appendVoiceLogHzSliderRow(
-    debugDetails,
+    sectionAsteroidMusic,
     'Macro — note offset jitter rate (Hz, log slider)',
     'settings-music-macro-note-jitter-hz',
     NOTE_JITTER_HZ_LO,
@@ -2268,7 +2504,7 @@ export function createSettingsMenu(
     },
   )
   appendMacroJitterModeRow(
-    debugDetails,
+    sectionAsteroidMusic,
     'Macro — note offset jitter mode',
     'settings-music-macro-note-jitter-mode',
     () => vm().noteJitterMode,
@@ -2277,7 +2513,7 @@ export function createSettingsMenu(
       applyVoiceMacros()
     },
   )
-  appendMusicSliderRow(debugDetails, {
+  appendMusicSliderRow(sectionAsteroidMusic, {
     id: 'settings-music-macro-note-jitter-rate-jitter-depth',
     label: 'Macro — note jitter rate jitter depth (0 = static note jitter rate)',
     min: 0,
@@ -2291,7 +2527,7 @@ export function createSettingsMenu(
     },
   })
   appendVoiceLogHzSliderRow(
-    debugDetails,
+    sectionAsteroidMusic,
     'Macro — note jitter rate jitter rate (Hz, log slider; slow)',
     'settings-music-macro-note-jitter-rate-jitter-hz',
     JITTER_HZ_LO,
@@ -2303,7 +2539,7 @@ export function createSettingsMenu(
     },
   )
   appendMacroJitterModeRow(
-    debugDetails,
+    sectionAsteroidMusic,
     'Macro — note jitter rate jitter mode',
     'settings-music-macro-note-jitter-rate-jitter-mode',
     () => vm().noteJitterRateJitterMode,
@@ -2313,7 +2549,7 @@ export function createSettingsMenu(
     },
   )
   appendVoiceLogHzSliderRow(
-    debugDetails,
+    sectionAsteroidMusic,
     'Macro — rate jitter rate (Hz, log slider; slow)',
     'settings-music-macro-rate-jitter-hz',
     JITTER_HZ_LO,
@@ -2325,7 +2561,7 @@ export function createSettingsMenu(
     },
   )
   appendMacroJitterModeRow(
-    debugDetails,
+    sectionAsteroidMusic,
     'Macro — rate jitter mode',
     'settings-music-macro-rate-jitter-mode',
     () => vm().rateJitterMode,
@@ -2335,7 +2571,7 @@ export function createSettingsMenu(
     },
   )
   appendVoiceLogHzSliderRow(
-    debugDetails,
+    sectionAsteroidMusic,
     'Macro — amp LFO speed (Hz, log slider)',
     'settings-music-macro-lfo-hz',
     AMP_LFO_HZ_LO,
@@ -2347,7 +2583,7 @@ export function createSettingsMenu(
     },
   )
   appendVoiceLogHzSliderRow(
-    debugDetails,
+    sectionAsteroidMusic,
     'Macro — amp LFO 2 speed (Hz, log slider)',
     'settings-music-macro-lfo2-hz',
     AMP_LFO_HZ_LO,
@@ -2359,7 +2595,7 @@ export function createSettingsMenu(
     },
   )
   appendVoiceLogHzSliderRow(
-    debugDetails,
+    sectionAsteroidMusic,
     'Macro — pan LFO speed (Hz, log slider)',
     'settings-music-macro-pan-lfo-hz',
     PAN_LFO_HZ_LO,
@@ -2524,14 +2760,14 @@ export function createSettingsMenu(
     )
     perVoiceOuter.appendChild(det)
   }
-  debugDetails.appendChild(perVoiceOuter)
+  sectionAsteroidMusic.appendChild(perVoiceOuter)
 
   function appendMusicBusSubheading(text: string): void {
     const h = document.createElement('h4')
     h.className = 'settings-debug-subheading'
     h.style.marginTop = '14px'
     h.textContent = text
-    debugDetails.appendChild(h)
+    sectionAsteroidMusic.appendChild(h)
   }
 
   const musicBusChorusSpecs: MusicSliderSpec[] = [
@@ -2926,32 +3162,32 @@ export function createSettingsMenu(
 
   appendMusicBusSubheading('Music bus — chorus')
   for (const spec of musicBusChorusSpecs) {
-    appendMusicSliderRow(debugDetails, spec)
+    appendMusicSliderRow(sectionAsteroidMusic, spec)
   }
   appendMusicBusSubheading('Music bus — pre-filter drive')
   for (const spec of musicBusPreSpecs) {
-    appendMusicSliderRow(debugDetails, spec)
+    appendMusicSliderRow(sectionAsteroidMusic, spec)
   }
   appendMusicBusSubheading('Music bus — filter')
   const musicBusFilterHint = document.createElement('p')
   musicBusFilterHint.className = 'settings-debug-hint'
   musicBusFilterHint.textContent =
     'Pure sine voices only change when cutoff is near or below the note; raise pre-filter drive to add harmonics, then sweep Hz. The Hz slider is logarithmic so most of its range maps to lower cutoffs.'
-  debugDetails.appendChild(musicBusFilterHint)
-  appendBusLowpassHzLogSliderRow(debugDetails)
+  sectionAsteroidMusic.appendChild(musicBusFilterHint)
+  appendBusLowpassHzLogSliderRow(sectionAsteroidMusic)
   for (const spec of musicBusFilterSpecs) {
-    appendMusicSliderRow(debugDetails, spec)
+    appendMusicSliderRow(sectionAsteroidMusic, spec)
   }
   appendMusicBusSubheading('Music bus — pre-reverb stereo delay')
   const musicBusPreReverbStereoDelayHint = document.createElement('p')
   musicBusPreReverbStereoDelayHint.className = 'settings-debug-hint'
   musicBusPreReverbStereoDelayHint.textContent =
     'Stereo delay sits on the wet path after the bus lowpass and before the short reverb pre-delay and convolver. Feedback runs HPF then LPF (darken repeats). Direct wet is always mixed in; raise send to add delayed taps. Tap 2 is a second parallel L/R loop with a longer allowed time; it uses the same feedback and filter sliders as tap 1. Rate jitter adds slow delay-time wander per tap (separate LFOs, unsynced); the wander-speed slider is logarithmic toward the slow end; randomness modulates how much each wander rate drifts over time.'
-  debugDetails.appendChild(musicBusPreReverbStereoDelayHint)
+  sectionAsteroidMusic.appendChild(musicBusPreReverbStereoDelayHint)
   for (const spec of musicBusPreReverbStereoDelaySpecs) {
-    appendMusicSliderRow(debugDetails, spec)
+    appendMusicSliderRow(sectionAsteroidMusic, spec)
     if (spec.id === 'settings-music-pre-reverb-stereo-delay-rate-jitter-depth') {
-      appendPreDelayJitSpeedLogSliderRow(debugDetails)
+      appendPreDelayJitSpeedLogSliderRow(sectionAsteroidMusic)
     }
   }
   appendMusicBusSubheading('Music bus — reverb')
@@ -2959,16 +3195,16 @@ export function createSettingsMenu(
   musicBusReverbHint.className = 'settings-debug-hint'
   musicBusReverbHint.textContent =
     'Impulse buffers regenerate when IR length, decay, or density sliders change. Pre-delay is wet-only; feedback loops the wet path after the convolver (main wet path stays direct for zero feedback).'
-  debugDetails.appendChild(musicBusReverbHint)
+  sectionAsteroidMusic.appendChild(musicBusReverbHint)
   for (const spec of musicBusReverbSpecs) {
-    appendMusicSliderRow(debugDetails, spec)
+    appendMusicSliderRow(sectionAsteroidMusic, spec)
   }
   appendMusicBusSubheading('Music bus — wet saturation')
   for (const spec of musicBusWetSatSpecs) {
-    appendMusicSliderRow(debugDetails, spec)
+    appendMusicSliderRow(sectionAsteroidMusic, spec)
   }
 
-  debugDetails.appendChild(resetBalanceBtn)
+  sectionGameBalance.appendChild(resetBalanceBtn)
 
   let tipsRow: HTMLDivElement | undefined
   if (onOpenTips) {

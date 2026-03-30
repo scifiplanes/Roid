@@ -1,6 +1,7 @@
 import { Color } from 'three'
 import type { VoxelPos } from '../scene/asteroid/generateAsteroidVoxels'
 import { compositeDensityMidpointGcm3, latticeHash } from './compositionYields'
+import { gameBalance } from './gameBalance'
 import type { VoxelCell } from './voxelState'
 import {
   createDefaultScanVisualizationDebug,
@@ -465,6 +466,33 @@ export function compositionToScanColor(cell: VoxelCell, out: Color): Color {
   }
   out.setRGB(r, g, b)
   boostScanDisplayColor(out, debug)
+  return out
+}
+
+/**
+ * Depth overlay: same refined RGB blend as surface scan, then extra saturation/lightness for heatmap readability.
+ */
+export function compositionToDepthScanColor(cell: VoxelCell, out: Color): Color {
+  compositionToScanColor(cell, out)
+  out.getHSL(_hsl)
+  _hsl.s = Math.min(1, _hsl.s * gameBalance.depthOverlayScanSaturationMul)
+  _hsl.l = Math.min(1, Math.max(0, _hsl.l * gameBalance.depthOverlayScanLightnessMul))
+  out.setHSL(_hsl.h, _hsl.s, _hsl.l)
+  return out
+}
+
+const _heatHsl = { h: 0, s: 0, l: 0 }
+
+/**
+ * Classic cool→warm heatmap: low density → blue, high → red (HSL sweep 240°→0°).
+ * `d` in [0, 1] is graded lode density (e.g. `rareLodeStrength01 * depthRevealProgress`).
+ */
+export function densityToHeatmapRgb(d: number, out: Color): Color {
+  const t = Math.min(1, Math.max(0, d))
+  _heatHsl.h = (1 - t) * (240 / 360)
+  _heatHsl.s = Math.min(1, Math.max(0, gameBalance.depthOverlayHeatmapSaturationMul))
+  _heatHsl.l = 0.4 + 0.14 * t
+  out.setHSL(_heatHsl.h, _heatHsl.s, _heatHsl.l)
   return out
 }
 

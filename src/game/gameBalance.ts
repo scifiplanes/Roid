@@ -3,6 +3,8 @@ import { getDebugProjectAutosave, setDebugProjectAutosave } from './debugProject
 export interface GameBalance {
   durabilityMult: number
   replicatorFeedSpeedMult: number
+  /** Seconds from payment until a mature replicator becomes the chosen structure/computronium. */
+  replicatorTransformDurationSec: number
   toolCostMult: number
   reactorOutputMult: number
   energyBaseCapMult: number
@@ -130,6 +132,45 @@ export interface GameBalance {
    * `effectiveOpacity' = lerp(effectiveOpacity, 1, (1 - S) * k)`.
    */
   depthOverlaySusceptibilityOpacityBoost: number
+  /** Extra saturation multiplier on depth-overlay refined RGB (after surface-scan boost). */
+  depthOverlayScanSaturationMul: number
+  /** Lightness multiplier on depth-overlay refined RGB (heatmap punch). */
+  depthOverlayScanLightnessMul: number
+  /** Reveal progress at or above which depth overlay voxels are forced fully opaque. */
+  depthOverlaySolidRevealProgress: number
+  /**
+   * Minimum `rareLodeStrength01` for rare-lode treatment: depth overlay forces full instance opacity;
+   * surface scan heatmap / lerp ramp uses the same floor.
+   */
+  depthOverlayLodeOpaqueStrengthFloor: number
+  /**
+   * Max extra blend toward full surface-scan tint when `rareLodeStrength01` is high.
+   * Ramp starts at `depthOverlayLodeOpaqueStrengthFloor` (same “meaningful lode” threshold as depth).
+   */
+  surfaceScanRareLodeLerpBoostMax: number
+  /**
+   * Surface scan: blend toward blue→red heatmap from graded `rareLodeStrength01` (after composition tint).
+   * Weight scales with the same smoothstep ramp as `surfaceScanRareLodeLerpBoostMax`.
+   */
+  surfaceScanLodeHeatmapBlend: number
+  /** Upper cap on convex mix toward spectral rare-lode template (procgen). */
+  rareLodeMixMax: number
+  /** Smoothstep low edge for rare-lode noise field (0–1). */
+  rareLodeNoiseSmoothLow: number
+  /** Smoothstep high edge for rare-lode noise field (0–1). */
+  rareLodeNoiseSmoothHigh: number
+  /**
+   * Depth overlay: blend weight toward classic blue→red heatmap from graded lode density
+   * (`rareLodeStrength01 × revealProgress`). 0 = composition tint only; 1 = full heatmap at high density.
+   */
+  depthOverlayHeatmapBlend: number
+  /** HSL saturation for depth heatmap (classic jet-like cool→warm). */
+  depthOverlayHeatmapSaturationMul: number
+  /**
+   * Depth overlay: graded density `min(1, rareLodeStrength01 × revealProgress)` must be ≥ this for
+   * full material opacity (warm heatmap band); below reads with normal rock transparency (cool/green band).
+   */
+  depthOverlayLodeFullOpacityMinDensity: number
 
   /** Energy drained per second per **active** computronium voxel (not disabled). */
   computroniumEnergyDrainPerSecPerCell: number
@@ -166,8 +207,8 @@ export interface GameBalance {
   drossFogColorB: number
 
   /**
-   * Probability [0,1] that a discovery modal is rolled when claiming a discovery site
-   * (pick, replicator HP, laser→PM, hub PM, depth scanner).
+   * Legacy persisted field; discovery offers no longer use a second probability roll (site density only).
+   * Kept so older `gameBalance` JSON still merges; unused in gameplay.
    */
   discoveryChanceOnRockDepthScanner: number
   /** Fraction [0,1] of voxels that are discovery sites (scan highlight + claim eligibility). */
@@ -182,6 +223,7 @@ export interface GameBalance {
 export const defaultGameBalance: GameBalance = {
   durabilityMult: 1,
   replicatorFeedSpeedMult: 1,
+  replicatorTransformDurationSec: 3,
   toolCostMult: 1,
   reactorOutputMult: 1,
   energyBaseCapMult: 1,
@@ -237,6 +279,19 @@ export const defaultGameBalance: GameBalance = {
   depthOverlayScannedVoxelOpacity: 0.72,
   depthOverlayDurabilityOpacityMix: 0.5,
   depthOverlaySusceptibilityOpacityBoost: 0.55,
+  depthOverlayScanSaturationMul: 1.22,
+  depthOverlayScanLightnessMul: 1.06,
+  depthOverlaySolidRevealProgress: 0.86,
+  depthOverlayLodeOpaqueStrengthFloor: 0.22,
+  surfaceScanRareLodeLerpBoostMax: 0.36,
+  surfaceScanLodeHeatmapBlend: 0.9,
+  rareLodeMixMax: 0.72,
+  /** Wider band so merged morphology still yields graded `rareLodeStrength01` (narrow bands made most voxels read as zero). */
+  rareLodeNoiseSmoothLow: 0.06,
+  rareLodeNoiseSmoothHigh: 0.82,
+  depthOverlayHeatmapBlend: 0.9,
+  depthOverlayHeatmapSaturationMul: 0.94,
+  depthOverlayLodeFullOpacityMinDensity: 0.42,
   computroniumEnergyDrainPerSecPerCell: 0.42,
   computroniumUnlockPointsPerSecPerCell: 0.16,
   computroniumPointsPerStage: 48,
@@ -252,7 +307,7 @@ export const defaultGameBalance: GameBalance = {
   drossFogColorG: 0.82,
   drossFogColorB: 0.9,
   discoveryChanceOnRockDepthScanner: 0.03,
-  discoverySiteDensity: 0.015,
+  discoverySiteDensity: 0.003,
   discoveryWeightWindfall: 1,
   discoveryWeightDrain: 0.45,
   discoveryWeightLore: 0.65,
@@ -318,6 +373,7 @@ export async function persistGameBalanceToProjectNow(): Promise<boolean> {
 export const GAME_BALANCE_KEYS: readonly (keyof GameBalance)[] = [
   'durabilityMult',
   'replicatorFeedSpeedMult',
+  'replicatorTransformDurationSec',
   'toolCostMult',
   'reactorOutputMult',
   'energyBaseCapMult',
@@ -372,6 +428,18 @@ export const GAME_BALANCE_KEYS: readonly (keyof GameBalance)[] = [
   'depthOverlayScannedVoxelOpacity',
   'depthOverlayDurabilityOpacityMix',
   'depthOverlaySusceptibilityOpacityBoost',
+  'depthOverlayScanSaturationMul',
+  'depthOverlayScanLightnessMul',
+  'depthOverlaySolidRevealProgress',
+  'depthOverlayLodeOpaqueStrengthFloor',
+  'surfaceScanRareLodeLerpBoostMax',
+  'surfaceScanLodeHeatmapBlend',
+  'rareLodeMixMax',
+  'rareLodeNoiseSmoothLow',
+  'rareLodeNoiseSmoothHigh',
+  'depthOverlayHeatmapBlend',
+  'depthOverlayHeatmapSaturationMul',
+  'depthOverlayLodeFullOpacityMinDensity',
   'computroniumEnergyDrainPerSecPerCell',
   'computroniumUnlockPointsPerSecPerCell',
   'computroniumPointsPerStage',
@@ -429,6 +497,18 @@ const DEPTH_BALANCE_CLAMP: Partial<Record<keyof GameBalance, { min: number; max:
   depthOverlayScannedVoxelOpacity: { min: 0.08, max: 1 },
   depthOverlayDurabilityOpacityMix: { min: 0, max: 1 },
   depthOverlaySusceptibilityOpacityBoost: { min: 0, max: 1 },
+  depthOverlayScanSaturationMul: { min: 0.6, max: 2.2 },
+  depthOverlayScanLightnessMul: { min: 0.65, max: 1.35 },
+  depthOverlaySolidRevealProgress: { min: 0.5, max: 1 },
+  depthOverlayLodeOpaqueStrengthFloor: { min: 0, max: 1 },
+  surfaceScanRareLodeLerpBoostMax: { min: 0, max: 1 },
+  surfaceScanLodeHeatmapBlend: { min: 0, max: 1 },
+  rareLodeMixMax: { min: 0.15, max: 1 },
+  rareLodeNoiseSmoothLow: { min: 0.05, max: 0.85 },
+  rareLodeNoiseSmoothHigh: { min: 0.15, max: 0.99 },
+  depthOverlayHeatmapBlend: { min: 0, max: 1 },
+  depthOverlayHeatmapSaturationMul: { min: 0.35, max: 1 },
+  depthOverlayLodeFullOpacityMinDensity: { min: 0, max: 1 },
 }
 
 const COMPUTRONIUM_BALANCE_CLAMP: Partial<Record<keyof GameBalance, { min: number; max: number }>> = {
@@ -506,6 +586,9 @@ export function clampBalanceField(key: keyof GameBalance, v: number): number {
   }
   if (key === 'drossFogColorR' || key === 'drossFogColorG' || key === 'drossFogColorB') {
     return Math.min(1, Math.max(0, v))
+  }
+  if (key === 'replicatorTransformDurationSec') {
+    return Math.min(120, Math.max(0, v))
   }
   if (key === 'discoveryChanceOnRockDepthScanner' || key === 'discoverySiteDensity') {
     return Math.min(1, Math.max(0, v))

@@ -115,6 +115,7 @@ function finishEating(cell: VoxelCell, index: Map<string, VoxelCell>): void {
   cell.kind = 'replicator'
   cell.hpRemaining = 0
   cell.bulkComposition = undefined
+  cell.rareLodeStrength01 = undefined
   clearSurfaceScanTint(cell)
   clearDepthRevealState(cell)
   cell.replicatorEating = false
@@ -134,6 +135,8 @@ export interface StepReplicatorsResult {
 export interface StepReplicatorsOptions {
   /** Fires once each time a replicator consumes 1 HP of rock (cell still rock until `finishEating`). */
   onReplicatorRockHpConsumed?: (cell: VoxelCell) => void
+  /** When true, replicator rock feeding and passive income into local stores are frozen. */
+  replicatorPaused?: boolean
 }
 
 /**
@@ -144,6 +147,9 @@ export function stepReplicators(
   cells: VoxelCell[],
   options?: StepReplicatorsOptions,
 ): StepReplicatorsResult {
+  if (options?.replicatorPaused) {
+    return { meshDirty: false, tallyChanged: false, replicatorConsumeTicks: 0 }
+  }
   if (cells.length === 0 || dtMs <= 0) {
     return { meshDirty: false, tallyChanged: false, replicatorConsumeTicks: 0 }
   }

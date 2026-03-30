@@ -1,4 +1,7 @@
 import type { DiscoveryOffer } from '../game/discoveryGen'
+import type { VoxelPos } from '../scene/asteroid/generateAsteroidVoxels'
+import type { VoxelScreenProjectResult } from '../scene/voxelScreenProjection'
+import { segmentFirstBorderHitTowardRect } from '../scene/voxelScreenProjection'
 
 const LORE_STORAGE_KEY = 'roid:discoveriesLog'
 const MAX_LORE_ENTRIES = 80
@@ -7,6 +10,7 @@ export interface DiscoveryModalApi {
   show: (offer: DiscoveryOffer) => void
   hide: () => void
   isOpen: () => boolean
+  syncAnchor: () => void
 }
 
 function appendLoreToStorage(line: string): void {
@@ -21,13 +25,17 @@ function appendLoreToStorage(line: string): void {
 }
 
 /**
- * Full-screen modal (Norton Commander style); single OK dismisses and applies the offer.
+ * Anchored modal: panel near the discovery voxel, connector line from voxel to panel edge.
  */
-export function createDiscoveryModal(container: HTMLElement, options: {
-  onOk: (offer: DiscoveryOffer) => void
-}): DiscoveryModalApi {
+export function createDiscoveryModal(
+  container: HTMLElement,
+  options: {
+    onOk: (offer: DiscoveryOffer) => void
+    projectFoundAt: (pos: VoxelPos) => VoxelScreenProjectResult
+  },
+): DiscoveryModalApi {
   const root = document.createElement('div')
-  root.className = 'discovery-modal-root'
+  root.className = 'discovery-modal-root discovery-modal-root--anchored'
   root.hidden = true
   root.setAttribute('role', 'dialog')
   root.setAttribute('aria-modal', 'true')
@@ -35,6 +43,14 @@ export function createDiscoveryModal(container: HTMLElement, options: {
 
   const scrim = document.createElement('div')
   scrim.className = 'discovery-modal-scrim'
+
+  const connectorSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  connectorSvg.classList.add('discovery-modal-connector-svg')
+  connectorSvg.setAttribute('aria-hidden', 'true')
+
+  const connectorLine = document.createElementNS('http://www.w3.org/2000/svg', 'line')
+  connectorLine.classList.add('discovery-modal-connector-line')
+  connectorSvg.appendChild(connectorLine)
 
   const panel = document.createElement('div')
   panel.className = 'discovery-modal-panel'
@@ -56,7 +72,7 @@ export function createDiscoveryModal(container: HTMLElement, options: {
   buttons.append(btnOk)
 
   panel.append(title, body, buttons)
-  root.append(scrim, panel)
+  root.append(scrim, connectorSvg, panel)
   container.appendChild(root)
 
   let current: DiscoveryOffer | null = null
@@ -64,6 +80,7 @@ export function createDiscoveryModal(container: HTMLElement, options: {
   function close(): void {
     current = null
     root.hidden = true
+    connectorLine.setAttribute('opacity', '0')
   }
 
   function confirmOk(): void {
@@ -77,6 +94,52 @@ export function createDiscoveryModal(container: HTMLElement, options: {
   btnOk.addEventListener('click', confirmOk)
 
   scrim.addEventListener('click', confirmOk)
+
+  function syncAnchor(): void {
+    if (!current) return
+    const { clientX: vx, clientY: vy, onScreen } = options.projectFoundAt(current.foundAt)
+
+    const w = window.innerWidth
+    const h = window.innerHeight
+    connectorSvg.setAttribute('viewBox', `0 0 ${w} ${h}`)
+    connectorSvg.setAttribute('width', String(w))
+    connectorSvg.setAttribute('height', String(h))
+
+    panel.style.position = 'fixed'
+    panel.style.margin = '0'
+    const pw = Math.max(panel.offsetWidth, 280)
+    const ph = Math.max(panel.offsetHeight, 100)
+
+    let left: number
+    let top: number
+    if (onScreen) {
+      left = vx + 28
+      top = vy - ph / 2
+      const margin = 12
+      left = Math.min(Math.max(margin, left), w - pw - margin)
+      top = Math.min(Math.max(margin, top), h - ph - margin)
+    } else {
+      left = w - pw - 16
+      top = 80
+    }
+
+    panel.style.left = `${left}px`
+    panel.style.top = `${top}px`
+
+    if (onScreen) {
+      const pr = panel.getBoundingClientRect()
+      const cx = pr.left + pr.width / 2
+      const cy = pr.top + pr.height / 2
+      const end = segmentFirstBorderHitTowardRect(vx, vy, cx, cy, pr)
+      connectorLine.setAttribute('x1', String(vx))
+      connectorLine.setAttribute('y1', String(vy))
+      connectorLine.setAttribute('x2', String(end.x))
+      connectorLine.setAttribute('y2', String(end.y))
+      connectorLine.setAttribute('opacity', '1')
+    } else {
+      connectorLine.setAttribute('opacity', '0')
+    }
+  }
 
   return {
     show(offer: DiscoveryOffer): void {
@@ -96,7 +159,10 @@ export function createDiscoveryModal(container: HTMLElement, options: {
         body.appendChild(p)
       }
       root.hidden = false
-      btnOk.focus()
+      requestAnimationFrame(() => {
+        syncAnchor()
+        btnOk.focus()
+      })
     },
     hide(): void {
       close()
@@ -104,5 +170,6 @@ export function createDiscoveryModal(container: HTMLElement, options: {
     isOpen(): boolean {
       return !root.hidden
     },
+    syncAnchor,
   }
 }

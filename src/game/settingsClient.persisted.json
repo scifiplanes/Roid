@@ -1,6 +1,6 @@
 {
   "v": 1,
-  "sunAzimuthDeg": 62.74606995758313,
+  "sunAzimuthDeg": 66.07534196250378,
   "sunElevationDeg": -70,
   "sunLightDebug": {
     "rotateSunAzimuth": true,
@@ -8,7 +8,7 @@
     "showSunHelper": false
   },
   "scanVisualizationDebug": {
-    "compositionLerp": 0.92,
+    "compositionLerp": 0.86,
     "anchorSaturation": 1,
     "anchorLightness": 0.59,
     "boostSaturationMul": 2,
@@ -31,13 +31,13 @@
     "eqHighDb": -5.5
   },
   "overlayVisualization": {
-    "surfaceScanOverlayVisible": false,
-    "depthOverlayVisible": false
+    "surfaceScanOverlayVisible": true,
+    "depthOverlayVisible": true
   },
   "discoveryAutoResolve": false,
   "musicVolumeLinear": 0.88,
   "toolsBarCollapsed": true,
-  "overlayLegendCollapsed": false,
+  "overlayLegendCollapsed": true,
   "matterHudCollapsed": true,
   "matterHudCompact": true
 }

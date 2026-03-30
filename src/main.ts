@@ -34,7 +34,20 @@ import {
 import { raycastFirstOccupiedCellIndex } from './game/voxelGridRaycast'
 import { compositionToYields } from './game/compositionYields'
 import { deriveAsteroidProfile, discoveryDensityScale, formatProfileFingerprint } from './game/asteroidGenProfile'
-import { enrichVoxelCells, hpForVoxelKind, type VoxelCell } from './game/voxelState'
+import {
+  enrichVoxelCells,
+  hpForVoxelKind,
+  type ReplicatorTransformTarget,
+  type VoxelCell,
+} from './game/voxelState'
+
+const REPLICATOR_TARGET_DEBUG_LABEL: Record<ReplicatorTransformTarget, string> = {
+  reactor: 'Reactor',
+  battery: 'Battery',
+  hub: 'Hub',
+  refinery: 'Refinery',
+  computronium: 'Computronium',
+}
 import type { VoxelKind } from './game/voxelKinds'
 import { resourceHudCssColorForId } from './game/resourceOriginDepth'
 import {
@@ -58,9 +71,10 @@ import {
   getScaledReplicatorPlaceCost,
   getScaledSatelliteDeployCost,
   stepEnergy,
+  clearReplicatorTransformState,
   tryConvertCellToDepthScannerWithMeta,
-  tryConvertReplicatorToComputronium,
-  tryConvertReplicatorToKind,
+  tryStartReplicatorTransform,
+  stepReplicatorTransforms,
   tryPayResources,
   trySpendEnergy,
   type StructureConvertKind,
@@ -69,10 +83,14 @@ import {
   countActiveComputronium,
   getDepthScanToolUiPhase,
   getDrossCollectorDeployUiPhase,
+  getEmCatapultToolUiPhase,
   getExplosiveChargeToolUiPhase,
   getLaserToolUiPhase,
+  getRefineryRecipeUiPhase,
+  isRefineryRecipeUnlocked,
   stepComputronium,
   type LaserUnlockApply,
+  type RefineryRecipeUiState,
 } from './game/computroniumSim'
 import {
   applyDiscoveryAccept,
@@ -113,6 +131,7 @@ import {
   playReplicatorPlaceClick,
   playScanPing,
   playExplosiveChargeDetonation,
+  playDiscoveryFalseSignal,
   undoFrameShake,
 } from './game/clickFeedback'
 import { gameBalance, initGameBalanceFromPersisted } from './game/gameBalance'
@@ -155,6 +174,10 @@ import { createSettingsMenu } from './ui/settingsMenu'
 import { updateDrossFog } from './scene/drossFog'
 import { createDrossParticlesGroup } from './scene/drossParticles'
 import { createSatelliteDotsGroup } from './scene/satelliteDots'
+import {
+  projectVoxelPosToClient,
+  segmentFirstBorderHitTowardRect,
+} from './scene/voxelScreenProjection'
 import { loadGameStartTipsDismissed, saveGameStartTipsDismissed } from './game/gameStartTipsPrefs'
 import { createGameStartTipsModal } from './ui/gameStartTipsModal'
 import { createDiscoveryModal } from './ui/discoveryModal'
@@ -162,6 +185,7 @@ import {
   createSatelliteInspectModal,
   type SatelliteInspectKind,
 } from './ui/satelliteInspectModal'
+import { createRefineryRecipesModal } from './ui/refineryRecipesModal'
 import { createToolsPanel, type LaserSatelliteRowSnapshot, type PlayerTool } from './ui/toolsPanel'
 import { stepDepthReveal } from './game/depthScannerSim'
 import { formatInspectHudLines } from './game/inspectVoxel'
@@ -175,6 +199,7 @@ import {
 import { createDefaultScanVisualizationDebug } from './game/scanVisualizationDebug'
 import { resetReplicatorSimAccumulators, stepReplicators } from './game/replicatorSim'
 import { stepHubs } from './game/hubSim'
+import { defaultRefineryRecipeSelection } from './game/refineryRecipeUnlock'
 import { stepRefineryProcessing } from './game/refineryProcessSim'
 import {
   createAudioContextNow,
@@ -383,6 +408,9 @@ let voxelCells: VoxelCell[] = enrichVoxelCells(positions, {
 /** Cached for ambient music tick; updated in `replaceAsteroidMesh`. */
 let structureVoxelCountForMusic = 0
 
+/** When true, replicator rock feeding and replicator→structure timers do not advance. */
+let replicatorKillswitchEngaged = false
+
 let voxelPosToIndex: Map<string, number> | null = null
 function voxelPosKey(p: VoxelPos): string {
   return `${p.x},${p.y},${p.z}`
@@ -472,10 +500,19 @@ matterHudMinBtn.setAttribute('aria-controls', 'matter-hud')
 const MATTER_HUD_ICON_MIN = `<svg class="matter-hud-minimize-svg" width="11" height="11" viewBox="0 0 12 12" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><rect fill="currentColor" x="1" y="9" width="10" height="2" /></svg>`
 const MATTER_HUD_ICON_EXPAND = `<svg class="matter-hud-minimize-svg" width="11" height="11" viewBox="0 0 12 12" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><path fill="currentColor" d="M5 1h2v4h4v2H7v4H5V7H1V5h4V1z" /></svg>`
 
-const discoveryHudStrip = document.createElement('div')
-discoveryHudStrip.className = 'discovery-hud-strip'
-discoveryHudStrip.setAttribute('aria-label', 'Pending discoveries')
-discoveryHudStrip.hidden = true
+const discoveryPendingLayer = document.createElement('div')
+discoveryPendingLayer.className = 'discovery-pending-layer'
+discoveryPendingLayer.setAttribute('aria-label', 'Pending discoveries')
+discoveryPendingLayer.hidden = true
+
+const discoveryPendingSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+discoveryPendingSvg.setAttribute('class', 'discovery-pending-svg')
+discoveryPendingSvg.setAttribute('aria-hidden', 'true')
+
+const discoveryPendingChips = document.createElement('div')
+discoveryPendingChips.className = 'discovery-pending-chips'
+
+discoveryPendingLayer.append(discoveryPendingSvg, discoveryPendingChips)
 
 const matterHud = document.createElement('div')
 matterHud.id = 'matter-hud'
@@ -504,11 +541,29 @@ matterHudMinBtn.addEventListener('click', (e) => {
 })
 
 matterHudShell.append(matterHudMinBtn, matterHud)
-matterHudWrap.append(discoveryHudStrip, matterHudShell)
+matterHudWrap.append(matterHudShell)
 viewport.appendChild(matterHudWrap)
+viewport.appendChild(discoveryPendingLayer)
 
 const pickRipple = createMineRippleElement()
 viewport.appendChild(pickRipple)
+
+const falseSignalToast = document.createElement('div')
+falseSignalToast.className = 'false-signal-toast'
+falseSignalToast.setAttribute('role', 'status')
+falseSignalToast.setAttribute('aria-live', 'polite')
+falseSignalToast.textContent = 'False Signal'
+viewport.appendChild(falseSignalToast)
+
+let falseSignalToastTimer: ReturnType<typeof setTimeout> | null = null
+function showFalseSignalToast(): void {
+  falseSignalToast.classList.add('false-signal-toast--visible')
+  if (falseSignalToastTimer !== null) clearTimeout(falseSignalToastTimer)
+  falseSignalToastTimer = setTimeout(() => {
+    falseSignalToastTimer = null
+    falseSignalToast.classList.remove('false-signal-toast--visible')
+  }, 1800)
+}
 
 const overlayVizLoaded = loadOverlayVisualizationPrefs()
 let surfaceScanOverlayVisible = overlayVizLoaded.surfaceScanOverlayVisible
@@ -594,6 +649,9 @@ function buildSurfaceScanTintIndexMap(): Map<number, Color> | null {
   return m.size > 0 ? m : null
 }
 
+/** When non-null, those voxel indices are drawn with the rare-lode density heatmap (Settings → Debug). */
+let debugLodeDisplayIndices: Set<number> | null = null
+
 function reapplyAllRockColorsNoLaser(): void {
   reapplyRockInstanceColors(
     asteroidBundle,
@@ -606,6 +664,7 @@ function reapplyAllRockColorsNoLaser(): void {
     buildSurfaceScanTintIndexMap(),
     depthOverlayTintActive(),
     buildDiscoveryScanHintIndices(),
+    debugLodeDisplayIndices,
   )
   syncDepthOverlayMaterials()
 }
@@ -667,6 +726,7 @@ function setResourceHud(): void {
 }
 
 function replaceAsteroidMesh(cells: VoxelCell[]): void {
+  debugLodeDisplayIndices = null
   drossParticles.group.removeFromParent()
   scene.remove(asteroidBundle.group)
   disposeAsteroidBundle(asteroidBundle)
@@ -697,7 +757,7 @@ function replaceAsteroidMesh(cells: VoxelCell[]): void {
 
 let syncSunRotationSpeedUi: () => void = () => {}
 
-function regenerateAsteroid(): void {
+function generateNewAsteroidGeometry(): void {
   currentSeed = Math.floor(Math.random() * 0xffffffff) >>> 0
   asteroidProfile = deriveAsteroidProfile(currentSeed)
   const nextPositions = applyImpactCraters(
@@ -723,12 +783,24 @@ function regenerateAsteroid(): void {
     profile: asteroidProfile,
   })
   orbitVisualRadius = asteroidProfile.shape.baseRadius * voxelSize * 1.5
+}
+
+function resetEconomyAndDrossForNewRockBody(): void {
   resetReplicatorSimAccumulators()
+  replicatorKillswitchEngaged = false
   Object.assign(resourceTallies, createEmptyResourceTallies())
   lastScanRefinedPreviewLine = null
   lastInspectHudLines = null
   debugEnergyCapBonus = 0
   energyState.current = 0
+  discoveryCounter.current = 0
+  discoveryConsumedPos.clear()
+  pendingDiscoveries.length = 0
+  syncDiscoveryHud()
+  resetDrossState(drossState)
+}
+
+function resetAllResearchAndUnlocksForRegenerate(): void {
   orbitalLaserUnlocked = false
   excavatingLaserUnlocked = false
   orbitalSatelliteCount = 0
@@ -738,13 +810,23 @@ function regenerateAsteroid(): void {
   depthScanUnlocked = false
   drossCollectorUnlocked = false
   drossCollectorSatelliteCount = 0
+  emCatapultUnlocked = false
   debugUnlockAllTools = false
   computroniumUnlockPoints.current = 0
-  discoveryCounter.current = 0
-  discoveryConsumedPos.clear()
-  pendingDiscoveries.length = 0
-  syncDiscoveryHud()
-  resetDrossState(drossState)
+  selectedRefineryRoot = defaultRefineryRecipeSelection((r) =>
+    isRefineryRecipeUnlocked(
+      r,
+      {
+        unlockPoints: 0,
+        activeComputronium: 0,
+        debugUnlockAllRecipes: false,
+      },
+      gameBalance,
+    ),
+  )
+}
+
+function finalizeNewAsteroidPresentation(options: { zeroSatelliteDots: boolean }): void {
   invalidateVoxelPosIndexMap()
   setResourceHud()
   applySunFromState()
@@ -752,12 +834,36 @@ function regenerateAsteroid(): void {
   replaceAsteroidMesh(voxelCells)
   setSelectedTool('pick', { skipBeforeToolChange: true })
   satelliteInspectModal.hide()
-  satelliteDots.setCounts(0, 0, 0, 0, orbitVisualRadius)
+  if (options.zeroSatelliteDots) {
+    satelliteDots.setCounts(0, 0, 0, 0, orbitVisualRadius)
+  } else {
+    satelliteDots.setCounts(
+      orbitalSatelliteCount,
+      excavatingSatelliteCount,
+      scannerSatelliteCount,
+      drossCollectorSatelliteCount,
+      orbitVisualRadius,
+    )
+  }
   asteroidAmbientMusic.setSeed(currentSeed)
   asteroidAmbientMusic.resetVoiceSmoothing()
   sun.intensity = KEY_LIGHT_INTENSITY_BASE * randomKeyLightIntensityFactorForAsteroid()
   syncLightAngleSliders(sunAzimuthDeg, sunElevationDeg)
   syncSunRotationSpeedUi()
+}
+
+function regenerateAsteroid(): void {
+  generateNewAsteroidGeometry()
+  resetEconomyAndDrossForNewRockBody()
+  resetAllResearchAndUnlocksForRegenerate()
+  finalizeNewAsteroidPresentation({ zeroSatelliteDots: true })
+}
+
+function emCatapultToNewAsteroid(): void {
+  generateNewAsteroidGeometry()
+  resetEconomyAndDrossForNewRockBody()
+  clampRefinerySelection()
+  finalizeNewAsteroidPresentation({ zeroSatelliteDots: false })
 }
 
 let setSelectedTool: (tool: PlayerTool, options?: { skipBeforeToolChange?: boolean }) => void = () => {}
@@ -771,11 +877,16 @@ let excavatingSatelliteCount = 0
 let scannerSatelliteCount = 0
 let drossCollectorUnlocked = false
 let drossCollectorSatelliteCount = 0
+/** Tier 6 computronium: EM Catapult tool. Reset on full Regenerate; preserved on catapult-to-new-asteroid. */
+let emCatapultUnlocked = false
 /** Debug cheat: bypass structure gates, explosive research gate (Settings → Unlock all tools). Reset on Regenerate. */
 let debugUnlockAllTools = false
 
 /** Cumulative unlock points from active computronium (reset on Regenerate). */
 const computroniumUnlockPoints = { current: 0 }
+
+/** Global refinery recipe: which root active refineries consume (see Refinery tool → Recipes). */
+let selectedRefineryRoot: RootResourceId = 'regolithMass'
 
 /** Discovery modal RNG counter; reset on Regenerate. */
 const discoveryCounter = { current: 0 }
@@ -783,14 +894,14 @@ const discoveryCounter = { current: 0 }
 const discoveryConsumedPos = new Set<string>()
 
 /**
- * Surface-scan overlay: bright hint only on voxels already tinted by the scanner satellite
- * (`surfaceScanTintRgb`) that are still-eligible discovery sites. Avoids lighting the whole
- * asteroid when the overlay is on or the mesh rebuilds (e.g. after placing a replicator).
+ * Scanner overlays: opaque unlit bright red on voxels already tinted by the scanner satellite
+ * (`surfaceScanTintRgb`) that are still-eligible discovery sites. Shown when Surface scan and/or
+ * Depth overlay is on. Does not roll discoveries.
  */
 const discoveryScanHintIndicesReuse = new Set<number>()
 
 function buildDiscoveryScanHintIndices(): Set<number> | null {
-  if (!surfaceScanOverlayVisible) return null
+  if (!surfaceScanOverlayVisible && !depthOverlayTintActive()) return null
   if (gameBalance.discoverySiteDensity <= 0) return null
   const s = discoveryScanHintIndicesReuse
   s.clear()
@@ -812,6 +923,18 @@ function canSelectDepthScannerTool(): boolean {
     scannerLaserUnlocked &&
     countActiveComputronium(voxelCells) > 0 &&
     computroniumUnlockPoints.current < t4
+  )
+}
+
+function canSelectEmCatapultTool(): boolean {
+  if (emCatapultUnlocked) return true
+  if (debugUnlockAllTools) return true
+  const per = gameBalance.computroniumPointsPerStage
+  const t6 = per * 6
+  return (
+    drossCollectorUnlocked &&
+    countActiveComputronium(voxelCells) > 0 &&
+    computroniumUnlockPoints.current < t6
   )
 }
 
@@ -916,6 +1039,7 @@ function decommissionSatelliteByKind(kind: SatelliteInspectKind, count: number =
 
 function beforeToolChange(_from: PlayerTool, to: PlayerTool): boolean {
   if (to === 'drossCollector') return true
+  if (to === 'emCatapult') return canSelectEmCatapultTool()
   if (to === 'orbitalLaser') return orbitalLaserUnlocked
   if (to === 'excavatingLaser') return excavatingLaserUnlocked
   if (to === 'scanner') return scannerLaserUnlocked
@@ -986,6 +1110,20 @@ const gameStartTipsModal = createGameStartTipsModal(app, {
 })
 
 const { syncSunRotationSpeed, syncLightAngleSliders } = createSettingsMenu(app, {
+  getReplicatorTransformDebugLines: () => {
+    const lines: string[] = []
+    for (const c of voxelCells) {
+      if (c.replicatorTransformTarget === undefined) continue
+      const t = c.replicatorTransformTarget
+      const label = REPLICATOR_TARGET_DEBUG_LABEL[t]
+      const elapsedSec = (c.replicatorTransformElapsedMs ?? 0) / 1000
+      const totalSec = (c.replicatorTransformTotalMs ?? 0) / 1000
+      lines.push(
+        `(${c.pos.x},${c.pos.y},${c.pos.z}) → ${label}  ${elapsedSec.toFixed(1)}s / ${totalSec.toFixed(1)}s`,
+      )
+    }
+    return lines
+  },
   leadingActions: overlaysLeading,
   onOpenTips: () => {
     gameStartTipsModal.show()
@@ -1056,8 +1194,46 @@ const { syncSunRotationSpeed, syncLightAngleSliders } = createSettingsMenu(app, 
   onDebugUnlockAllTools: () => {
     debugUnlockAllToolsHandlers.apply()
   },
+  onDebugShowAllLodes: () => {
+    const next = new Set<number>()
+    const eps = 1e-6
+    for (let i = 0; i < voxelCells.length; i++) {
+      const rl = voxelCells[i].rareLodeStrength01
+      if (rl !== undefined && rl > eps) next.add(i)
+    }
+    debugLodeDisplayIndices = next.size > 0 ? next : null
+    reapplyAllRockColorsNoLaser()
+  },
+  onDebugClearLodeDisplay: () => {
+    debugLodeDisplayIndices = null
+    reapplyAllRockColorsNoLaser()
+  },
 })
 syncSunRotationSpeedUi = syncSunRotationSpeed
+
+function refineryRecipeUiState(): RefineryRecipeUiState {
+  return {
+    unlockPoints: computroniumUnlockPoints.current,
+    activeComputronium: countActiveComputronium(voxelCells),
+    debugUnlockAllRecipes: debugUnlockAllTools,
+  }
+}
+
+function clampRefinerySelection(): void {
+  const st = refineryRecipeUiState()
+  if (isRefineryRecipeUnlocked(selectedRefineryRoot, st, gameBalance)) return
+  selectedRefineryRoot = defaultRefineryRecipeSelection((r) => isRefineryRecipeUnlocked(r, st, gameBalance))
+}
+
+const refineryRecipesModal = createRefineryRecipesModal(app, {
+  getSelectedRoot: () => selectedRefineryRoot,
+  onSelectRoot: (root) => {
+    selectedRefineryRoot = root
+    clampRefinerySelection()
+  },
+  getRecipePhase: (root) => getRefineryRecipeUiPhase(root, refineryRecipeUiState(), gameBalance),
+  getResourceTallies: () => resourceTallies,
+})
 
 const {
   getSelectedTool,
@@ -1134,12 +1310,125 @@ const {
       },
       gameBalance,
     ),
+  getEmCatapultToolUiPhase: () =>
+    debugUnlockAllTools
+      ? 'unlocked'
+      : getEmCatapultToolUiPhase(
+          {
+            unlockPoints: computroniumUnlockPoints.current,
+            activeComputronium: countActiveComputronium(voxelCells),
+            drossCollectorUnlocked,
+            emCatapultUnlocked,
+          },
+          gameBalance,
+        ),
   onDecommissionSatellite: decommissionSatelliteByKind,
+  openRefineryRecipesModal: () => {
+    clampRefinerySelection()
+    refineryRecipesModal.show()
+  },
+  onReplicatorKillswitch: () => {
+    replicatorKillswitchEngaged = true
+    refreshToolCosts()
+  },
+  onReplicatorResume: () => {
+    replicatorKillswitchEngaged = false
+    refreshToolCosts()
+  },
+  getReplicatorKillswitchEngaged: () => replicatorKillswitchEngaged,
+  hasReplicatorNetworkActivity: () => {
+    for (const c of voxelCells) {
+      if (c.kind === 'replicator') return true
+      if (c.replicatorActive || c.replicatorEating) return true
+    }
+    return false
+  },
+  onAfterRefreshToolCosts: () => {
+    clampRefinerySelection()
+    refineryRecipesModal.refresh()
+  },
+  onGameBalancePatch: () => {
+    reapplyAllRockColorsNoLaser()
+  },
 })
 refreshToolCosts = refreshCosts
 setSelectedTool = setSelectedToolFromPanel
 
+function projectDiscoveryFoundAt(pos: VoxelPos) {
+  return projectVoxelPosToClient(
+    pos,
+    gridSize,
+    voxelSize,
+    asteroidBundle.group,
+    camera,
+    renderer.domElement.getBoundingClientRect(),
+  )
+}
+
+function updateDiscoveryPendingAnchors(): void {
+  if (pendingDiscoveries.length === 0) return
+  const w = window.innerWidth
+  const h = window.innerHeight
+  discoveryPendingSvg.setAttribute('viewBox', `0 0 ${w} ${h}`)
+  discoveryPendingSvg.setAttribute('width', String(w))
+  discoveryPendingSvg.setAttribute('height', String(h))
+
+  const canvasRect = renderer.domElement.getBoundingClientRect()
+  const CHIP = 28
+  const half = CHIP / 2
+
+  for (let idx = 0; idx < pendingDiscoveries.length; idx++) {
+    const offer = pendingDiscoveries[idx]!
+    const wrap = discoveryPendingChips.querySelector(
+      `[data-discovery-id="${CSS.escape(offer.id)}"]`,
+    ) as HTMLElement | null
+    const line = discoveryPendingSvg.querySelector(
+      `line[data-discovery-id="${CSS.escape(offer.id)}"]`,
+    ) as SVGLineElement | null
+    if (!wrap || !line) continue
+
+    const { clientX: vx, clientY: vy, onScreen } = projectVoxelPosToClient(
+      offer.foundAt,
+      gridSize,
+      voxelSize,
+      asteroidBundle.group,
+      camera,
+      canvasRect,
+    )
+
+    let cx: number
+    let cy: number
+    if (onScreen) {
+      cx = vx + 44
+      cy = vy - 44 - idx * 36
+      cx = Math.min(Math.max(half + 8, cx), w - half - 8)
+      cy = Math.min(Math.max(half + 8, cy), h - half - 8)
+    } else {
+      cx = w - half - 16
+      cy = 80 + half + idx * 40
+    }
+
+    wrap.style.left = `${cx - half}px`
+    wrap.style.top = `${cy - half}px`
+
+    if (onScreen) {
+      const wr = wrap.getBoundingClientRect()
+      const wcx = wr.left + wr.width / 2
+      const wcy = wr.top + wr.height / 2
+      const end = segmentFirstBorderHitTowardRect(vx, vy, wcx, wcy, wr)
+      line.setAttribute('x1', String(vx))
+      line.setAttribute('y1', String(vy))
+      line.setAttribute('x2', String(end.x))
+      line.setAttribute('y2', String(end.y))
+      line.setAttribute('opacity', '1')
+    } else {
+      line.setAttribute('opacity', '0')
+    }
+  }
+}
+
 const discoveryModal = createDiscoveryModal(app, {
+  projectFoundAt: projectDiscoveryFoundAt,
   onOk(offer) {
     const laserUnlockApply: LaserUnlockApply = {
       orbitalLaserUnlocked,
@@ -1147,6 +1436,7 @@ const discoveryModal = createDiscoveryModal(app, {
       scannerLaserUnlocked,
       depthScanUnlocked,
       drossCollectorUnlocked,
+      emCatapultUnlocked,
       orbitalSatelliteCount,
       excavatingSatelliteCount,
       scannerSatelliteCount,
@@ -1158,6 +1448,7 @@ const discoveryModal = createDiscoveryModal(app, {
     scannerLaserUnlocked = laserUnlockApply.scannerLaserUnlocked
     depthScanUnlocked = laserUnlockApply.depthScanUnlocked
     drossCollectorUnlocked = laserUnlockApply.drossCollectorUnlocked
+    emCatapultUnlocked = laserUnlockApply.emCatapultUnlocked
     orbitalSatelliteCount = laserUnlockApply.orbitalSatelliteCount
     excavatingSatelliteCount = laserUnlockApply.excavatingSatelliteCount
     scannerSatelliteCount = laserUnlockApply.scannerSatelliteCount
@@ -1181,13 +1472,17 @@ const satelliteInspectModal = createSatelliteInspectModal(app, {
 })
 
 function syncDiscoveryHud(): void {
-  discoveryHudStrip.replaceChildren()
+  discoveryPendingChips.replaceChildren()
+  discoveryPendingSvg.replaceChildren()
   if (pendingDiscoveries.length === 0) {
-    discoveryHudStrip.hidden = true
+    discoveryPendingLayer.hidden = true
     return
   }
-  discoveryHudStrip.hidden = false
+  discoveryPendingLayer.hidden = false
   for (const offer of pendingDiscoveries) {
+    const wrap = document.createElement('div')
+    wrap.className = 'discovery-pending-chip-wrap'
+    wrap.dataset.discoveryId = offer.id
     const btn = document.createElement('button')
     btn.type = 'button'
     btn.className = 'discovery-hud-icon discovery-hud-icon--pulse'
@@ -1202,12 +1497,19 @@ function syncDiscoveryHud(): void {
       syncDiscoveryHud()
       discoveryModal.show(offerRef)
     })
-    discoveryHudStrip.appendChild(btn)
+    wrap.appendChild(btn)
+    discoveryPendingChips.appendChild(wrap)
+
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line')
+    line.classList.add('discovery-pending-connector-line')
+    line.dataset.discoveryId = offer.id
+    discoveryPendingSvg.appendChild(line)
   }
+  updateDiscoveryPendingAnchors()
 }
 
 function tryDiscoveryAt(pos: VoxelPos): void {
-  const offer = tryDiscoveryClaim(
+  const result = tryDiscoveryClaim(
     currentSeed,
     pos,
     gameBalance,
@@ -1215,13 +1517,17 @@ function tryDiscoveryAt(pos: VoxelPos): void {
     discoveryCounter,
     discoveryDensityScale(asteroidProfile),
   )
-  if (offer) {
+  if (result.kind === 'offer') {
+    const offer = result.offer
     if (discoveryAutoResolve) {
       discoveryModal.show(offer)
     } else {
       pendingDiscoveries.push(offer)
       syncDiscoveryHud()
     }
+  } else if (result.kind === 'falseSignal') {
+    playDiscoveryFalseSignal()
+    showFalseSignalToast()
   }
   reapplyAllRockColorsNoLaser()
 }
@@ -1233,6 +1539,7 @@ function applyDebugUnlockAllTools(): void {
   scannerLaserUnlocked = true
   depthScanUnlocked = true
   drossCollectorUnlocked = true
+  emCatapultUnlocked = true
   orbitalSatelliteCount = Math.max(1, orbitalSatelliteCount)
   excavatingSatelliteCount = Math.max(1, excavatingSatelliteCount)
   scannerSatelliteCount = Math.max(1, scannerSatelliteCount)
@@ -1247,6 +1554,7 @@ function applyDebugUnlockAllTools(): void {
     drossCollectorSatelliteCount,
     orbitVisualRadius,
   )
+  clampRefinerySelection()
 }
 debugUnlockAllToolsHandlers.apply = applyDebugUnlockAllTools
 
@@ -1306,6 +1614,7 @@ function convertCellToProcessedMatter(cell: VoxelCell): void {
   cell.replicatorMsPerHp = undefined
   cell.storedResources = undefined
   cell.passiveRemainder = undefined
+  clearReplicatorTransformState(cell)
   clearSurfaceScanTint(cell)
   clearDepthRevealState(cell)
   tryDiscoveryAt(cell.pos)
@@ -1445,6 +1754,7 @@ function refreshExplosiveFuseRockColors(): void {
     buildSurfaceScanTintIndexMap(),
     depthOverlayTintActive(),
     buildDiscoveryScanHintIndices(),
+    debugLodeDisplayIndices,
   )
   syncDepthOverlayMaterials()
 }
@@ -1581,6 +1891,7 @@ function refreshLaserRockHighlightColors(): void {
       buildSurfaceScanTintIndexMap(),
       depthOverlayTintActive(),
       buildDiscoveryScanHintIndices(),
+      debugLodeDisplayIndices,
     )
     syncDepthOverlayMaterials()
     return
@@ -1604,6 +1915,7 @@ function refreshLaserRockHighlightColors(): void {
       buildSurfaceScanTintIndexMap(),
       depthOverlayTintActive(),
       buildDiscoveryScanHintIndices(),
+      debugLodeDisplayIndices,
     )
     syncDepthOverlayMaterials()
   }
@@ -1621,6 +1933,7 @@ function clearLaserRockHighlightColors(): void {
     buildSurfaceScanTintIndexMap(),
     depthOverlayTintActive(),
     buildDiscoveryScanHintIndices(),
+    debugLodeDisplayIndices,
   )
   syncDepthOverlayMaterials()
 }
@@ -1797,12 +2110,9 @@ function tryConvertStructure(clientX: number, clientY: number, targetKind: Struc
   if (i === null) return
 
   const cell = voxelCells[i]
-  if (!tryConvertReplicatorToKind(cell, targetKind, resourceTallies)) return
+  if (!tryStartReplicatorTransform(cell, targetKind, resourceTallies)) return
 
-  replaceAsteroidMesh(voxelCells)
   setResourceHud()
-  playReplicatorPlaceClick()
-  syncOverlaysDepthRow()
 }
 
 function tryPlaceDepthScannerAt(clientX: number, clientY: number): void {
@@ -1892,11 +2202,9 @@ function tryComputroniumToolAt(clientX: number, clientY: number): void {
     return
   }
 
-  if (!tryConvertReplicatorToComputronium(cell, resourceTallies)) return
+  if (!tryStartReplicatorTransform(cell, 'computronium', resourceTallies)) return
 
-  replaceAsteroidMesh(voxelCells)
   setResourceHud()
-  playReplicatorPlaceClick()
 }
 
 function tryOrbitalLaserHit(clientX: number, clientY: number): void {
@@ -2058,6 +2366,16 @@ canvas.addEventListener('pointerup', (e) => {
   pointerDown = null
   if (moved > CLICK_MAX_PX) return
   const tool = getSelectedTool()
+  if (tool === 'emCatapult') {
+    if (
+      confirm(
+        'Travel to a new asteroid? Research tiers, satellite unlocks, and deploy counts are kept. Resources, energy, and everything on this rock reset.',
+      )
+    ) {
+      emCatapultToNewAsteroid()
+    }
+    return
+  }
   if (tool === 'orbitalLaser' || tool === 'excavatingLaser') return
   if (tool === 'scanner') {
     tryScannerAt(e.clientX, e.clientY)
@@ -2132,7 +2450,19 @@ function tick(): void {
 
   stepExplosiveCharges(now)
 
+  const { meshDirty: transformMeshDirty, completedTransforms } = stepReplicatorTransforms(
+    dtMs,
+    voxelCells,
+    { paused: replicatorKillswitchEngaged },
+  )
+  if (completedTransforms > 0) {
+    playReplicatorPlaceClick()
+    setResourceHud()
+    syncOverlaysDepthRow()
+  }
+
   const { meshDirty, replicatorConsumeTicks } = stepReplicators(dtMs, voxelCells, {
+    replicatorPaused: replicatorKillswitchEngaged,
     onReplicatorRockHpConsumed(cell) {
       tryDiscoveryAt(cell.pos)
       if (Math.random() >= gameBalance.drossReplicatorSpawnChance) return
@@ -2142,7 +2472,7 @@ function tick(): void {
   if (replicatorConsumeTicks > 0) {
     playReplicatorConsumeClicks(replicatorConsumeTicks)
   }
-  if (meshDirty) {
+  if (meshDirty || transformMeshDirty) {
     replaceAsteroidMesh(voxelCells)
   }
 
@@ -2154,6 +2484,7 @@ function tick(): void {
     scannerLaserUnlocked,
     depthScanUnlocked,
     drossCollectorUnlocked,
+    emCatapultUnlocked,
     orbitalSatelliteCount,
     excavatingSatelliteCount,
     scannerSatelliteCount,
@@ -2173,6 +2504,7 @@ function tick(): void {
     scannerLaserUnlocked = laserUnlockApply.scannerLaserUnlocked
     depthScanUnlocked = laserUnlockApply.depthScanUnlocked
     drossCollectorUnlocked = laserUnlockApply.drossCollectorUnlocked
+    emCatapultUnlocked = laserUnlockApply.emCatapultUnlocked
     orbitalSatelliteCount = laserUnlockApply.orbitalSatelliteCount
     excavatingSatelliteCount = laserUnlockApply.excavatingSatelliteCount
     scannerSatelliteCount = laserUnlockApply.scannerSatelliteCount
@@ -2200,7 +2532,10 @@ function tick(): void {
     replaceAsteroidMesh(voxelCells)
   }
 
-  const refineryResult = stepRefineryProcessing(dtMs / 1000, voxelCells, resourceTallies, energyState)
+  const refineryResult = stepRefineryProcessing(dtMs / 1000, voxelCells, resourceTallies, energyState, {
+    selectedRoot: selectedRefineryRoot,
+    isRecipeUnlocked: (r) => isRefineryRecipeUnlocked(r, refineryRecipeUiState(), gameBalance),
+  })
   if (refineryResult.tallyChanged) {
     markMatterHudDirty()
   }
@@ -2231,7 +2566,6 @@ function tick(): void {
   }
 
   drossParticles.syncFromState(drossState, gridSize, voxelSize, currentSeed, now, scanVisualizationDebug)
-  updateDrossFog(scene, totalDrossMass(drossState), gameBalance)
 
   const eatingMat = asteroidBundle.eating.material as MeshStandardMaterial
   if (asteroidBundle.eating.visible && asteroidBundle.eating.count > 0) {
@@ -2331,7 +2665,18 @@ function tick(): void {
   }
 
   controls.update()
+  const orbitDist = camera.position.distanceTo(controls.target)
+  const orbitSpan = controls.maxDistance - controls.minDistance
+  const zoomBlacken01 =
+    orbitSpan > 0
+      ? Math.min(1, Math.max(0, (orbitDist - controls.minDistance) / orbitSpan))
+      : 0
+  updateDrossFog(scene, totalDrossMass(drossState), gameBalance, zoomBlacken01)
   applyFrameShake(camera)
+  updateDiscoveryPendingAnchors()
+  if (discoveryModal.isOpen()) {
+    discoveryModal.syncAnchor()
+  }
   if (depthOverlayTintActive()) {
     sortDepthOverlayRockInstancesByViewDistance(
       asteroidBundle,

@@ -1,5 +1,11 @@
 import type { GameBalance } from './gameBalance'
 import { trySpendEnergy } from './energyAndStructures'
+import {
+  computroniumTierThresholdForRefinerySlot,
+  isRefineryRootUnlockedByDefault,
+  refineryRootComputroniumSlot,
+} from './refineryRecipeUnlock'
+import type { RootResourceId } from './resources'
 import type { VoxelCell } from './voxelState'
 
 export interface LaserUnlockApply {
@@ -10,6 +16,8 @@ export interface LaserUnlockApply {
   depthScanUnlocked: boolean
   /** Fifth stage: cleanup collector satellite deploy. */
   drossCollectorUnlocked: boolean
+  /** Tier 6: EM Catapult tool (new asteroid while keeping research); same threshold as halides refinery. */
+  emCatapultUnlocked: boolean
   orbitalSatelliteCount: number
   excavatingSatelliteCount: number
   scannerSatelliteCount: number
@@ -134,6 +142,62 @@ export function getDrossCollectorDeployUiPhase(
 }
 
 /**
+ * EM Catapult tool UI: tier 6 (t6 = 6 × points-per-stage), after cleanup collector tier; same threshold as halides refinery.
+ */
+export function getEmCatapultToolUiPhase(
+  state: {
+    unlockPoints: number
+    activeComputronium: number
+    drossCollectorUnlocked: boolean
+    emCatapultUnlocked: boolean
+  },
+  balance: GameBalance,
+): LaserToolUiPhase {
+  const { unlockPoints, activeComputronium, drossCollectorUnlocked, emCatapultUnlocked } = state
+  const per = balance.computroniumPointsPerStage
+  const t6 = per * 6
+
+  if (emCatapultUnlocked) return 'unlocked'
+  if (!drossCollectorUnlocked) return 'hidden'
+  if (activeComputronium > 0 && unlockPoints < t6) return 'researching'
+  return 'hidden'
+}
+
+export interface RefineryRecipeUiState {
+  unlockPoints: number
+  activeComputronium: number
+  /** When true (debug), all refinement recipes are treated as unlocked. */
+  debugUnlockAllRecipes: boolean
+}
+
+/**
+ * Per-root refinement recipe: same phase rules as laser tools (tier 6+ thresholds in
+ * {@link refineryRootComputroniumSlot} / {@link computroniumTierThresholdForRefinerySlot}).
+ */
+export function getRefineryRecipeUiPhase(
+  root: RootResourceId,
+  state: RefineryRecipeUiState,
+  balance: GameBalance,
+): LaserToolUiPhase {
+  if (state.debugUnlockAllRecipes) return 'unlocked'
+  if (isRefineryRootUnlockedByDefault(root)) return 'unlocked'
+  const slot = refineryRootComputroniumSlot(root)
+  if (slot === null) return 'unlocked'
+  const threshold = computroniumTierThresholdForRefinerySlot(balance, slot)
+  if (state.unlockPoints >= threshold) return 'unlocked'
+  if (state.activeComputronium > 0 && state.unlockPoints < threshold) return 'researching'
+  return 'hidden'
+}
+
+export function isRefineryRecipeUnlocked(
+  root: RootResourceId,
+  state: RefineryRecipeUiState,
+  balance: GameBalance,
+): boolean {
+  return getRefineryRecipeUiPhase(root, state, balance) === 'unlocked'
+}
+
+/**
  * Active computronium drains energy; unlock points accrue proportional to how much of that
  * drain was actually paid. No progress when the pool is empty (scale 0).
  */
@@ -165,6 +229,7 @@ export function stepComputronium(
   const t3 = per * 3
   const t4 = per * 4
   const t5 = per * 5
+  const t6 = per * 6
 
   if (!flags.orbitalLaserUnlocked && unlockPoints.current >= t1) {
     flags.orbitalLaserUnlocked = true
@@ -190,15 +255,19 @@ export function stepComputronium(
     flags.drossCollectorSatelliteCount = Math.max(1, flags.drossCollectorSatelliteCount)
     unlocksChanged = true
   }
+  if (!flags.emCatapultUnlocked && unlockPoints.current >= t6) {
+    flags.emCatapultUnlocked = true
+    unlocksChanged = true
+  }
 
   return unlocksChanged
 }
 
 /**
  * Force research tiers up to `tier` (inclusive), matching cumulative unlocks from {@link stepComputronium}
- * when crossing each threshold (satellite floors for laser tiers + cleanup collector at tier 5).
+ * when crossing each threshold (satellite floors for laser tiers + cleanup collector at tier 5 + EM Catapult at tier 6).
  */
-export function applyResearchTierGrant(tier: 1 | 2 | 3 | 4 | 5, flags: LaserUnlockApply): void {
+export function applyResearchTierGrant(tier: 1 | 2 | 3 | 4 | 5 | 6, flags: LaserUnlockApply): void {
   if (tier >= 1) {
     flags.orbitalLaserUnlocked = true
     flags.orbitalSatelliteCount = Math.max(1, flags.orbitalSatelliteCount)
@@ -217,5 +286,8 @@ export function applyResearchTierGrant(tier: 1 | 2 | 3 | 4 | 5, flags: LaserUnlo
   if (tier >= 5) {
     flags.drossCollectorUnlocked = true
     flags.drossCollectorSatelliteCount = Math.max(1, flags.drossCollectorSatelliteCount)
+  }
+  if (tier >= 6) {
+    flags.emCatapultUnlocked = true
   }
 }

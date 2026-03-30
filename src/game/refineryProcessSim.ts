@@ -4,7 +4,6 @@ import { trySpendEnergy } from './energyAndStructures'
 import {
   addResourceYields,
   refinementYieldForParent,
-  ROOT_RESOURCE_IDS,
   type ResourceId,
   type RootResourceId,
 } from './resources'
@@ -22,11 +21,18 @@ export interface StepRefineryProcessingResult {
   tallyChanged: boolean
 }
 
+export interface RefineryProcessingOptions {
+  /** Global active recipe: only this root is consumed when stock allows. */
+  selectedRoot: RootResourceId
+  isRecipeUnlocked: (root: RootResourceId) => boolean
+}
+
 export function stepRefineryProcessing(
   dtSec: number,
   cells: VoxelCell[],
   tallies: Record<ResourceId, number>,
   energyState: { current: number },
+  options: RefineryProcessingOptions,
 ): StepRefineryProcessingResult {
   if (dtSec <= 0) {
     return { tallyChanged: false }
@@ -34,6 +40,11 @@ export function stepRefineryProcessing(
 
   const active = cells.filter(isRefineryProcessing)
   if (active.length === 0) {
+    return { tallyChanged: false }
+  }
+
+  const { selectedRoot, isRecipeUnlocked } = options
+  if (!isRecipeUnlocked(selectedRoot)) {
     return { tallyChanged: false }
   }
 
@@ -55,24 +66,17 @@ export function stepRefineryProcessing(
       if (energyState.current < REFINERY_ENERGY_PER_ROOT) break
       if (energySpent + REFINERY_ENERGY_PER_ROOT > maxEnergyThisTick) break
 
-      let rid: RootResourceId | null = null
-      for (const id of ROOT_RESOURCE_IDS) {
-        if ((tallies[id] ?? 0) >= 1) {
-          rid = id
-          break
-        }
-      }
-      if (rid === null) break
+      if ((tallies[selectedRoot] ?? 0) < 1) break
 
       const spent = trySpendEnergy(energyState, REFINERY_ENERGY_PER_ROOT)
       if (spent < REFINERY_ENERGY_PER_ROOT) break
-      if ((tallies[rid] ?? 0) < 1) {
+      if ((tallies[selectedRoot] ?? 0) < 1) {
         energyState.current += spent
         break
       }
-      tallies[rid] -= 1
+      tallies[selectedRoot] -= 1
       energySpent += spent
-      addResourceYields(tallies, refinementYieldForParent(rid))
+      addResourceYields(tallies, refinementYieldForParent(selectedRoot))
       tallyChanged = true
     }
   }

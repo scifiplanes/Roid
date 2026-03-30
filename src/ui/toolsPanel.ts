@@ -1,4 +1,4 @@
-import { gameBalance } from '../game/gameBalance'
+import { gameBalance, patchGameBalance } from '../game/gameBalance'
 import {
   getScaledBatteryBuildCost,
   getScaledComputroniumBuildCost,
@@ -17,6 +17,7 @@ import {
   type ResourceId,
 } from '../game/resources'
 import { schedulePersistSettingsClient } from '../game/settingsClientPersist'
+import { GIBBERISH_INTERVAL_MS, randomGibberish } from './researchGibberish'
 import { loadToolsBarCollapsed, saveToolsBarCollapsed } from './uiLayoutPrefs'
 
 export type PlayerTool =
@@ -34,6 +35,7 @@ export type PlayerTool =
   | 'depthScanner'
   | 'drossCollector'
   | 'computronium'
+  | 'emCatapult'
 
 export interface LaserSatelliteRowSnapshot {
   orbital: {
@@ -64,6 +66,14 @@ export interface LaserSatelliteRowSnapshot {
 
 export type SatelliteDeployKind = 'orbital' | 'excavating' | 'scanner' | 'drossCollector'
 
+/** Which main-row tool must be selected for each +sat deploy button (contextual row). */
+const SATELLITE_DEPLOY_TOOL: Record<SatelliteDeployKind, PlayerTool> = {
+  orbital: 'orbitalLaser',
+  excavating: 'excavatingLaser',
+  scanner: 'scanner',
+  drossCollector: 'drossCollector',
+}
+
 export interface ToolsPanelOptions {
   initialTool?: PlayerTool
   onToolChange?: (tool: PlayerTool) => void
@@ -89,12 +99,28 @@ export interface ToolsPanelOptions {
   getStructureToolUiPhase?: (tool: StructureToolId) => 'hidden' | 'unlocked'
   /** F10: same phase as mining laser (computronium tier 1). */
   getExplosiveChargeToolUiPhase?: () => LaserToolUiPhase
+  /** Tier 6: EM Catapult (new asteroid, keep research). */
+  getEmCatapultToolUiPhase?: () => LaserToolUiPhase
   /** Per-arm affordability: resources plus energy (see balance). */
   canAffordExplosiveChargeArm?: () => boolean
   /** When set, tool cost lines show `have/need` per resource (and optional energy for Charge). */
   getResourceTallies?: () => Record<ResourceId, number>
   /** Current energy for explosive Charge `E have/need`; use with `getResourceTallies`. */
   getCurrentEnergy?: () => number
+  /** Refinery tool: opens refinement recipe modal (global recipe selection). */
+  openRefineryRecipesModal?: () => void
+  /** Replicator tool: pause feeding + transform progress after modal confirm. */
+  onReplicatorKillswitch?: () => void
+  /** Clear killswitch pause (no modal). */
+  onReplicatorResume?: () => void
+  /** Whether replicator feeding/transforms are frozen. */
+  getReplicatorKillswitchEngaged?: () => boolean
+  /** True when there is a replicator voxel or rock with replicator spread/eating. */
+  hasReplicatorNetworkActivity?: () => boolean
+  /** Called at the end of every `refreshToolCosts` (e.g. modal gibberish sync). */
+  onAfterRefreshToolCosts?: () => void
+  /** After `patchGameBalance` from the tools dock (e.g. depth lode opacity row). */
+  onGameBalancePatch?: () => void
 }
 
 type CostToolKind =
@@ -110,6 +136,7 @@ type CostToolKind =
   | 'excavatingLaserUnlock'
   | 'scannerUnlock'
   | 'drossCollectorInfo'
+  | 'emCatapultInfo'
 
 const TOOLS: ReadonlyArray<{
   id: PlayerTool
@@ -243,6 +270,15 @@ const TOOLS: ReadonlyArray<{
     short: 'Replicator → computronium; research unlocks',
     costTool: 'computronium',
   },
+  {
+    id: 'emCatapult',
+    fKey: 'F14',
+    label: 'EM Catapult',
+    title:
+      'After computronium tier 6 (cleanup tier first): click the view to travel to a new procedural asteroid. Keeps research tiers, satellite unlocks, and deploy counts; resets resources, energy, and surface structures. Settings → Regenerate asteroid still resets everything.',
+    short: 'New asteroid; keep research',
+    costTool: 'emCatapultInfo',
+  },
 ]
 
 function costForTool(kind: CostToolKind): Partial<Record<ResourceId, number>> {
@@ -255,22 +291,8 @@ function costForTool(kind: CostToolKind): Partial<Record<ResourceId, number>> {
   if (kind === 'depthScanner') return getScaledDepthScannerBuildCost()
   if (kind === 'computronium') return getScaledComputroniumBuildCost()
   if (kind === 'drossCollectorInfo') return {}
+  if (kind === 'emCatapultInfo') return {}
   return {}
-}
-
-const GIBBERISH_ALPHABET =
-  '█▓▒░▀▄▌▐┤┘┌┴┬├┼│─┼╪Øµþÿ¿½¼£¥ßðþÞ¦§'
-
-/** How often researching laser labels reshuffle (much slower than frame rate). */
-const GIBBERISH_INTERVAL_MS = 2000
-
-function randomGibberish(len: number): string {
-  let s = ''
-  const n = Math.max(0, len | 0)
-  for (let i = 0; i < n; i++) {
-    s += GIBBERISH_ALPHABET[(Math.random() * GIBBERISH_ALPHABET.length) | 0]
-  }
-  return s
 }
 
 function applyGibberishFixedWidths(ui: {
@@ -324,11 +346,19 @@ export function createToolsPanel(
     getDepthScanToolUiPhase,
     getDrossCollectorDeployUiPhase,
     getDrossCollectorToolUiPhase,
+    getEmCatapultToolUiPhase,
     getStructureToolUiPhase,
     getExplosiveChargeToolUiPhase,
     canAffordExplosiveChargeArm,
     getResourceTallies,
     getCurrentEnergy,
+    openRefineryRecipesModal,
+    onReplicatorKillswitch,
+    onReplicatorResume,
+    getReplicatorKillswitchEngaged,
+    hasReplicatorNetworkActivity,
+    onAfterRefreshToolCosts,
+    onGameBalancePatch,
   }: ToolsPanelOptions = {},
 ): {
   getSelectedTool: () => PlayerTool
@@ -349,6 +379,31 @@ export function createToolsPanel(
   selectedCostStrip.setAttribute('role', 'status')
   selectedCostStrip.setAttribute('aria-live', 'polite')
   selectedCostStrip.hidden = true
+
+  const depthLodeOpacityRow = document.createElement('div')
+  depthLodeOpacityRow.className = 'tools-depth-lode-opacity-row'
+  depthLodeOpacityRow.hidden = true
+  const depthLodeOpacityLabel = document.createElement('label')
+  depthLodeOpacityLabel.className = 'tools-depth-lode-opacity-label'
+  depthLodeOpacityLabel.htmlFor = 'tools-depth-lode-opacity-range'
+  depthLodeOpacityLabel.textContent = 'Depth overlay — warm lode full opacity ≥'
+  const depthLodeOpacityInput = document.createElement('input')
+  depthLodeOpacityInput.type = 'range'
+  depthLodeOpacityInput.id = 'tools-depth-lode-opacity-range'
+  depthLodeOpacityInput.min = '0'
+  depthLodeOpacityInput.max = '1'
+  depthLodeOpacityInput.step = '0.02'
+  depthLodeOpacityInput.value = String(gameBalance.depthOverlayLodeFullOpacityMinDensity)
+  const depthLodeOpacityVal = document.createElement('span')
+  depthLodeOpacityVal.className = 'tools-depth-lode-opacity-val'
+  depthLodeOpacityVal.textContent = gameBalance.depthOverlayLodeFullOpacityMinDensity.toFixed(2)
+  depthLodeOpacityRow.append(depthLodeOpacityLabel, depthLodeOpacityInput, depthLodeOpacityVal)
+  depthLodeOpacityInput.addEventListener('input', () => {
+    const n = Number(depthLodeOpacityInput.value)
+    depthLodeOpacityVal.textContent = n.toFixed(2)
+    patchGameBalance({ depthOverlayLodeFullOpacityMinDensity: n })
+    onGameBalancePatch?.()
+  })
 
   let selected: PlayerTool = initialTool
   const buttons = new Map<PlayerTool, HTMLButtonElement>()
@@ -424,6 +479,169 @@ export function createToolsPanel(
 
   satContextRow.append(satContextStatus, satContextActions)
 
+  const refineryContextRow = document.createElement('div')
+  refineryContextRow.className = 'tools-refinery-context'
+  refineryContextRow.hidden = true
+
+  const refineryRecipesBtn = document.createElement('button')
+  refineryRecipesBtn.type = 'button'
+  refineryRecipesBtn.className = 'tools-refinery-recipes-btn'
+  refineryRecipesBtn.textContent = 'Recipes'
+  refineryRecipesBtn.title = 'Choose which root resource refineries process'
+  refineryRecipesBtn.setAttribute('aria-label', 'Refinery recipes')
+  refineryRecipesBtn.addEventListener('click', () => {
+    openRefineryRecipesModal?.()
+  })
+  refineryContextRow.append(refineryRecipesBtn)
+
+  function syncRefineryRecipeRow(): void {
+    if (!openRefineryRecipesModal) {
+      refineryContextRow.hidden = true
+      return
+    }
+    const show = selected === 'refinery' && !isToolHidden('refinery')
+    refineryContextRow.hidden = !show
+  }
+
+  let replicatorContextRow: HTMLDivElement | undefined
+  let replicatorKillswitchBtn: HTMLButtonElement | undefined
+
+  let openReplicatorKillswitchModal: () => void = () => {}
+
+  if (onReplicatorKillswitch) {
+    const runKillswitch = onReplicatorKillswitch
+    const runResume = onReplicatorResume
+    const killswitchEngaged = getReplicatorKillswitchEngaged
+    replicatorContextRow = document.createElement('div')
+    replicatorContextRow.className = 'tools-refinery-context tools-replicator-context'
+    replicatorContextRow.hidden = true
+
+    replicatorKillswitchBtn = document.createElement('button')
+    replicatorKillswitchBtn.type = 'button'
+    replicatorKillswitchBtn.className = 'tools-refinery-recipes-btn tools-replicator-killswitch-btn'
+    replicatorKillswitchBtn.textContent = 'Killswitch'
+    replicatorKillswitchBtn.setAttribute('aria-label', 'Replicator killswitch')
+    replicatorContextRow.append(replicatorKillswitchBtn)
+
+    replicatorKillswitchBtn.addEventListener('click', () => {
+      if (replicatorKillswitchBtn!.disabled) return
+      if (killswitchEngaged?.()) {
+        runResume?.()
+        return
+      }
+      openReplicatorKillswitchModal()
+    })
+
+    const ksRoot = document.createElement('div')
+    ksRoot.className = 'discovery-modal-root replicator-killswitch-modal'
+    ksRoot.hidden = true
+    ksRoot.setAttribute('role', 'presentation')
+
+    const ksScrim = document.createElement('div')
+    ksScrim.className = 'discovery-modal-scrim'
+
+    const ksPanel = document.createElement('div')
+    ksPanel.className = 'discovery-modal-panel'
+    ksPanel.setAttribute('role', 'dialog')
+    ksPanel.setAttribute('aria-modal', 'true')
+    ksPanel.setAttribute('aria-labelledby', 'replicator-killswitch-modal-title')
+
+    const ksTitle = document.createElement('div')
+    ksTitle.id = 'replicator-killswitch-modal-title'
+    ksTitle.className = 'discovery-modal-title'
+    ksTitle.textContent = 'Replicator killswitch'
+
+    const ksBody = document.createElement('div')
+    ksBody.className = 'discovery-modal-body'
+    const ksP = document.createElement('p')
+    ksP.className = 'discovery-modal-p'
+    ksP.textContent =
+      'This pauses replicator feeding on rock and freezes in-progress replicator-to-structure timers. Replicator voxels stay in place; click Resume on the tools row to continue.'
+
+    ksBody.append(ksP)
+
+    const ksButtons = document.createElement('div')
+    ksButtons.className = 'discovery-modal-buttons'
+
+    const ksCancel = document.createElement('button')
+    ksCancel.type = 'button'
+    ksCancel.className = 'discovery-modal-btn discovery-modal-btn-ok'
+    ksCancel.textContent = 'Cancel'
+
+    const ksConfirm = document.createElement('button')
+    ksConfirm.type = 'button'
+    ksConfirm.className = 'discovery-modal-btn discovery-modal-btn-danger'
+    ksConfirm.textContent = 'Pause network'
+
+    ksButtons.append(ksCancel, ksConfirm)
+    ksPanel.append(ksTitle, ksBody, ksButtons)
+    ksRoot.append(ksScrim, ksPanel)
+    container.appendChild(ksRoot)
+
+    let ksEscapeHandler: ((e: KeyboardEvent) => void) | null = null
+
+    function closeKsModal(): void {
+      ksRoot.hidden = true
+      if (ksEscapeHandler) {
+        document.removeEventListener('keydown', ksEscapeHandler)
+        ksEscapeHandler = null
+      }
+    }
+
+    function submitKs(): void {
+      runKillswitch()
+      closeKsModal()
+    }
+
+    ksScrim.addEventListener('click', closeKsModal)
+    ksCancel.addEventListener('click', closeKsModal)
+    ksConfirm.addEventListener('click', submitKs)
+
+    openReplicatorKillswitchModal = () => {
+      ksRoot.hidden = false
+      ksEscapeHandler = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          closeKsModal()
+        }
+      }
+      document.addEventListener('keydown', ksEscapeHandler)
+      ksConfirm.focus()
+    }
+  }
+
+  function syncDepthLodeOpacityRow(): void {
+    const show =
+      selected === 'depthScanner' &&
+      !isToolHidden('depthScanner') &&
+      getDepthScanToolUiPhase?.() !== 'hidden'
+    depthLodeOpacityRow.hidden = !show
+    if (show) {
+      const v = gameBalance.depthOverlayLodeFullOpacityMinDensity
+      depthLodeOpacityInput.value = String(v)
+      depthLodeOpacityVal.textContent = v.toFixed(2)
+    }
+  }
+
+  function syncReplicatorKillswitchRow(): void {
+    if (!replicatorContextRow || !replicatorKillswitchBtn || !onReplicatorKillswitch) return
+    const show = selected === 'replicator'
+    replicatorContextRow.hidden = !show
+    const engaged = getReplicatorKillswitchEngaged?.() ?? false
+    const active = hasReplicatorNetworkActivity?.() ?? false
+    replicatorKillswitchBtn.textContent = engaged ? 'Resume' : 'Killswitch'
+    replicatorKillswitchBtn.disabled = !active && !engaged
+    replicatorKillswitchBtn.setAttribute('aria-label', engaged ? 'Resume replicator network' : 'Replicator killswitch')
+    if (engaged) {
+      replicatorKillswitchBtn.title = 'Resume replicator feeding and replicator-to-structure timers.'
+    } else if (active) {
+      replicatorKillswitchBtn.title =
+        'Pause replicator feeding and in-progress conversions (opens confirmation).'
+    } else {
+      replicatorKillswitchBtn.title = 'No active replicators or spread on rock.'
+    }
+  }
+
   if (onDeploySatellite) {
     orbitalDeployBtn.addEventListener('click', () => {
       pendingSatelliteKind = 'orbital'
@@ -463,6 +681,7 @@ export function createToolsPanel(
     )
       return true
     if (tool === 'explosiveCharge' && getExplosiveChargeToolUiPhase?.() === 'hidden') return true
+    if (tool === 'emCatapult' && getEmCatapultToolUiPhase?.() === 'hidden') return true
     if (
       getLaserToolUiPhase &&
       (tool === 'orbitalLaser' || tool === 'excavatingLaser' || tool === 'scanner')
@@ -489,6 +708,9 @@ export function createToolsPanel(
     }
     if (toolId === 'explosiveCharge' && getExplosiveChargeToolUiPhase) {
       return getExplosiveChargeToolUiPhase()
+    }
+    if (toolId === 'emCatapult' && getEmCatapultToolUiPhase) {
+      return getEmCatapultToolUiPhase()
     }
     return null
   }
@@ -549,6 +771,9 @@ export function createToolsPanel(
     onToolChange?.(tool)
     syncSelectedToolCostLine()
     if (onDeploySatellite && getLaserSatelliteRow) syncSatelliteDeployRow()
+    syncRefineryRecipeRow()
+    syncReplicatorKillswitchRow()
+    syncDepthLodeOpacityRow()
   }
 
   function setSelectedTool(tool: PlayerTool, options?: { skipBeforeToolChange?: boolean }): void {
@@ -565,6 +790,9 @@ export function createToolsPanel(
       onToolChange?.(tool)
       syncSelectedToolCostLine()
       if (onDeploySatellite && getLaserSatelliteRow) syncSatelliteDeployRow()
+      syncRefineryRecipeRow()
+      syncReplicatorKillswitchRow()
+      syncDepthLodeOpacityRow()
       return
     }
     setPressed(tool)
@@ -600,6 +828,7 @@ export function createToolsPanel(
   }): boolean {
     if (!canAffordResourceCost) return true
     if (ui.kind === 'drossCollectorInfo') return true
+    if (ui.kind === 'emCatapultInfo') return true
     if (ui.kind === 'explosiveChargeArm') {
       if (!canAffordExplosiveChargeArm) return true
       return canAffordExplosiveChargeArm()
@@ -623,6 +852,13 @@ export function createToolsPanel(
       ui.costSpan.textContent = 'Tier 5'
       setToolBlockedByAffordance(ui.button, false)
       ui.button.title = `${ui.baseTitle} Unlocked: deploy collectors from + Cleanup sat.`
+      ui.button.setAttribute('aria-label', ui.button.title)
+      return
+    }
+    if (ui.kind === 'emCatapultInfo') {
+      ui.costSpan.textContent = 'Tier 6'
+      setToolBlockedByAffordance(ui.button, false)
+      ui.button.title = `${ui.baseTitle} Unlocked: confirm on canvas to move to a new asteroid (research kept).`
       ui.button.setAttribute('aria-label', ui.button.title)
       return
     }
@@ -811,17 +1047,21 @@ export function createToolsPanel(
 
   function syncSatelliteDeployRow(): void {
     if (!onDeploySatellite || !getLaserSatelliteRow) return
+    if (pendingSatelliteKind !== null) {
+      if (SATELLITE_DEPLOY_TOOL[pendingSatelliteKind] !== selected) pendingSatelliteKind = null
+    }
     const snap = getLaserSatelliteRow()
     const o = snap.orbital
     const e = snap.excavating
     const s = snap.scanner
     const d = snap.drossCollector
     const drossPhase = getDrossCollectorDeployUiPhase?.() ?? 'hidden'
-    orbitalDeployBtn.hidden = !o.unlocked
-    excavatingDeployBtn.hidden = !e.unlocked
-    scannerDeployBtn.hidden = !s.unlocked
-    drossDeployBtn.hidden = drossPhase === 'hidden'
-    satRow.hidden = !o.unlocked && !e.unlocked && !s.unlocked && drossPhase === 'hidden'
+    orbitalDeployBtn.hidden = !o.unlocked || selected !== 'orbitalLaser'
+    excavatingDeployBtn.hidden = !e.unlocked || selected !== 'excavatingLaser'
+    scannerDeployBtn.hidden = !s.unlocked || selected !== 'scanner'
+    drossDeployBtn.hidden = drossPhase === 'hidden' || selected !== 'drossCollector'
+    satRow.hidden =
+      orbitalDeployBtn.hidden && excavatingDeployBtn.hidden && scannerDeployBtn.hidden && drossDeployBtn.hidden
 
     if (pendingSatelliteKind === 'orbital' && orbitalDeployBtn.hidden) pendingSatelliteKind = null
     if (pendingSatelliteKind === 'excavating' && excavatingDeployBtn.hidden) pendingSatelliteKind = null
@@ -980,11 +1220,15 @@ export function createToolsPanel(
       applyCostToButton(ui)
     }
     syncSatelliteDeployRow()
+    syncRefineryRecipeRow()
+    syncReplicatorKillswitchRow()
+    syncDepthLodeOpacityRow()
 
     if (isToolHidden(selected)) {
       setSelectedTool('pick', { skipBeforeToolChange: true })
     }
     syncSelectedToolCostLine()
+    onAfterRefreshToolCosts?.()
   }
 
   if (onDeploySatellite) {
@@ -1048,7 +1292,10 @@ export function createToolsPanel(
                 cost: 'Computronium'.length,
               },
             }
-          : def.id === 'depthScanner' || def.id === 'explosiveCharge' || def.id === 'drossCollector'
+          : def.id === 'depthScanner' ||
+              def.id === 'explosiveCharge' ||
+              def.id === 'drossCollector' ||
+              def.id === 'emCatapult'
             ? {
                 fkeyEl,
                 labelEl,
@@ -1070,11 +1317,29 @@ export function createToolsPanel(
     row.appendChild(btn)
   }
 
+  const toolsBand = document.createElement('div')
+  toolsBand.className = 'tools-dock-tools-band'
+  toolsBand.append(row)
+
+  const contextCol = document.createElement('div')
+  contextCol.className = 'tools-dock-context-col'
+  if (onDeploySatellite) {
+    contextCol.append(satRow, satContextRow)
+  }
+  if (openRefineryRecipesModal) {
+    contextCol.append(refineryContextRow)
+  }
+  if (replicatorContextRow) {
+    contextCol.append(replicatorContextRow)
+  }
+  if (contextCol.childNodes.length > 0) {
+    toolsBand.append(contextCol)
+  }
+
   const dockBody = document.createElement('div')
   dockBody.className = 'tools-dock-body'
   dockBody.id = 'tools-dock-body'
-  dockBody.append(selectedCostStrip, row)
-  if (onDeploySatellite) dockBody.append(satRow, satContextRow)
+  dockBody.append(depthLodeOpacityRow, selectedCostStrip, toolsBand)
 
   const dockShell = document.createElement('div')
   dockShell.className = 'tools-dock-shell'

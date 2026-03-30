@@ -38,7 +38,15 @@ function pushStructureNotes(lines: string[], cell: VoxelCell, nowMs: number): vo
     lines.push(cell.computroniumDisabled === true ? 'Computronium: off' : 'Computronium: on')
   }
   if (kind === 'replicator') {
-    if (cell.replicatorEating) lines.push('Replicator: consuming rock')
+    const target = cell.replicatorTransformTarget
+    if (target !== undefined) {
+      const label = KIND_LABEL[target]
+      const elapsedSec = (cell.replicatorTransformElapsedMs ?? 0) / 1000
+      const totalSec = (cell.replicatorTransformTotalMs ?? 0) / 1000
+      lines.push(
+        `Replicator: transforming → ${label} (${elapsedSec.toFixed(1)}s / ${totalSec.toFixed(1)}s)`,
+      )
+    } else if (cell.replicatorEating) lines.push('Replicator: consuming rock')
     else if (cell.replicatorActive) lines.push('Replicator: mature')
     else lines.push('Replicator')
   }
@@ -66,6 +74,11 @@ export function formatInspectHudLines(cell: VoxelCell, nowMs: number): string[] 
   }
 
   pushStructureNotes(lines, cell, nowMs)
+
+  const rl0 = cell.rareLodeStrength01
+  if (rl0 != null && rl0 > 0.02 && cellParticipatesInDepthReveal(cell)) {
+    lines.push(`Rare lode signal: ${Math.round(rl0 * 100)}%`)
+  }
 
   const intel = voxelHasCompositionIntel(cell)
   if (!intel) {

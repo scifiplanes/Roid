@@ -6,6 +6,8 @@ const VOID_BACKGROUND_HEX = 0x000000
 
 let fog: FogExp2 | null = null
 const _fogRgb = new Color()
+const _fogTintDisplay = new Color()
+const _black = new Color(0x000000)
 const _bgBlend = new Color()
 
 function setSceneBackgroundColor(scene: Scene, c: Color): void {
@@ -34,7 +36,12 @@ export interface DrossFogBalance {
   drossFogColorB: number
 }
 
-export function updateDrossFog(scene: Scene, totalMass: number, balance: DrossFogBalance): void {
+export function updateDrossFog(
+  scene: Scene,
+  totalMass: number,
+  balance: DrossFogBalance,
+  zoomBlacken01 = 0,
+): void {
   const perMass = balance.drossFogDensityPerMass
   const cap = balance.drossFogDensityMax
   if (
@@ -56,11 +63,13 @@ export function updateDrossFog(scene: Scene, totalMass: number, balance: DrossFo
     return
   }
   _fogRgb.setRGB(balance.drossFogColorR, balance.drossFogColorG, balance.drossFogColorB)
+  const zb = Number.isFinite(zoomBlacken01) ? Math.min(1, Math.max(0, zoomBlacken01)) : 0
+  _fogTintDisplay.copy(_fogRgb).lerp(_black, zb)
   if (fog === null) {
-    fog = new FogExp2(_fogRgb, density)
+    fog = new FogExp2(_fogTintDisplay, density)
     scene.fog = fog
   } else {
-    fog.color.copy(_fogRgb)
+    fog.color.copy(_fogTintDisplay)
     fog.density = density
     scene.fog = fog
   }
@@ -69,6 +78,6 @@ export function updateDrossFog(scene: Scene, totalMass: number, balance: DrossFo
    * density vs cap so the backdrop ramps with dross instead of snapping to full fog immediately.
    */
   const bgMix = Math.min(1, density / cap)
-  _bgBlend.setHex(VOID_BACKGROUND_HEX).lerp(_fogRgb, bgMix)
+  _bgBlend.setHex(VOID_BACKGROUND_HEX).lerp(_fogTintDisplay, bgMix)
   setSceneBackgroundColor(scene, _bgBlend)
 }

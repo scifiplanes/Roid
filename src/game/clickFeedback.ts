@@ -323,6 +323,19 @@ export function startExcavatingLaserSustain(): void {
   }
 }
 
+/** Discovery site claimed but no offer (e.g. all archetype weights zero). Short down-chirp pair. */
+export function playDiscoveryFalseSignal(): void {
+  try {
+    const c = getAudioContext()
+    if (!c || c.state !== 'running') return
+    const t0 = c.currentTime
+    scheduleReplicatorClick(c, t0, 0.042, 880, 0.055, 0.008)
+    scheduleReplicatorClick(c, t0 + 0.07, 0.036, 520, 0.07, 0.01)
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Scanner satellite completed a neighborhood readout. */
 export function playScanPing(): void {
   try {

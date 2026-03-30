@@ -1,9 +1,13 @@
+import { Color } from 'three'
 import { describe, expect, it } from 'vitest'
 import { deriveAsteroidProfile, discoveryDensityScale } from './asteroidGenProfile'
 import { generateAsteroidVoxels } from '../scene/asteroid/generateAsteroidVoxels'
 import { enrichVoxelCells } from './voxelState'
 import { isDiscoverySite } from './discoveryGen'
 import { gameBalance } from './gameBalance'
+import { applyRareLodeEnrichment, morphologyWeights } from './rareLodeField'
+import { defaultUniformRootComposition, ROOT_RESOURCE_IDS } from './resources'
+import { densityToHeatmapRgb } from './scanVisualization'
 
 describe('deriveAsteroidProfile', () => {
   it('is deterministic for the same seed', () => {
@@ -68,5 +72,41 @@ describe('enrichVoxelCells + generation', () => {
       })
       expect(cells.length).toBe(positions.length)
     }
+  })
+})
+
+describe('rare lode morphology + heatmap', () => {
+  it('morphologyWeights sum to 1 for representative profiles', () => {
+    for (let s = 0; s < 80; s++) {
+      const w = morphologyWeights(deriveAsteroidProfile(s))
+      const sum = w.pocket + w.vein + w.speckle
+      expect(sum).toBeGreaterThan(0.999)
+      expect(sum).toBeLessThan(1.001)
+      expect(w.pocket).toBeGreaterThan(0)
+      expect(w.vein).toBeGreaterThan(0)
+      expect(w.speckle).toBeGreaterThan(0)
+    }
+  })
+
+  it('applyRareLodeEnrichment returns normalized bulk', () => {
+    const base = defaultUniformRootComposition()
+    const pos = { x: 7, y: 8, z: 9 }
+    for (const seed of [1, 42, 99]) {
+      const profile = deriveAsteroidProfile(seed)
+      const { bulk } = applyRareLodeEnrichment(seed, pos, base, profile)
+      let s = 0
+      for (const r of ROOT_RESOURCE_IDS) s += bulk[r] ?? 0
+      expect(s).toBeGreaterThan(0.999)
+      expect(s).toBeLessThan(1.001)
+    }
+  })
+
+  it('densityToHeatmapRgb is cool at 0 and warm at 1', () => {
+    const c0 = new Color()
+    const c1 = new Color()
+    densityToHeatmapRgb(0, c0)
+    densityToHeatmapRgb(1, c1)
+    expect(c0.b).toBeGreaterThan(c0.r)
+    expect(c1.r).toBeGreaterThan(c1.b)
   })
 })

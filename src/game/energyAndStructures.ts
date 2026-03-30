@@ -1,4 +1,4 @@
-import type { VoxelCell } from './voxelState'
+import type { ReplicatorTransformTarget, VoxelCell } from './voxelState'
 import type { VoxelKind } from './voxelKinds'
 import { clearDepthRevealState, clearSurfaceScanTint } from './scanVisualization'
 import { gameBalance } from './gameBalance'
@@ -152,6 +152,7 @@ export const SCANNER_UNLOCK_COST: Partial<Record<ResourceId, number>> = {
 }
 
 export type StructureConvertKind = Extract<VoxelKind, 'reactor' | 'battery' | 'hub' | 'refinery'>
+export type { ReplicatorTransformTarget } from './voxelState'
 export type LaserSatelliteKind = 'orbital' | 'excavating' | 'scanner' | 'drossCollector'
 
 function scaleToolCost(cost: Partial<Record<ResourceId, number>>): Partial<Record<ResourceId, number>> {
@@ -277,11 +278,13 @@ export function tryConvertCellToDepthScanner(
   cell.passiveRemainder = undefined
   cell.storedResources = undefined
   cell.bulkComposition = undefined
+  cell.rareLodeStrength01 = undefined
   cell.processedMatterUnits = undefined
   cell.processedMatterRootComposition = undefined
   cell.hubDisabled = undefined
   cell.refineryDisabled = undefined
   cell.explosiveFuseEndMs = undefined
+  clearReplicatorTransformState(cell)
   clearSurfaceScanTint(cell)
   clearDepthRevealState(cell)
   return true
@@ -364,19 +367,13 @@ export function stepEnergy(
   state.current = Math.min(state.current, cap)
 }
 
-/**
- * Converts a mature replicator cell into reactor, battery, hub, or refinery; deducts build cost.
- * Clears replicator eating flags. Returns false if the cell is not a replicator or payment fails.
- */
-export function tryConvertReplicatorToKind(
-  cell: VoxelCell,
-  kind: StructureConvertKind,
-  tallies: Record<ResourceId, number>,
-): boolean {
-  if (cell.kind !== 'replicator') return false
-  const cost = buildCostFor(kind)
-  if (!canAfford(tallies, cost)) return false
-  payCost(tallies, cost)
+export function clearReplicatorTransformState(cell: VoxelCell): void {
+  cell.replicatorTransformTarget = undefined
+  cell.replicatorTransformElapsedMs = undefined
+  cell.replicatorTransformTotalMs = undefined
+}
+
+function finalizeReplicatorToStructureKind(cell: VoxelCell, kind: StructureConvertKind): void {
   cell.kind = kind
   cell.hpRemaining = getKindDef(kind).maxDurability
   cell.replicatorActive = false
@@ -386,23 +383,12 @@ export function tryConvertReplicatorToKind(
   cell.passiveRemainder = undefined
   if (kind === 'hub') cell.hubDisabled = undefined
   if (kind === 'refinery') cell.refineryDisabled = undefined
+  clearReplicatorTransformState(cell)
   clearSurfaceScanTint(cell)
   clearDepthRevealState(cell)
-  return true
 }
 
-/**
- * Converts a mature replicator into computronium; deducts build cost.
- * Clears replicator eating flags. Returns false if the cell is not a replicator or payment fails.
- */
-export function tryConvertReplicatorToComputronium(
-  cell: VoxelCell,
-  tallies: Record<ResourceId, number>,
-): boolean {
-  if (cell.kind !== 'replicator') return false
-  const cost = getScaledComputroniumBuildCost()
-  if (!canAfford(tallies, cost)) return false
-  payCost(tallies, cost)
+function finalizeReplicatorToComputronium(cell: VoxelCell): void {
   cell.kind = 'computronium'
   cell.hpRemaining = getKindDef('computronium').maxDurability
   cell.replicatorActive = false
@@ -411,7 +397,72 @@ export function tryConvertReplicatorToComputronium(
   cell.replicatorMsPerHp = undefined
   cell.passiveRemainder = undefined
   cell.computroniumDisabled = undefined
+  clearReplicatorTransformState(cell)
   clearSurfaceScanTint(cell)
   clearDepthRevealState(cell)
+}
+
+function costForReplicatorTransformTarget(target: ReplicatorTransformTarget): Partial<Record<ResourceId, number>> {
+  if (target === 'computronium') return getScaledComputroniumBuildCost()
+  return buildCostFor(target)
+}
+
+/**
+ * Starts a timed conversion of a mature replicator into a structure or computronium; deducts build cost.
+ * Returns false if not eligible, already transforming, or payment fails.
+ */
+export function tryStartReplicatorTransform(
+  cell: VoxelCell,
+  target: ReplicatorTransformTarget,
+  tallies: Record<ResourceId, number>,
+): boolean {
+  if (cell.kind !== 'replicator') return false
+  if (cell.replicatorTransformTarget !== undefined) return false
+  const cost = costForReplicatorTransformTarget(target)
+  if (!canAfford(tallies, cost)) return false
+  payCost(tallies, cost)
+  const totalSec = gameBalance.replicatorTransformDurationSec
+  cell.replicatorTransformTarget = target
+  cell.replicatorTransformElapsedMs = 0
+  cell.replicatorTransformTotalMs = Math.max(0, totalSec * 1000)
   return true
+}
+
+/**
+ * Advances in-progress replicator → structure timers. Mutates `cells`.
+ */
+export function stepReplicatorTransforms(
+  dtMs: number,
+  cells: VoxelCell[],
+  options?: { paused?: boolean },
+): {
+  meshDirty: boolean
+  completedTransforms: number
+} {
+  if (options?.paused) {
+    return { meshDirty: false, completedTransforms: 0 }
+  }
+  if (cells.length === 0 || dtMs <= 0) {
+    return { meshDirty: false, completedTransforms: 0 }
+  }
+  let meshDirty = false
+  let completedTransforms = 0
+  for (const cell of cells) {
+    const target = cell.replicatorTransformTarget
+    if (target === undefined) continue
+    const total = cell.replicatorTransformTotalMs ?? 0
+    let elapsed = (cell.replicatorTransformElapsedMs ?? 0) + dtMs
+    if (elapsed < total) {
+      cell.replicatorTransformElapsedMs = elapsed
+      continue
+    }
+    if (target === 'computronium') {
+      finalizeReplicatorToComputronium(cell)
+    } else {
+      finalizeReplicatorToStructureKind(cell, target)
+    }
+    completedTransforms += 1
+    meshDirty = true
+  }
+  return { meshDirty, completedTransforms }
 }

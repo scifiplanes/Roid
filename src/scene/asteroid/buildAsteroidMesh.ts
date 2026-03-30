@@ -16,11 +16,24 @@ import type { ScanVisualizationDebug } from '../../game/scanVisualizationDebug'
 import {
   blendBulkRockHintOntoBase,
   compositionToBulkRockHintColor,
-  compositionToScanColor,
+  compositionToDepthScanColor,
+  densityToHeatmapRgb,
   getActiveScanVisualizationDebug,
 } from '../../game/scanVisualization'
 import type { VoxelCell } from '../../game/voxelState'
 import { getKindDef, REPLICATOR_PROCESSING_TINT, type VoxelKind } from '../../game/voxelKinds'
+import {
+  addDepthOverlayAlphaMulAttribute,
+  flagDepthOverlayAlphaMulNeedsUpdate,
+  patchMeshStandardMaterialDepthOverlayAlphaMul,
+  setDepthOverlayAlphaMulAt,
+} from './depthOverlayAlphaInstancing'
+import {
+  addScanOverlayUnlitAttribute,
+  flagScanOverlayUnlitNeedsUpdate,
+  patchMeshStandardMaterialScanOverlayUnlit,
+  setScanOverlayUnlitAt,
+} from './scanOverlayUnlitInstancing'
 import {
   addScanEmissiveSuppressAttribute,
   flagScanEmissiveSuppressNeedsUpdate,
@@ -63,6 +76,9 @@ const _depthBase = new Color()
 const _depthCompose = new Color()
 const _voidColor = new Color(0, 0, 0)
 const _bulkRockHint = new Color()
+const _depthHeatmap = new Color()
+const _surfaceHeatmap = new Color()
+const _debugLodeHeatmap = new Color()
 const _depthSortWorld = new Vector3()
 /** Reused for depth-overlay back-to-front sort (avoid slice + O(n log n) world transforms in comparator). */
 const _depthSortDistSq: number[] = []
@@ -74,6 +90,11 @@ const DEPTH_OVERLAY_HINT_LERP = 0.38
 /** Brightness scales from unrevealed hint toward full tint visibility with reveal progress. */
 const DEPTH_OVERLAY_SHADE_UNREVEALED = 0.58
 const DEPTH_OVERLAY_SHADE_REVEALED = 1
+
+function smoothstep01(edge0: number, edge1: number, x: number): number {
+  const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)))
+  return t * t * (3 - 2 * t)
+}
 
 function isEatingRock(cell: VoxelCell): boolean {
   return cell.replicatorEating === true && cell.kind !== 'replicator'
@@ -355,15 +376,24 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
   ]) {
     patchMeshStandardMaterialScanEmissiveSuppress(m)
   }
+  patchMeshStandardMaterialDepthOverlayAlphaMul(solidMat)
+  patchMeshStandardMaterialDepthOverlayAlphaMul(eatingMat)
+  patchMeshStandardMaterialScanOverlayUnlit(solidMat)
+  patchMeshStandardMaterialScanOverlayUnlit(eatingMat)
 
   function emissiveInstancedMesh(
     mat: MeshStandardMaterial,
     maxInst: number,
     name: string,
     cellIndices: number[],
+    withDepthOverlayAlpha = false,
   ): InstancedMesh {
     const geo = baseGeometry.clone()
     addScanEmissiveSuppressAttribute(geo, maxInst)
+    if (withDepthOverlayAlpha) {
+      addDepthOverlayAlphaMulAttribute(geo, maxInst)
+      addScanOverlayUnlitAttribute(geo, maxInst)
+    }
     const mesh = new InstancedMesh(geo, mat, maxInst)
     mesh.name = name
     mesh.instanceMatrix.setUsage(DynamicDrawUsage)
@@ -410,12 +440,14 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
   const ncm = Math.max(computroniumIndices.length, 1)
   const ncs = Math.max(computroniumStandbyIndices.length, 1)
 
+  addDepthOverlayAlphaMulAttribute(baseGeometry, ns)
+  addScanOverlayUnlitAttribute(baseGeometry, ns)
   const solid = new InstancedMesh(baseGeometry, solidMat, ns)
   solid.name = 'asteroid-solid'
   solid.instanceMatrix.setUsage(DynamicDrawUsage)
   solid.userData.cellIndices = solidIndices
 
-  const eating = emissiveInstancedMesh(eatingMat, ne, 'asteroid-eating', eatingIndices)
+  const eating = emissiveInstancedMesh(eatingMat, ne, 'asteroid-eating', eatingIndices, true)
   const reactor = emissiveInstancedMesh(reactorMat, nr, 'asteroid-reactor', reactorIndices)
   const battery = emissiveInstancedMesh(batteryMat, nb, 'asteroid-battery', batteryIndices)
   const depthScanner = emissiveInstancedMesh(depthScannerMat, nd, 'asteroid-depth-scanner', depthScannerIndices)
@@ -785,6 +817,15 @@ const _hlExplosive = new Color(1.0, 0.14, 0.06)
 const _scanTint = new Color()
 const _scanTintHsl = { h: 0, s: 0, l: 0 }
 
+/** Smoothstep on linear remap of `lode` from `[floor, 1]` to `[0, 1]` (0 below floor). */
+function surfaceScanRareLodeRamp(lode: number, floor: number): number {
+  if (lode <= floor) return 0
+  const span = 1 - floor
+  const u = span > 1e-9 ? (lode - floor) / span : 1
+  const linear = Math.min(1, Math.max(0, u))
+  return linear * linear * (3 - 2 * linear)
+}
+
 function scanEmissiveSuppressFactor(
   cellIndex: number,
   scannerTints: ReadonlyMap<number, Color> | null,
@@ -800,7 +841,8 @@ function scanEmissiveSuppressFactor(
  * on `highlight` cell indices (solid + eating only) and optional scanner composition tint on any instance.
  * Order per rock cell: base → scanner lerp → laser highlight (laser wins on overlap).
  * Pass `null` highlight or `null` mode to skip laser. Pass `null` scannerTints to skip scan overlay.
- * `discoveryScanHintIndices` — surface-scan overlay only; bright white for eligible discovery sites (does not roll discoveries).
+ * `discoveryScanHintIndices` — eligible scanned discovery sites: opaque unlit bright red (does not roll discoveries).
+ * `debugLodeDisplayIndices` — when set, those rock voxels are drawn with the lode-density heatmap (debug).
  * `highlightPulse` (e.g. 0.78–1 from sin) modulates brightness while the mouse is held or fuse blinks.
  */
 export function reapplyRockInstanceColors(
@@ -814,6 +856,7 @@ export function reapplyRockInstanceColors(
   scannerTints: ReadonlyMap<number, Color> | null = null,
   depthOverlayActive = false,
   discoveryScanHintIndices: ReadonlySet<number> | null = null,
+  debugLodeDisplayIndices: ReadonlySet<number> | null = null,
 ): void {
   const { baseColor = new Color(0.58, 0.52, 0.48) } = options
   const {
@@ -835,18 +878,32 @@ export function reapplyRockInstanceColors(
     if (!depthOverlayActive) return
     if (!cellParticipatesInDepthReveal(cell)) return
     const prog = Math.min(1, cell.depthRevealProgress ?? 0)
-    let rgb = cell.depthTintRgb
-    if (!rgb) {
-      compositionToScanColor(cell, _depthCompose)
-      rgb = {
+    const lode0 = cell.rareLodeStrength01 ?? 0
+    const lodeFloor = gameBalance.depthOverlayLodeOpaqueStrengthFloor
+    if (lode0 >= lodeFloor) {
+      const d = Math.min(1, lode0 * prog)
+      densityToHeatmapRgb(d, out)
+      out.multiplyScalar(1.12)
+      return
+    }
+    let compRgb = cell.depthTintRgb
+    if (!compRgb) {
+      compositionToDepthScanColor(cell, _depthCompose)
+      compRgb = {
         r: _depthCompose.r,
         g: _depthCompose.g,
         b: _depthCompose.b,
       }
-      cell.depthTintRgb = rgb
+      cell.depthTintRgb = compRgb
     }
+    const lode = lode0
+    const density = Math.min(1, lode * prog)
+    densityToHeatmapRgb(density, _depthHeatmap)
+    const wHeat =
+      gameBalance.depthOverlayHeatmapBlend * smoothstep01(0.015, 1, density)
+    _blend.setRGB(compRgb.r, compRgb.g, compRgb.b)
+    _blend.lerp(_depthHeatmap, wHeat)
     _depthBase.copy(out)
-    _blend.setRGB(rgb.r, rgb.g, rgb.b)
     const mix = DEPTH_OVERLAY_HINT_LERP + (1 - DEPTH_OVERLAY_HINT_LERP) * prog
     out.copy(_depthBase).lerp(_blend, mix)
     let shade =
@@ -868,17 +925,33 @@ export function reapplyRockInstanceColors(
     let effectiveOpacity = Math.min(1, Math.max(0.05, byProg * durabilityFactor))
     const k = gameBalance.depthOverlaySusceptibilityOpacityBoost
     effectiveOpacity = effectiveOpacity + (1 - effectiveOpacity) * (1 - S) * k
+    if (
+      prog >= gameBalance.depthOverlaySolidRevealProgress ||
+      lode >= gameBalance.depthOverlayLodeOpaqueStrengthFloor
+    ) {
+      effectiveOpacity = 1
+    }
     out.lerp(_voidColor, 1 - effectiveOpacity)
   }
 
   function applyDiscoveryScanHint(cellIndex: number, out: Color): void {
     if (!discoveryScanHintIndices?.has(cellIndex)) return
-    out.setRGB(1, 1, 1)
-    out.multiplyScalar(2.35)
+    out.setRGB(1, 0.06, 0.06)
+    out.multiplyScalar(2.2)
   }
 
   function applyScannerTint(cellIndex: number, out: Color): void {
     if (!scannerTints?.has(cellIndex)) return
+    const cell = cells[cellIndex]!
+    const lode = cell.rareLodeStrength01 ?? 0
+    const floor = gameBalance.depthOverlayLodeOpaqueStrengthFloor
+    if (lode >= floor) {
+      const prog = Math.min(1, cell.depthRevealProgress ?? 0)
+      const d = depthOverlayActive ? Math.min(1, lode * prog) : lode
+      densityToHeatmapRgb(d, out)
+      out.multiplyScalar(1.12)
+      return
+    }
     _scanTint.copy(scannerTints.get(cellIndex)!).multiplyScalar(scanDebug.applyTintRgbMul)
     _scanTint.getHSL(_scanTintHsl)
     _scanTintHsl.s = Math.min(1, _scanTintHsl.s * 1.06 + 0.02)
@@ -886,7 +959,33 @@ export function reapplyRockInstanceColors(
     _scanTint.r = Math.min(1, _scanTint.r)
     _scanTint.g = Math.min(1, _scanTint.g)
     _scanTint.b = Math.min(1, _scanTint.b)
-    out.lerp(_scanTint, scanDebug.compositionLerp)
+    densityToHeatmapRgb(lode, _surfaceHeatmap)
+    const lodeRamp = surfaceScanRareLodeRamp(lode, floor)
+    _scanTint.lerp(_surfaceHeatmap, lodeRamp * gameBalance.surfaceScanLodeHeatmapBlend)
+    const baseLerp = scanDebug.compositionLerp
+    const boostMax = gameBalance.surfaceScanRareLodeLerpBoostMax
+    const effectiveLerp = Math.min(1, baseLerp + (1 - baseLerp) * lodeRamp * boostMax)
+    out.lerp(_scanTint, effectiveLerp)
+  }
+
+  function applyDebugLodeDisplay(cellIndex: number, cell: VoxelCell, out: Color): void {
+    if (!debugLodeDisplayIndices?.has(cellIndex)) return
+    const rl = cell.rareLodeStrength01
+    if (rl === undefined || rl <= 1e-6) return
+    densityToHeatmapRgb(rl, _debugLodeHeatmap)
+    out.copy(_debugLodeHeatmap)
+    out.multiplyScalar(1.12)
+  }
+
+  function computeDepthOverlayAlphaMulForCell(cell: VoxelCell): number {
+    if (!depthOverlayActive) return 1
+    if (!cellParticipatesInDepthReveal(cell)) return 1
+    const prog = Math.min(1, cell.depthRevealProgress ?? 0)
+    const lode = cell.rareLodeStrength01 ?? 0
+    const d = Math.min(1, lode * prog)
+    if (d < gameBalance.depthOverlayLodeFullOpacityMinDensity) return 1
+    const rockOp = Math.max(0.05, gameBalance.depthOverlayRockOpacity)
+    return Math.min(1 / rockOp, 25)
   }
 
   function applyLaserHighlight(cellIndex: number, out: Color): void {
@@ -928,10 +1027,22 @@ export function reapplyRockInstanceColors(
       applyDepthOverlayRock(cell, _c, i)
       applyScannerTint(i, _c)
       applyDiscoveryScanHint(i, _c)
+      applyDebugLodeDisplay(i, cell, _c)
       applyLaserHighlight(i, _c)
       solid.setColorAt(j, _c)
+      const discoveryHint = discoveryScanHintIndices?.has(i) ?? false
+      setScanOverlayUnlitAt(solid, j, discoveryHint ? 1 : 0)
+      setDepthOverlayAlphaMulAt(
+        solid,
+        j,
+        discoveryHint && depthOverlayActive
+          ? Math.min(1 / Math.max(0.05, gameBalance.depthOverlayRockOpacity), 25)
+          : computeDepthOverlayAlphaMulForCell(cell),
+      )
     }
     if (solid.instanceColor) solid.instanceColor.needsUpdate = true
+    flagDepthOverlayAlphaMulNeedsUpdate(solid)
+    flagScanOverlayUnlitNeedsUpdate(solid)
   }
 
   if (eating.visible && eating.count > 0) {
@@ -956,12 +1067,24 @@ export function reapplyRockInstanceColors(
         applyDepthOverlayRock(cell, _c, i)
         applyScannerTint(i, _c)
         applyDiscoveryScanHint(i, _c)
+        applyDebugLodeDisplay(i, cell, _c)
         applyLaserHighlight(i, _c)
         eating.setColorAt(j, _c)
         setScanEmissiveSuppressAt(eating, j, scanEmissiveSuppressFactor(i, scannerTints, scanDebug))
+        const discoveryHintE = discoveryScanHintIndices?.has(i) ?? false
+        setScanOverlayUnlitAt(eating, j, discoveryHintE ? 1 : 0)
+        setDepthOverlayAlphaMulAt(
+          eating,
+          j,
+          discoveryHintE && depthOverlayActive
+            ? Math.min(1 / Math.max(0.05, gameBalance.depthOverlayRockOpacity), 25)
+            : computeDepthOverlayAlphaMulForCell(cell),
+        )
       }
       if (eating.instanceColor) eating.instanceColor.needsUpdate = true
       flagScanEmissiveSuppressNeedsUpdate(eating)
+      flagDepthOverlayAlphaMulNeedsUpdate(eating)
+      flagScanOverlayUnlitNeedsUpdate(eating)
     }
   }
 

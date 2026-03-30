@@ -126,18 +126,40 @@ body {
   image-rendering: crisp-edges;
 }
 
-.discovery-hud-strip {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 4px;
-  padding: 0;
+/* Pending discovery ◆ chips + SVG lines (viewport-anchored to find site) */
+.discovery-pending-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+}
+
+.discovery-pending-layer[hidden] {
+  display: none !important;
+}
+
+.discovery-pending-svg {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.discovery-pending-chips {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.discovery-pending-chip-wrap {
+  position: fixed;
   pointer-events: auto;
 }
 
-.discovery-hud-strip[hidden] {
-  display: none !important;
+.discovery-pending-connector-line {
+  stroke: var(--nc-accent);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
 }
 
 .discovery-hud-icon {
@@ -643,6 +665,46 @@ body {
   display: none;
 }
 
+/* Nested collapsibles inside Settings → Debug */
+.settings-details > .settings-debug-subsection {
+  margin-top: 10px;
+  margin-left: 4px;
+  padding: 0 0 0 10px;
+  border-top: none;
+  border-left: 2px solid var(--nc-border);
+  scroll-margin-top: 8px;
+}
+
+.settings-details > .settings-debug-subsection > .settings-details-summary {
+  font-size: 12px;
+  padding: 2px 0;
+}
+
+.settings-debug-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 10px;
+}
+
+.settings-debug-nav-btn {
+  pointer-events: auto;
+  padding: 4px 8px;
+  border-radius: 0;
+  border: 1px solid var(--nc-border);
+  background: var(--nc-panel-bg-deep);
+  color: var(--nc-muted);
+  font-family: var(--ui-font);
+  font-size: 11px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.settings-debug-nav-btn:hover {
+  border-color: var(--nc-accent);
+  color: var(--nc-fg-bright);
+}
+
 .settings-debug-hint {
   margin: 8px 0 10px;
   font-size: 12px;
@@ -811,6 +873,21 @@ body {
   padding: 4px;
 }
 
+.tools-dock-tools-band {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.tools-dock-context-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
 .tools-row {
   display: flex;
   flex-wrap: wrap;
@@ -891,6 +968,47 @@ body {
 
 .tools-selected-cost[hidden] {
   display: none !important;
+}
+
+.tools-depth-lode-opacity-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 4px 8px;
+  font-family: var(--ui-font);
+  font-size: 11px;
+  line-height: 1.25;
+  color: var(--nc-muted);
+  border: 1px solid var(--nc-border);
+  background: var(--nc-panel-bg-deep);
+}
+
+.tools-depth-lode-opacity-row[hidden] {
+  display: none !important;
+}
+
+.tools-depth-lode-opacity-label {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.tools-depth-lode-opacity-row input[type='range'] {
+  flex: 2 1 140px;
+  min-width: 80px;
+  max-width: 100%;
+  vertical-align: middle;
+}
+
+.tools-depth-lode-opacity-val {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  min-width: 2.5rem;
+  text-align: right;
+  color: var(--nc-fg);
 }
 
 .tools-tool:hover {
@@ -1007,11 +1125,70 @@ body {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  margin-top: 4px;
 }
 
 .tools-sat-context[hidden] {
   display: none !important;
+}
+
+.tools-refinery-context {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.tools-refinery-context[hidden] {
+  display: none !important;
+}
+
+.tools-refinery-recipes-btn {
+  padding: 5px 10px;
+  border-radius: 0;
+  border: 2px solid var(--nc-border);
+  background: var(--nc-panel-bg-deep);
+  color: var(--nc-accent);
+  font-size: 11px;
+  font-weight: normal;
+  cursor: pointer;
+  font-family: var(--ui-font);
+  flex-shrink: 0;
+  box-shadow:
+    inset 1px 1px 0 var(--nc-inset-light),
+    inset -1px -1px 0 var(--nc-inset-dark);
+}
+
+.tools-refinery-recipes-btn:hover:not(:disabled) {
+  border-color: var(--nc-accent);
+  color: var(--nc-fg-bright);
+  background: var(--nc-panel-bg-mid);
+}
+
+.tools-replicator-context {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.tools-replicator-context[hidden] {
+  display: none !important;
+}
+
+.tools-replicator-killswitch-btn {
+  border-color: #8b4848;
+  color: #c08080;
+}
+
+.tools-replicator-killswitch-btn:hover:not(:disabled) {
+  border-color: #a85858;
+  color: #e8a0a0;
+  background: var(--nc-panel-bg-mid);
+}
+
+.tools-replicator-killswitch-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .tools-sat-context-status {
@@ -1130,6 +1307,30 @@ body {
   pointer-events: auto;
 }
 
+.discovery-modal-root--anchored {
+  display: block;
+}
+
+.discovery-modal-root--anchored .discovery-modal-scrim {
+  position: absolute;
+  inset: 0;
+}
+
+.discovery-modal-connector-svg {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 1;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.discovery-modal-connector-line {
+  stroke: var(--nc-accent);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
 .discovery-modal-scrim {
   position: absolute;
   inset: 0;
@@ -1154,6 +1355,11 @@ body {
     inset 1px 1px 0 var(--nc-inset-light),
     inset -1px -1px 0 var(--nc-inset-dark),
     4px 4px 0 rgba(0, 0, 0, 0.45);
+}
+
+.discovery-modal-root--anchored .discovery-modal-panel {
+  position: fixed;
+  z-index: 2;
 }
 
 .discovery-modal-title {
@@ -1227,6 +1433,142 @@ body {
   border-color: #8b4848;
 }
 
+/* Refinery recipes modal */
+.refinery-recipes-modal-root[hidden] {
+  display: none !important;
+}
+
+.refinery-recipes-modal-root {
+  position: fixed;
+  inset: 0;
+  z-index: 101;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+}
+
+.refinery-recipes-modal-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72);
+  cursor: pointer;
+}
+
+.refinery-recipes-modal-panel {
+  position: relative;
+  z-index: 1;
+  max-width: min(480px, 94vw);
+  max-height: min(82vh, 560px);
+  overflow: auto;
+  padding: 14px 16px 12px;
+  border: 2px solid var(--nc-accent);
+  background: var(--nc-panel-bg);
+  color: var(--nc-fg);
+  font-family: var(--ui-font);
+  font-size: 13px;
+  line-height: 1.35;
+  box-shadow:
+    inset 1px 1px 0 var(--nc-inset-light),
+    inset -1px -1px 0 var(--nc-inset-dark),
+    4px 4px 0 rgba(0, 0, 0, 0.45);
+}
+
+.refinery-recipes-modal-title {
+  font-weight: bold;
+  color: var(--nc-fg-bright);
+  margin-bottom: 8px;
+  font-size: 15px;
+  letter-spacing: 0.02em;
+}
+
+.refinery-recipes-modal-intro {
+  margin-bottom: 12px;
+  color: var(--nc-fg);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.refinery-recipes-modal-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.refinery-recipes-modal-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--nc-border);
+  background: var(--nc-panel-bg-deep);
+}
+
+.refinery-recipes-modal-row--locked {
+  opacity: 0.85;
+}
+
+.refinery-recipes-modal-radio {
+  margin-top: 2px;
+  flex-shrink: 0;
+  accent-color: var(--nc-accent);
+}
+
+.refinery-recipes-modal-label {
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.refinery-recipes-modal-row--locked .refinery-recipes-modal-label {
+  cursor: default;
+}
+
+.refinery-recipes-modal-name {
+  color: var(--nc-fg-bright);
+  font-weight: normal;
+}
+
+.refinery-recipes-modal-name--researching {
+  font-family: ui-monospace, monospace;
+  letter-spacing: 0.04em;
+  color: var(--nc-accent);
+}
+
+.refinery-recipes-modal-sub {
+  font-size: 11px;
+  color: var(--nc-fg);
+  line-height: 1.3;
+}
+
+.refinery-recipes-modal-sub--muted {
+  color: #909090;
+}
+
+/* Same commodity tickers as #matter-hud (abbrev + count, depth-colored). */
+.refinery-recipes-modal-panel .matter-hud-res {
+  display: inline;
+  white-space: nowrap;
+}
+
+.refinery-recipes-modal-tickers {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--nc-fg);
+}
+
+.refinery-recipes-modal-buttons {
+  display: flex;
+  flex-direction: row;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .discovery-modal-btn-danger:hover {
   color: #e8a0a0;
   background: var(--nc-panel-bg-mid);
@@ -1268,4 +1610,29 @@ body {
 @keyframes audio-btn-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.55; }
+}
+
+/* Transient feedback when a discovery site yields no offer (e.g. zero archetype weights). */
+.false-signal-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 16%;
+  transform: translateX(-50%) translateY(8px);
+  z-index: 95;
+  pointer-events: none;
+  padding: 6px 14px;
+  font-family: var(--ui-font);
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  color: #c8a0a0;
+  text-shadow: 0 0 8px rgba(0, 0, 0, 0.85);
+  background: rgba(20, 8, 8, 0.72);
+  border: 1px solid rgba(180, 100, 100, 0.45);
+  opacity: 0;
+  transition: opacity 0.22s ease-out, transform 0.22s ease-out;
+}
+
+.false-signal-toast--visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }
