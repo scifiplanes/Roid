@@ -1,0 +1,27 @@
+---
+description: Keep DESIGN.md current as the project’s short-lived design snapshot
+alwaysApply: true
+---
+
+# DESIGN.md maintenance
+
+`DESIGN.md` is the **succinct** living design doc for this repo. It must stay aligned with what is **implemented now**, not a wish list.
+
+## When to update
+
+After changes that affect **elevator pitch**, **current milestone**, **controls**, **tech stack**, **module map**, or **near-term backlog**, edit `DESIGN.md` in the same change (or immediately after).
+
+## How to write it
+
+- **Short sections only** — prefer tables and bullets; avoid long prose and duplicate README content.
+- **Current milestone** — list what actually works today; remove or rewrite items that are no longer true.
+- **Backlog** — keep **next** steps realistic; drop done items or promote them into milestone.
+- **Module map** — paths and roles must match the tree; add new areas, remove dead ones, mark `(future)` only if not shipped.
+- **Versions** — if you cite tool versions, match `package.json` (or drop exact pins if unmaintainable).
+
+## What not to do
+
+- Do not let `DESIGN.md` grow into API docs, full ADRs, or step-by-step tutorials.
+- Do not leave stale claims (e.g. old stack, wrong grid size, removed features).
+
+If unsure whether a detail belongs in `DESIGN.md`, default to **omit** unless it helps someone orient in the codebase in under two minutes.
