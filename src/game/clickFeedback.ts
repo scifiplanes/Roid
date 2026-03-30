@@ -77,8 +77,7 @@ function scheduleReplicatorClick(
 export function playReplicatorPlaceClick(): void {
   try {
     const c = getAudioContext()
-    if (!c) return
-    void c.resume()
+    if (!c || c.state !== 'running') return
     scheduleReplicatorClick(c, c.currentTime, 0.048, 1760, 0.016, 0.009)
   } catch {
     /* ignore blocked / unsupported audio */
@@ -93,8 +92,7 @@ const LASER_PITCH_BASE_OCTAVES_DOWN = 3
 export function playOrbitalLaserZap(): void {
   try {
     const c = getAudioContext()
-    if (!c) return
-    void c.resume()
+    if (!c || c.state !== 'running') return
     const t0 = c.currentTime
 
     const dur = Math.min(5, Math.max(0.06, 1 * gameBalance.laserZapPitchDurMult))
@@ -185,8 +183,7 @@ export function startOrbitalLaserSustain(): void {
   try {
     stopOrbitalLaserSustain()
     const c = getAudioContext()
-    if (!c) return
-    void c.resume()
+    if (!c || c.state !== 'running') return
     const t0 = c.currentTime
 
     const vol = gameBalance.laserZapVolumeMult
@@ -273,8 +270,7 @@ export function startExcavatingLaserSustain(): void {
   try {
     stopExcavatingLaserSustain()
     const c = getAudioContext()
-    if (!c) return
-    void c.resume()
+    if (!c || c.state !== 'running') return
     const t0 = c.currentTime
     const b = gameBalance
 
@@ -331,8 +327,7 @@ export function startExcavatingLaserSustain(): void {
 export function playScanPing(): void {
   try {
     const c = getAudioContext()
-    if (!c) return
-    void c.resume()
+    if (!c || c.state !== 'running') return
     const t0 = c.currentTime
     scheduleReplicatorClick(c, t0, 0.048, 1420, 0.045, 0.006)
   } catch {
@@ -345,8 +340,7 @@ export function playExplosiveChargeDetonation(): void {
   try {
     triggerMineShake(true)
     const c = getAudioContext()
-    if (!c) return
-    void c.resume()
+    if (!c || c.state !== 'running') return
     const t0 = c.currentTime
     scheduleReplicatorClick(c, t0, 0.11, 220, 0.14, 0.004)
     scheduleReplicatorClick(c, t0 + 0.012, 0.052, 95, 0.18, 0.006)
@@ -359,8 +353,7 @@ export function playExplosiveChargeDetonation(): void {
 export function playHubToggle(isNowActive: boolean): void {
   try {
     const c = getAudioContext()
-    if (!c) return
-    void c.resume()
+    if (!c || c.state !== 'running') return
     const t0 = c.currentTime
     if (isNowActive) {
       scheduleReplicatorClick(c, t0, 0.055, 1980, 0.02, 0.008)
@@ -376,8 +369,7 @@ export function playHubToggle(isNowActive: boolean): void {
 export function playRefineryToggle(isNowActive: boolean): void {
   try {
     const c = getAudioContext()
-    if (!c) return
-    void c.resume()
+    if (!c || c.state !== 'running') return
     const t0 = c.currentTime
     if (isNowActive) {
       scheduleReplicatorClick(c, t0, 0.052, 1650, 0.022, 0.008)
@@ -393,8 +385,7 @@ export function playReplicatorConsumeClicks(tickCount: number): void {
   if (tickCount <= 0) return
   try {
     const c = getAudioContext()
-    if (!c) return
-    void c.resume()
+    if (!c || c.state !== 'running') return
     const b = gameBalance
     const maxVoices = Math.max(1, Math.round(b.replicatorFeedAudioMaxVoices))
     const now = c.currentTime
@@ -500,8 +491,7 @@ function playMetalThud(c: AudioContext, now: number, popped: boolean): void {
 export function playMineThud(popped: boolean, kind: VoxelKind): void {
   try {
     const c = getAudioContext()
-    if (!c) return
-    void c.resume()
+    if (!c || c.state !== 'running') return
 
     const now = c.currentTime
     switch (kind) {

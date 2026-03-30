@@ -4,6 +4,9 @@ let audioCtx: AudioContext | null = null
 let audioInitialized = false
 let audioInitPromise: Promise<void> | null = null
 
+type AudioContextStateChangeCallback = () => void
+const stateChangeCallbacks: AudioContextStateChangeCallback[] = []
+
 function getAudioContextConstructor(): (typeof AudioContext) | null {
   if (typeof window === 'undefined') return null
   const w = window as unknown as {
@@ -13,15 +16,42 @@ function getAudioContextConstructor(): (typeof AudioContext) | null {
   return w.AudioContext ?? w.webkitAudioContext ?? null
 }
 
-export function getAudioContext(): AudioContext | null {
+function attachStateListener(c: AudioContext): void {
+  c.addEventListener('statechange', () => {
+    if (c.state === 'running') {
+      audioInitialized = true
+    } else if (c.state === 'suspended' || c.state === 'interrupted') {
+      audioInitialized = false
+    }
+    for (const cb of stateChangeCallbacks) cb()
+  })
+}
+
+export function onAudioContextStateChange(cb: AudioContextStateChangeCallback): void {
+  stateChangeCallbacks.push(cb)
+}
+
+/**
+ * Creates the AudioContext synchronously. Must be called within a user gesture
+ * handler's synchronous callstack for iOS/Android browser policy compliance.
+ */
+export function createAudioContextNow(): AudioContext | null {
   const Ctor = getAudioContextConstructor()
   if (!Ctor) return null
   try {
-    if (!audioCtx) audioCtx = new Ctor()
+    if (!audioCtx) {
+      audioCtx = new Ctor()
+      attachStateListener(audioCtx)
+    }
     return audioCtx
   } catch {
     return null
   }
+}
+
+export function getAudioContext(): AudioContext | null {
+  if (audioCtx) return audioCtx
+  return createAudioContextNow()
 }
 
 export function resumeAudioContext(): Promise<void> {
@@ -37,7 +67,7 @@ export function resumeAudioContext(): Promise<void> {
       if (c.state === 'suspended') {
         await c.resume()
       }
-      audioInitialized = true
+      audioInitialized = c.state === 'running'
     } catch {
       audioInitialized = false
     } finally {
@@ -53,7 +83,7 @@ export function isAudioInitialized(): boolean {
 }
 
 export function isAudioContextReady(): boolean {
-  const c = getAudioContext()
+  const c = audioCtx
   return !!c && (c.state === 'running' || c.state === 'closed')
 }
 

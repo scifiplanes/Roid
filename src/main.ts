@@ -174,7 +174,12 @@ import { createDefaultScanVisualizationDebug } from './game/scanVisualizationDeb
 import { resetReplicatorSimAccumulators, stepReplicators } from './game/replicatorSim'
 import { stepHubs } from './game/hubSim'
 import { stepRefineryProcessing } from './game/refineryProcessSim'
-import { ensureAudioContextInitialized } from './game/audioContext'
+import {
+  createAudioContextNow,
+  ensureAudioContextInitialized,
+  isAudioContextReady,
+  onAudioContextStateChange,
+} from './game/audioContext'
 import { autoLoadBundledDebugPreset } from './game/autoLoadDebugPreset'
 
 await autoLoadBundledDebugPreset()
@@ -205,19 +210,36 @@ app.appendChild(viewport)
 
 const initializeAudio = async () => {
   await ensureAudioContextInitialized()
-  asteroidAmbientMusic.tryEnsureGraph()
+  if (isAudioContextReady()) {
+    asteroidAmbientMusic.tryEnsureGraph()
+    hideAudioFallbackButton()
+  } else {
+    showAudioFallbackButton()
+  }
 }
+
+onAudioContextStateChange(() => {
+  if (isAudioContextReady()) {
+    asteroidAmbientMusic.tryEnsureGraph()
+    hideAudioFallbackButton()
+  }
+})
 
 const audioEventOptions = { passive: true }
 
-viewport.addEventListener('pointerdown', () => void initializeAudio(), audioEventOptions)
-viewport.addEventListener('pointerup', () => void initializeAudio(), audioEventOptions)
-viewport.addEventListener('touchstart', () => void initializeAudio(), audioEventOptions)
-viewport.addEventListener('touchend', () => void initializeAudio(), audioEventOptions)
-viewport.addEventListener('mousedown', () => void initializeAudio(), audioEventOptions)
+const gestureUnlockAudio = () => {
+  createAudioContextNow()
+  void initializeAudio()
+}
 
-document.addEventListener('click', () => void initializeAudio(), audioEventOptions)
-document.addEventListener('focus', () => void initializeAudio(), audioEventOptions)
+viewport.addEventListener('pointerdown', gestureUnlockAudio, audioEventOptions)
+viewport.addEventListener('pointerup', gestureUnlockAudio, audioEventOptions)
+viewport.addEventListener('touchstart', gestureUnlockAudio, audioEventOptions)
+viewport.addEventListener('touchend', gestureUnlockAudio, audioEventOptions)
+viewport.addEventListener('mousedown', gestureUnlockAudio, audioEventOptions)
+
+document.addEventListener('click', gestureUnlockAudio, audioEventOptions)
+document.addEventListener('focus', gestureUnlockAudio, audioEventOptions)
 
 const { scene, camera, renderer, sun, stepStarfield } = setupScene(viewport)
 sun.intensity = KEY_LIGHT_INTENSITY_BASE * randomKeyLightIntensityFactorForAsteroid()
@@ -426,6 +448,24 @@ viewport.appendChild(matterHudWrap)
 
 const pickRipple = createMineRippleElement()
 viewport.appendChild(pickRipple)
+
+const audioFallbackBtn = document.createElement('button')
+audioFallbackBtn.id = 'audio-fallback-btn'
+audioFallbackBtn.textContent = 'TAP TO ENABLE AUDIO'
+audioFallbackBtn.style.display = 'none'
+audioFallbackBtn.addEventListener('pointerdown', () => {
+  createAudioContextNow()
+  void initializeAudio()
+})
+viewport.appendChild(audioFallbackBtn)
+
+function showAudioFallbackButton(): void {
+  audioFallbackBtn.style.display = 'block'
+}
+
+function hideAudioFallbackButton(): void {
+  audioFallbackBtn.style.display = 'none'
+}
 
 const overlayVizLoaded = loadOverlayVisualizationPrefs()
 let surfaceScanOverlayVisible = overlayVizLoaded.surfaceScanOverlayVisible

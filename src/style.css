@@ -1241,3 +1241,31 @@ body {
 .satellite-inspect-modal-panel {
   max-height: min(70vh, 480px);
 }
+
+#audio-fallback-btn {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  background: var(--nc-panel-bg);
+  color: var(--nc-accent);
+  border: 2px solid var(--nc-accent);
+  font-family: var(--ui-font);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  padding: 10px 20px;
+  cursor: pointer;
+  pointer-events: auto;
+  animation: audio-btn-pulse 1.6s ease-in-out infinite;
+}
+
+#audio-fallback-btn:active {
+  background: var(--nc-accent);
+  color: var(--nc-panel-bg-deep);
+}
+
+@keyframes audio-btn-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
