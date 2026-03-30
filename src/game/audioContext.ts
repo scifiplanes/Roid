@@ -3,10 +3,20 @@
 let audioCtx: AudioContext | null = null
 let audioInitialized = false
 
+function getAudioContextConstructor(): (typeof AudioContext) | null {
+  if (typeof window === 'undefined') return null
+  const w = window as unknown as {
+    AudioContext?: typeof AudioContext
+    webkitAudioContext?: typeof AudioContext
+  }
+  return w.AudioContext ?? w.webkitAudioContext ?? null
+}
+
 export function getAudioContext(): AudioContext | null {
-  if (typeof AudioContext === 'undefined') return null
+  const Ctor = getAudioContextConstructor()
+  if (!Ctor) return null
   try {
-    if (!audioCtx) audioCtx = new AudioContext()
+    if (!audioCtx) audioCtx = new Ctor()
     return audioCtx
   } catch {
     return null

@@ -682,18 +682,20 @@ export function createAsteroidAmbientMusic(options: {
 
   return {
     tryEnsureGraph(): void {
-      void resumeAudioContext()
-      if (voices.length > 0 && ctxRef) return
-      buildGraph()
+      void resumeAudioContext().then(() => {
+        if (voices.length > 0 && ctxRef) return
+        buildGraph()
+      })
     },
 
     applyDebugNow(): void {
-      void resumeAudioContext()
-      if (voices.length > 0 && ctxRef) {
-        syncAllParams()
-      } else {
-        buildGraph()
-      }
+      void resumeAudioContext().then(() => {
+        if (voices.length > 0 && ctxRef) {
+          syncAllParams()
+        } else {
+          buildGraph()
+        }
+      })
     },
 
     setSeed(s: number): void {
