@@ -6,6 +6,7 @@ import { defineConfig } from 'vite'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const balancePath = path.join(__dirname, 'src/game/gameBalance.persisted.json')
 const musicDebugPath = path.join(__dirname, 'src/game/asteroidMusicDebug.persisted.json')
+const settingsClientPath = path.join(__dirname, 'src/game/settingsClient.persisted.json')
 
 const BALANCE_KEYS = [
   'durabilityMult',
@@ -35,7 +36,22 @@ function isValidAsteroidMusicDebug(obj: unknown): boolean {
   return true
 }
 
+function isValidSettingsClientV1(obj: unknown): boolean {
+  if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) return false
+  return (obj as { v?: unknown }).v === 1
+}
+
 export default defineConfig({
+  test: {
+    environment: 'node',
+    include: ['src/**/*.test.ts'],
+  },
+  /** Dev auto-save POSTs overwrite these JSON files; they are also statically imported in `main.ts`. Ignore them so writes do not trigger a full page reload. */
+  server: {
+    watch: {
+      ignored: [balancePath, musicDebugPath, settingsClientPath],
+    },
+  },
   plugins: [
     {
       name: 'persist-game-balance',
@@ -92,6 +108,38 @@ export default defineConfig({
                 return
               }
               fs.writeFileSync(musicDebugPath, `${JSON.stringify(parsed, null, 2)}\n`, 'utf8')
+              res.statusCode = 204
+              res.end()
+            } catch {
+              res.statusCode = 400
+              res.end('bad request')
+            }
+          })
+        })
+      },
+    },
+    {
+      name: 'persist-settings-client',
+      configureServer(server) {
+        server.middlewares.use('/api/persist-settings-client', (req, res, next) => {
+          if (req.method !== 'POST') {
+            next()
+            return
+          }
+          let body = ''
+          req.setEncoding('utf8')
+          req.on('data', (chunk: string) => {
+            body += chunk
+          })
+          req.on('end', () => {
+            try {
+              const parsed: unknown = JSON.parse(body)
+              if (!isValidSettingsClientV1(parsed)) {
+                res.statusCode = 400
+                res.end('invalid settings client')
+                return
+              }
+              fs.writeFileSync(settingsClientPath, `${JSON.stringify(parsed, null, 2)}\n`, 'utf8')
               res.statusCode = 204
               res.end()
             } catch {

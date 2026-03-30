@@ -29,6 +29,15 @@ const SCAN_TINT_WEIGHT_SHARPNESS = 1
 /** Distinct from mining bulk jitter; scan-tint-only root spread (~±11% per root before renormalize). */
 const SCAN_TINT_ROOT_JITTER_SEED = 71441
 
+/** Display-only bulk rock hint: wider per-root spread than scan tint (~0.72–1.28× before renormalize). */
+const BULK_ROCK_HINT_DISPLAY_JITTER_SEED = 52817
+
+/** Micro-variance for saturation envelope (acid ↔ gray). */
+const BULK_ENVELOPE_HASH_SEED = 48293
+
+/** Extra lightness on high-envelope cells so acid reads fluorescent. */
+const BULK_ACID_LIGHTNESS_BUMP = 0.055
+
 const _fallbackDebug = createDefaultScanVisualizationDebug()
 let getScanVizDebug: () => ScanVisualizationDebug = () => _fallbackDebug
 
@@ -108,6 +117,30 @@ function normalizeRoots(bulk: Record<RootResourceId, number> | undefined): Recor
   if (s <= 1e-9) return defaultUniformRootComposition()
   const o = defaultUniformRootComposition()
   for (const r of ROOT_RESOURCE_IDS) o[r] = (bulk[r] ?? 0) / s
+  return o
+}
+
+/**
+ * Display-only: spreads normalized root fractions for default bulk rock tint (not scan/HUD).
+ * Wider than `applyScanTintOnlyRootJitter` so neighboring voxels diverge more.
+ */
+function applyBulkRockHintDisplayJitter(comp: Record<RootResourceId, number>, pos: VoxelPos): Record<RootResourceId, number> {
+  const o = defaultUniformRootComposition()
+  let s = 0
+  for (const r of ROOT_RESOURCE_IDS) {
+    const ord = ROOT_RESOURCE_IDS.indexOf(r)
+    const h = latticeHash(
+      BULK_ROCK_HINT_DISPLAY_JITTER_SEED + ord * 37,
+      pos.x + ord * 3,
+      pos.y + ord * 5,
+      pos.z + ord * 7,
+    )
+    const m = 0.72 + 0.56 * h
+    o[r] = comp[r] * m
+    s += o[r]
+  }
+  if (s <= 1e-9) return comp
+  for (const r of ROOT_RESOURCE_IDS) o[r] /= s
   return o
 }
 
@@ -226,29 +259,178 @@ export function formatScanRefinedPreviewLine(cell: VoxelCell): string {
 }
 
 /**
- * Low-saturation RGB from normalized root fractions (evenly spaced hue per root in `ROOT_RESOURCE_IDS`
- * order) for default rock tint. Darkens slightly toward higher composite bulk density (g/cm³).
+ * HSL hue [0,1) per root: **full-wheel coverage** — one sector per root at `(slot + 0.5) / 12`,
+ * permuted to rough material reads (warm crust → cool metals → magenta/red oxides). Keeps blends
+ * from collapsing into a narrow brown band. Saturation is `baseRockBulkHintSaturation` × per-root mul.
+ */
+const ROOT_BULK_HINT_HUE: Record<RootResourceId, number> = {
+  regolithMass: 0.042,
+  carbonaceous: 0.125,
+  silicates: 0.208,
+  volatiles: 0.292,
+  sulfides: 0.375,
+  halides: 0.458,
+  hydrates: 0.542,
+  ices: 0.625,
+  metals: 0.708,
+  refractories: 0.792,
+  phosphates: 0.875,
+  oxides: 0.958,
+}
+
+const BULK_HINT_DOMINANT_FRAC_THRESHOLD = 0.26
+const BULK_HINT_DOMINANT_LERP = 0.31
+
+/** Per-root saturation multiplier vs `baseRockBulkHintSaturation` (material character + spread). */
+const ROOT_BULK_HINT_SAT_MUL: Record<RootResourceId, number> = {
+  regolithMass: 0.72,
+  silicates: 0.82,
+  metals: 0.28,
+  volatiles: 1.88,
+  sulfides: 1.15,
+  oxides: 1.22,
+  carbonaceous: 1.58,
+  hydrates: 1.62,
+  ices: 1.92,
+  refractories: 0.32,
+  phosphates: 1.08,
+  halides: 1.38,
+}
+
+/** Extra weight on hue vs S/L so linear-RGB lerp does not mute composition (warm base × kind). */
+const BULK_HINT_HUE_BLEND_MUL = 1.62
+
+/** Saturation from bulk hint pulls harder than lightness onto the lithology base. */
+const BULK_HINT_SAT_BLEND_MUL = 1.62
+
+const _hslBase = { h: 0, s: 0, l: 0 }
+const _hslBulk = { h: 0, s: 0, l: 0 }
+const _hslBulkRock = { h: 0, s: 0, l: 0 }
+
+const BULK_HUE_TAU = Math.PI * 2
+
+function bulkSatForRoot(debug: ScanVisualizationDebug, rid: RootResourceId): number {
+  const m = ROOT_BULK_HINT_SAT_MUL[rid]
+  return Math.min(1, Math.max(0, debug.baseRockBulkHintSaturation * m))
+}
+
+/** Normalized Shannon entropy in [0,1]; 0 = single root, 1 = uniform mix. */
+function bulkCompositionEntropy01(comp: Record<RootResourceId, number>): number {
+  let h = 0
+  for (const rid of ROOT_RESOURCE_IDS) {
+    const w = comp[rid] ?? 0
+    if (w > 1e-12) h -= w * Math.log(w)
+  }
+  const hMax = Math.log(ROOT_RESOURCE_IDS.length)
+  return hMax > 1e-12 ? Math.min(1, Math.max(0, h / hMax)) : 0
+}
+
+/**
+ * Maps composition (+ hash) to [0, 1]: 0 = achromatic gray, 1 = full acid saturation.
+ * Volatile-rich fractions push up; metals/refractories and high-entropy mixes push down.
+ */
+function saturationEnvelope01(comp: Record<RootResourceId, number>, pos: VoxelPos): number {
+  const e01 = bulkCompositionEntropy01(comp)
+  const w = (rid: RootResourceId) => comp[rid] ?? 0
+  const acidScore =
+    w('volatiles') +
+    w('ices') +
+    0.95 * w('hydrates') +
+    0.88 * w('carbonaceous') +
+    0.52 * w('halides') +
+    0.32 * w('sulfides') +
+    0.18 * w('phosphates')
+  const metalGrayScore = w('metals') + w('refractories')
+  const chromaRaw = acidScore * 1.38 - metalGrayScore * 1.06 - e01 * e01 * 0.94
+  let env = 0.45 + chromaRaw * 0.82
+  const hj = latticeHash(BULK_ENVELOPE_HASH_SEED, pos.x, pos.y, pos.z)
+  env += (hj - 0.5) * 0.16
+  return Math.min(1, Math.max(0, env))
+}
+
+function lerpHueShortest(h0: number, h1: number, t: number): number {
+  let d = h1 - h0
+  if (d > 0.5) d -= 1
+  if (d < -0.5) d += 1
+  let h = h0 + d * t
+  h %= 1
+  if (h < 0) h += 1
+  return h
+}
+
+/**
+ * Blend bulk composition hint onto the lithology base using HSL (hue moves more than RGB `lerp`).
+ * `t` is the same as former `baseRockBulkHintLerp` (0 = base only, 1 = full hint).
+ */
+export function blendBulkRockHintOntoBase(base: Color, bulkHint: Color, t: number, out: Color): void {
+  if (t <= 0) {
+    out.copy(base)
+    return
+  }
+  if (t >= 1) {
+    out.copy(bulkHint)
+    return
+  }
+  out.copy(base)
+  out.getHSL(_hslBase)
+  bulkHint.getHSL(_hslBulk)
+  const tHue = Math.min(1, t * BULK_HINT_HUE_BLEND_MUL)
+  const tSat = Math.min(1, t * BULK_HINT_SAT_BLEND_MUL)
+  const h = lerpHueShortest(_hslBase.h, _hslBulk.h, tHue)
+  const s = _hslBase.s + (_hslBulk.s - _hslBase.s) * tSat
+  const l = _hslBase.l + (_hslBulk.l - _hslBase.l) * t
+  out.setHSL(h, s, l)
+}
+
+/**
+ * HSL-first bulk hint: circular mean hue, weighted semantic saturation, dominant-root nudge,
+ * then acid/gray saturation envelope (display-only jitter on fractions). Darkens slightly toward
+ * higher composite bulk density (g/cm³).
  */
 export function compositionToBulkRockHintColor(
   cell: VoxelCell,
   out: Color,
   debug: ScanVisualizationDebug,
 ): Color {
-  const comp = normalizeRoots(cell.bulkComposition ?? cell.processedMatterRootComposition)
+  const comp0 = normalizeRoots(cell.bulkComposition ?? cell.processedMatterRootComposition)
+  const comp = applyBulkRockHintDisplayJitter(comp0, cell.pos)
   const n = ROOT_RESOURCE_IDS.length
-  let r = 0
-  let g = 0
-  let b = 0
+  let sx = 0
+  let sy = 0
+  let satW = 0
+  let maxW = 0
+  let maxRid: RootResourceId | null = null
   for (let i = 0; i < n; i++) {
     const rid = ROOT_RESOURCE_IDS[i]!
-    const w = comp[rid] ?? 0
-    const hue = (i + 0.5) / n
-    _anchorBuild.setHSL(hue, debug.baseRockBulkHintSaturation, debug.baseRockBulkHintLightness)
-    r += w * _anchorBuild.r
-    g += w * _anchorBuild.g
-    b += w * _anchorBuild.b
+    const wi = comp[rid] ?? 0
+    if (wi > maxW) {
+      maxW = wi
+      maxRid = rid
+    }
+    const hue = ROOT_BULK_HINT_HUE[rid]
+    sx += wi * Math.cos(hue * BULK_HUE_TAU)
+    sy += wi * Math.sin(hue * BULK_HUE_TAU)
+    satW += wi * bulkSatForRoot(debug, rid)
   }
-  out.setRGB(r, g, b)
+  let hue = Math.atan2(sy, sx) / BULK_HUE_TAU
+  if (hue < 0) hue += 1
+  const L0 = debug.baseRockBulkHintLightness
+  _hslBulkRock.h = hue
+  _hslBulkRock.s = satW
+  _hslBulkRock.l = L0
+  if (maxRid !== null && maxW >= BULK_HINT_DOMINANT_FRAC_THRESHOLD) {
+    const dh = ROOT_BULK_HINT_HUE[maxRid]
+    const ds = bulkSatForRoot(debug, maxRid)
+    _hslBulkRock.h = lerpHueShortest(_hslBulkRock.h, dh, BULK_HINT_DOMINANT_LERP)
+    _hslBulkRock.s += (ds - _hslBulkRock.s) * BULK_HINT_DOMINANT_LERP
+    _hslBulkRock.l += (L0 - _hslBulkRock.l) * BULK_HINT_DOMINANT_LERP * 0.28
+  }
+  const envelope = saturationEnvelope01(comp, cell.pos)
+  _hslBulkRock.s *= envelope
+  if (envelope > 1e-5) {
+    _hslBulkRock.l = Math.min(1, _hslBulkRock.l + BULK_ACID_LIGHTNESS_BUMP * envelope * envelope)
+  }
+  out.setHSL(_hslBulkRock.h, Math.min(1, Math.max(0, _hslBulkRock.s)), _hslBulkRock.l)
   const rho = compositeDensityMidpointGcm3(cell.bulkComposition ?? cell.processedMatterRootComposition)
   const t = Math.min(1, Math.max(0, (rho - 1.2) / (8.0 - 1.2)))
   const shade = 1 - debug.baseRockDensityShade * t

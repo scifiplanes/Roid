@@ -8,7 +8,7 @@ export interface LaserUnlockApply {
   scannerLaserUnlocked: boolean
   /** Fourth computronium stage (after scanner satellite); gates depth scan tool + passive reveal. */
   depthScanUnlocked: boolean
-  /** Fifth stage: dross collector satellite deploy. */
+  /** Fifth stage: cleanup collector satellite deploy. */
   drossCollectorUnlocked: boolean
   orbitalSatelliteCount: number
   excavatingSatelliteCount: number
@@ -112,7 +112,7 @@ export function getDepthScanToolUiPhase(
 }
 
 /**
- * Dross collector satellite deploy UI: tier 5 (t5 = 5 × points-per-stage), after depth scan unlock.
+ * Cleanup collector satellite deploy UI: tier 5 (t5 = 5 × points-per-stage), after depth scan unlock.
  */
 export function getDrossCollectorDeployUiPhase(
   state: {
@@ -196,7 +196,7 @@ export function stepComputronium(
 
 /**
  * Force research tiers up to `tier` (inclusive), matching cumulative unlocks from {@link stepComputronium}
- * when crossing each threshold (satellite floors for laser tiers + dross collector at tier 5).
+ * when crossing each threshold (satellite floors for laser tiers + cleanup collector at tier 5).
  */
 export function applyResearchTierGrant(tier: 1 | 2 | 3 | 4 | 5, flags: LaserUnlockApply): void {
   if (tier >= 1) {

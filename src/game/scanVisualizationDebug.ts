@@ -23,11 +23,11 @@ export interface ScanVisualizationDebug {
   /** When true, scanned instances on emissive structure meshes multiply emissive by 0 in the shader. */
   suppressEmissiveWhenScanned: boolean
   /**
-   * Blend toward a low-saturation 12-root bulk hint on default rock (before scan/depth overlays).
-   * 0 = lithology-only tint; higher = more visible material mix.
+   * Blend toward a 12-root bulk hint on default rock (before scan/depth overlays).
+   * 0 = lithology-only tint; 1 = full hint (same scale as UI slider max).
    */
   baseRockBulkHintLerp: number
-  /** HSL saturation for the evenly spaced per-root hue ring used in the bulk hint. */
+  /** HSL saturation for per-root semantic hues in the bulk hint (0–1, slider max 1). */
   baseRockBulkHintSaturation: number
   /** HSL lightness for the bulk hint color. */
   baseRockBulkHintLightness: number
@@ -48,8 +48,8 @@ export function createDefaultScanVisualizationDebug(): ScanVisualizationDebug {
     boostLightnessAdd: 0.04,
     applyTintRgbMul: 1.35,
     suppressEmissiveWhenScanned: true,
-    baseRockBulkHintLerp: 0.14,
-    baseRockBulkHintSaturation: 0.38,
+    baseRockBulkHintLerp: 0.58,
+    baseRockBulkHintSaturation: 0.9,
     baseRockBulkHintLightness: 0.5,
     baseRockDensityShade: 0.45,
   }

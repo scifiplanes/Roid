@@ -130,3 +130,12 @@ export function setAudioSessionPlayback(): void {
     /* ignore */
   }
 }
+
+/** After tab switch / screen lock iOS may suspend the context; clear so the next gesture re-runs unlock. */
+export function resetAudioInitializedAfterBackgrounding(): void {
+  audioInitialized = false
+}
+
+export function markAudioContextResumeComplete(): void {
+  audioInitialized = true
+}

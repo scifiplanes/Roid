@@ -1,25 +1,42 @@
 import {
   type GameBalance,
+  cancelScheduledPersist,
   gameBalance,
-  getBalanceAutoSaveToFile,
   patchGameBalance,
   persistGameBalanceToProjectNow,
   resetGameBalance,
-  setBalanceAutoSaveToFile,
 } from '../game/gameBalance'
 import {
   type AsteroidMusicDebug,
+  type MacroJitterMode,
   ASTEROID_MUSIC_VOICE_COUNT,
+  PHRASE_AVG_LENGTH_MAX,
+  PHRASE_AVG_LENGTH_MIN,
+  PHRASE_DEPTH_MAX,
+  PHRASE_RATE_HZ_MAX,
+  PHRASE_RATE_HZ_MIN,
+  VOICE_PITCH_SPREAD_MAX,
+  VOICE_PITCH_SPREAD_MIN,
   applyVoiceMacrosToVoices,
 } from '../game/asteroidMusicDebug'
 import type { SunLightDebug } from '../game/sunLightDebug'
 import type { ScanVisualizationDebug } from '../game/scanVisualizationDebug'
 import type { AudioMasterDebug } from '../game/audioMasterDebug'
+import { cancelScheduledMusicPersist, persistAsteroidMusicDebugToProjectNow } from '../game/asteroidMusicPersist'
 import {
-  getMusicAutoSaveToFile,
-  persistAsteroidMusicDebugToProjectNow,
-  setMusicAutoSaveToFile,
-} from '../game/asteroidMusicPersist'
+  getDebugProjectAutosave,
+  setDebugProjectAutosave,
+} from '../game/debugProjectAutosave'
+import {
+  cancelScheduledSettingsClientPersist,
+  persistAllDebugSettingsToProjectNow,
+} from '../game/settingsClientPersist'
+import {
+  type ScaleClampMode,
+  type ScaleCycleDirection,
+  parseScaleClampMode,
+  parseScaleCycleDirection,
+} from '../game/asteroidMusicScale'
 import {
   applyDebugPresetFromJsonString,
   exportDebugPresetJson,
@@ -28,6 +45,8 @@ import {
 export interface SettingsMenuOptions {
   /** Optional control(s) to the left of the Settings (F10) button (e.g. overlays menu). */
   leadingActions?: HTMLElement
+  /** Opens the game tips modal (top bar, before F10). */
+  onOpenTips?: () => void
   onRegenerate: () => void
   onLightAngleChange: (azimuthDeg: number, elevationDeg: number) => void
   initialAzimuthDeg: number
@@ -41,6 +60,8 @@ export interface SettingsMenuOptions {
   onDebugUnlockAllTools?: () => void
   /** Mutable debug state; sliders write into this object. */
   asteroidMusicDebug: AsteroidMusicDebug
+  /** Current asteroid key root (MIDI); used when applying voice macros (diatonic note fold). */
+  getMusicRootMidi: () => number
   onAsteroidMusicDebugChange?: () => void
   initialMusicVolumeLinear: number
   onMusicVolumeChange: (linear: number) => void
@@ -203,37 +224,37 @@ const GAMEPLAY_BALANCE_SLIDERS: SliderRow[] = [
   },
   {
     key: 'drossMassPerRemoval',
-    label: 'Dross mass per removed voxel (voxel-equivalents before dross mass mult)',
+    label: 'Cleanup mass per removed voxel (voxel-equivalents before cleanup mass mult)',
     min: 0.02,
     max: 2,
     step: 0.02,
   },
-  { key: 'drossMassMult', label: 'Dross spawn mass multiplier', min: 0.1, max: 4, step: 0.05 },
+  { key: 'drossMassMult', label: 'Cleanup spawn mass multiplier', min: 0.1, max: 4, step: 0.05 },
   {
     key: 'drossReplicatorSpawnChance',
-    label: 'Replicator dross spawn chance (per rock HP tick; independent roll)',
+    label: 'Replicator cleanup spawn chance (per rock HP tick; independent roll)',
     min: 0,
     max: 1,
     step: 0.02,
   },
   {
     key: 'drossMassPerReplicatorHp',
-    label: 'Replicator dross mass when spawn succeeds (voxel-equiv before dross mass mult)',
+    label: 'Replicator cleanup mass when spawn succeeds (voxel-equiv before cleanup mass mult)',
     min: 0.001,
     max: 2,
     step: 0.005,
   },
   {
     key: 'drossCollectionRatePerSatellitePerSec',
-    label: 'Dross collection rate per collector satellite (voxel-equiv / sec)',
+    label: 'Cleanup collection rate per collector satellite (voxel-equiv / sec)',
     min: 0.001,
     max: 2,
     step: 0.005,
   },
-  { key: 'drossCollectionMult', label: 'Dross collection rate multiplier', min: 0.1, max: 4, step: 0.05 },
+  { key: 'drossCollectionMult', label: 'Cleanup collection rate multiplier', min: 0.1, max: 4, step: 0.05 },
   {
     key: 'drossFogDensityPerMass',
-    label: 'Dross fog density per total mass (FogExp2; 0 = off)',
+    label: 'Cleanup fog density per total mass (FogExp2; 0 = off)',
     min: 0,
     max: 0.002,
     step: 0.00002,
@@ -241,7 +262,7 @@ const GAMEPLAY_BALANCE_SLIDERS: SliderRow[] = [
   },
   {
     key: 'drossFogDensityMax',
-    label: 'Dross fog density cap (FogExp2 max)',
+    label: 'Cleanup fog density cap (FogExp2 max)',
     min: 0,
     max: 0.12,
     step: 0.002,
@@ -249,7 +270,7 @@ const GAMEPLAY_BALANCE_SLIDERS: SliderRow[] = [
   },
   {
     key: 'drossFogColorR',
-    label: 'Dross fog color R (sRGB; light = bright haze)',
+    label: 'Cleanup fog color R (sRGB; light = bright haze)',
     min: 0,
     max: 1,
     step: 0.02,
@@ -257,7 +278,7 @@ const GAMEPLAY_BALANCE_SLIDERS: SliderRow[] = [
   },
   {
     key: 'drossFogColorG',
-    label: 'Dross fog color G (sRGB)',
+    label: 'Cleanup fog color G (sRGB)',
     min: 0,
     max: 1,
     step: 0.02,
@@ -265,7 +286,7 @@ const GAMEPLAY_BALANCE_SLIDERS: SliderRow[] = [
   },
   {
     key: 'drossFogColorB',
-    label: 'Dross fog color B (sRGB)',
+    label: 'Cleanup fog color B (sRGB)',
     min: 0,
     max: 1,
     step: 0.02,
@@ -547,6 +568,7 @@ export function createSettingsMenu(
   container: HTMLElement,
   {
     leadingActions,
+    onOpenTips,
     onRegenerate,
     onLightAngleChange,
     initialAzimuthDeg,
@@ -557,6 +579,7 @@ export function createSettingsMenu(
     onDebugIncreaseEnergyCap,
     onDebugUnlockAllTools,
     asteroidMusicDebug,
+    getMusicRootMidi,
     onAsteroidMusicDebugChange,
     initialMusicVolumeLinear,
     onMusicVolumeChange,
@@ -709,7 +732,7 @@ export function createSettingsMenu(
   const debugHint = document.createElement('p')
   debugHint.className = 'settings-debug-hint'
   debugHint.textContent =
-    'Rock durability applies after Regenerate. Balance and asteroid music debug are stored in localStorage on change. In dev, use Save or enable auto-save to write gameBalance.persisted.json and asteroidMusicDebug.persisted.json. For scan viz, music post EQ, overlays, and other browser-only keys, use Debug preset export/import (JSON file you can commit or move to another machine; import reloads the page).'
+    'Rock durability applies after Regenerate. All Settings / Debug tunables mirror to localStorage on change. In dev, enable auto-save or use Save to write gameBalance.persisted.json, asteroidMusicDebug.persisted.json, and settingsClient.persisted.json (light angles, key-light debug, scan viz, music post-EQ, overlays, discovery/HUD layout, music volume). Debug preset export/import still works for moving keys between browsers.'
 
   const autoSaveRow = document.createElement('div')
   autoSaveRow.className = 'settings-row settings-debug-row settings-save-row'
@@ -717,14 +740,62 @@ export function createSettingsMenu(
   autoSaveLabel.className = 'settings-checkbox-label'
   const autoSaveInput = document.createElement('input')
   autoSaveInput.type = 'checkbox'
-  autoSaveInput.id = 'settings-balance-autosave'
-  autoSaveInput.checked = getBalanceAutoSaveToFile()
+  autoSaveInput.id = 'settings-debug-autosave'
+  autoSaveInput.checked = getDebugProjectAutosave()
   const autoSaveText = document.createElement('span')
-  autoSaveText.textContent = 'Auto-save balance to project file (dev)'
+  autoSaveText.textContent = 'Auto-save debug/settings to project files (dev)'
   autoSaveLabel.append(autoSaveInput, autoSaveText)
   autoSaveRow.appendChild(autoSaveLabel)
   autoSaveInput.addEventListener('change', () => {
-    setBalanceAutoSaveToFile(autoSaveInput.checked)
+    const on = autoSaveInput.checked
+    setDebugProjectAutosave(on)
+    if (!on) {
+      cancelScheduledPersist()
+      cancelScheduledMusicPersist()
+      cancelScheduledSettingsClientPersist()
+    }
+  })
+
+  const saveAllRow = document.createElement('div')
+  saveAllRow.className = 'settings-row settings-debug-row settings-save-row'
+  const saveAllBtn = document.createElement('button')
+  saveAllBtn.type = 'button'
+  saveAllBtn.className = 'settings-secondary'
+  saveAllBtn.textContent = 'Save all settings to project'
+  const saveAllStatus = document.createElement('span')
+  saveAllStatus.className = 'settings-save-status'
+  saveAllStatus.setAttribute('aria-live', 'polite')
+  saveAllRow.append(saveAllBtn, saveAllStatus)
+
+  let saveAllStatusClear: ReturnType<typeof setTimeout> | null = null
+  function flashSaveAllStatus(message: string): void {
+    if (saveAllStatusClear !== null) clearTimeout(saveAllStatusClear)
+    saveAllStatus.textContent = message
+    saveAllStatusClear = setTimeout(() => {
+      saveAllStatus.textContent = ''
+      saveAllStatusClear = null
+    }, 4200)
+  }
+
+  saveAllBtn.addEventListener('click', () => {
+    void (async () => {
+      if (!import.meta.env.DEV) {
+        flashSaveAllStatus('Dev server only for project files.')
+        return
+      }
+      const { balance, music, client } = await persistAllDebugSettingsToProjectNow(asteroidMusicDebug)
+      const parts: string[] = []
+      if (balance) parts.push('balance')
+      if (music) parts.push('music')
+      if (client) parts.push('client')
+      flashSaveAllStatus(
+        parts.length === 3
+          ? 'Saved balance, music, and settingsClient JSON.'
+          : parts.length > 0
+            ? `Partial save: ${parts.join(', ')} OK; some writes failed.`
+            : 'Save failed.',
+      )
+    })()
   })
 
   const saveRow = document.createElement('div')
@@ -740,17 +811,6 @@ export function createSettingsMenu(
 
   const musicSaveRow = document.createElement('div')
   musicSaveRow.className = 'settings-row settings-debug-row settings-save-row'
-  const musicAutoSaveLabel = document.createElement('label')
-  musicAutoSaveLabel.className = 'settings-checkbox-label'
-  const musicAutoSaveInput = document.createElement('input')
-  musicAutoSaveInput.type = 'checkbox'
-  musicAutoSaveInput.id = 'settings-music-autosave'
-  musicAutoSaveInput.checked = getMusicAutoSaveToFile()
-  const musicAutoSaveText = document.createElement('span')
-  musicAutoSaveText.textContent = 'Auto-save asteroid music debug to project file (dev)'
-  musicAutoSaveLabel.append(musicAutoSaveInput, musicAutoSaveText)
-  musicSaveRow.appendChild(musicAutoSaveLabel)
-
   const musicSaveBtn = document.createElement('button')
   musicSaveBtn.type = 'button'
   musicSaveBtn.className = 'settings-secondary'
@@ -759,10 +819,6 @@ export function createSettingsMenu(
   musicSaveStatus.className = 'settings-save-status'
   musicSaveStatus.setAttribute('aria-live', 'polite')
   musicSaveRow.append(musicSaveBtn, musicSaveStatus)
-
-  musicAutoSaveInput.addEventListener('change', () => {
-    setMusicAutoSaveToFile(musicAutoSaveInput.checked)
-  })
 
   let musicSaveStatusClear: ReturnType<typeof setTimeout> | null = null
   function flashMusicSaveStatus(message: string): void {
@@ -943,7 +999,7 @@ export function createSettingsMenu(
     }
     debugDetails.appendChild(cheatRow)
   }
-  debugDetails.append(debugHint, autoSaveRow, saveRow, musicSaveRow, presetRow)
+  debugDetails.append(debugHint, autoSaveRow, saveAllRow, saveRow, musicSaveRow, presetRow)
 
   function setAzimuthSliderDisabled(disabled: boolean): void {
     azimuthInput.disabled = disabled
@@ -1057,16 +1113,16 @@ export function createSettingsMenu(
     { key: 'applyTintRgbMul', label: 'Scan tint RGB gain', min: 0.8, max: 2, step: 0.01 },
     {
       key: 'baseRockBulkHintLerp',
-      label: 'Base rock bulk hint blend (12 roots, no overlay)',
+      label: 'Base rock bulk hint blend (1 = full hint)',
       min: 0,
-      max: 0.45,
+      max: 1,
       step: 0.01,
     },
     {
       key: 'baseRockBulkHintSaturation',
-      label: 'Base rock bulk hint saturation (HSL)',
+      label: 'Base rock bulk hint saturation (HSL, 1 = max)',
       min: 0.12,
-      max: 0.65,
+      max: 1,
       step: 0.01,
     },
     {
@@ -1342,8 +1398,79 @@ export function createSettingsMenu(
   const AMP_LFO_HZ_HI = 22
   const AMP_LFO_HZ_SLIDER_STEPS = 1000
 
+  /** Log Hz for macro LFO/pan rate jitter + note jitter rate-of-rate — biased to slow modulation. */
+  const JITTER_HZ_LO = 0.002
+  const JITTER_HZ_HI = 0.25
+
+  /** Log Hz range for macro note offset jitter only (wider max for fast vibrato). */
+  const NOTE_JITTER_HZ_LO = 0.002
+  const NOTE_JITTER_HZ_HI = 4
+
   const PAN_LFO_HZ_LO = 0.0005
   const PAN_LFO_HZ_HI = 0.05
+
+  /** Glide base (s): most slider travel is 0…4s; remainder is 4…60s. */
+  const GLIDE_BASE_KNEE_SEC = 4
+  const GLIDE_BASE_MAX_SEC = 60
+  const GLIDE_BASE_SLIDER_STEPS = 1000
+  const GLIDE_BASE_FAST_FRACTION = 0.75
+
+  function glideBaseSecToSliderPos(sec: number): number {
+    const s = Math.min(GLIDE_BASE_MAX_SEC, Math.max(0, sec))
+    if (s <= GLIDE_BASE_KNEE_SEC) {
+      return Math.round((s / GLIDE_BASE_KNEE_SEC) * GLIDE_BASE_FAST_FRACTION * GLIDE_BASE_SLIDER_STEPS)
+    }
+    const u = (s - GLIDE_BASE_KNEE_SEC) / (GLIDE_BASE_MAX_SEC - GLIDE_BASE_KNEE_SEC)
+    return Math.round(
+      (GLIDE_BASE_FAST_FRACTION + u * (1 - GLIDE_BASE_FAST_FRACTION)) * GLIDE_BASE_SLIDER_STEPS,
+    )
+  }
+
+  function sliderPosToGlideBaseSec(pos: number): number {
+    const t = Math.min(1, Math.max(0, pos / GLIDE_BASE_SLIDER_STEPS))
+    let sec: number
+    if (t <= GLIDE_BASE_FAST_FRACTION) {
+      sec = (t / GLIDE_BASE_FAST_FRACTION) * GLIDE_BASE_KNEE_SEC
+    } else {
+      const u = (t - GLIDE_BASE_FAST_FRACTION) / (1 - GLIDE_BASE_FAST_FRACTION)
+      sec = GLIDE_BASE_KNEE_SEC + u * (GLIDE_BASE_MAX_SEC - GLIDE_BASE_KNEE_SEC)
+    }
+    return Math.round(sec * 1000) / 1000
+  }
+
+  function fmtGlideBaseSec(s: number): string {
+    if (s <= 0) return '0.00'
+    if (s < 0.1) return s.toFixed(3)
+    return s.toFixed(2)
+  }
+
+  function appendGlideBaseSliderRow(parent: HTMLElement): void {
+    const row = document.createElement('div')
+    row.className = 'settings-row settings-debug-row'
+    const lab = document.createElement('label')
+    lab.className = 'settings-label'
+    lab.htmlFor = 'settings-music-note-pitch-slide-base'
+    lab.textContent =
+      'Carrier pitch glide — base time constant (s); 0 with jitter 0 = instant'
+    const input = document.createElement('input')
+    input.id = 'settings-music-note-pitch-slide-base'
+    input.type = 'range'
+    input.min = '0'
+    input.max = String(GLIDE_BASE_SLIDER_STEPS)
+    input.step = '1'
+    input.value = String(glideBaseSecToSliderPos(asteroidMusicDebug.notePitchSlideBaseSec))
+    const valSpan = document.createElement('span')
+    valSpan.className = 'settings-value'
+    valSpan.textContent = fmtGlideBaseSec(asteroidMusicDebug.notePitchSlideBaseSec)
+    input.addEventListener('input', () => {
+      const n = sliderPosToGlideBaseSec(Number(input.value))
+      asteroidMusicDebug.notePitchSlideBaseSec = n
+      valSpan.textContent = fmtGlideBaseSec(n)
+      onAsteroidMusicDebugChange?.()
+    })
+    row.append(lab, input, valSpan)
+    parent.appendChild(row)
+  }
 
   function logHzToSliderPos(hz: number, lo: number, hi: number, steps: number): number {
     const h = Math.min(hi, Math.max(lo, hz))
@@ -1395,6 +1522,182 @@ export function createSettingsMenu(
     parent.appendChild(row)
   }
 
+  /** Log Hz with slider position 0 → phrase rate off (same mapping as other macro log Hz rows). */
+  function appendPhraseRateLogHzSliderRow(
+    parent: HTMLElement,
+    label: string,
+    id: string,
+    hzLo: number,
+    hzHi: number,
+    getHz: () => number,
+    setHz: (hz: number) => void,
+  ): void {
+    const row = document.createElement('div')
+    row.className = 'settings-row settings-debug-row'
+    const lab = document.createElement('label')
+    lab.className = 'settings-label'
+    lab.htmlFor = id
+    lab.textContent = label
+    const input = document.createElement('input')
+    input.id = id
+    input.type = 'range'
+    input.min = '0'
+    input.max = String(AMP_LFO_HZ_SLIDER_STEPS)
+    input.step = '1'
+    const hz0 = getHz()
+    input.value = String(
+      hz0 <= 0 ? 0 : logHzToSliderPos(hz0, hzLo, hzHi, AMP_LFO_HZ_SLIDER_STEPS),
+    )
+    const valSpan = document.createElement('span')
+    valSpan.className = 'settings-value'
+    valSpan.textContent = hz0 <= 0 ? '0 (off)' : fmtVoiceHz(hz0)
+    input.addEventListener('input', () => {
+      const pos = Number(input.value)
+      const hz = pos <= 0 ? 0 : logSliderPosToHz(pos, hzLo, hzHi, AMP_LFO_HZ_SLIDER_STEPS)
+      setHz(hz)
+      valSpan.textContent = hz <= 0 ? '0 (off)' : fmtVoiceHz(hz)
+      onAsteroidMusicDebugChange?.()
+    })
+    row.append(lab, input, valSpan)
+    parent.appendChild(row)
+  }
+
+  function appendMacroJitterModeRow(
+    parent: HTMLElement,
+    label: string,
+    id: string,
+    getMode: () => MacroJitterMode,
+    setMode: (m: MacroJitterMode) => void,
+  ): void {
+    const row = document.createElement('div')
+    row.className = 'settings-row settings-debug-row'
+    const lab = document.createElement('label')
+    lab.className = 'settings-label'
+    lab.htmlFor = id
+    lab.textContent = label
+    const sel = document.createElement('select')
+    sel.id = id
+    for (const opt of ['sine', 'step'] as const) {
+      const o = document.createElement('option')
+      o.value = opt
+      o.textContent = opt
+      sel.appendChild(o)
+    }
+    sel.value = getMode() === 'step' ? 'step' : 'sine'
+    sel.addEventListener('change', () => {
+      setMode(sel.value === 'step' ? 'step' : 'sine')
+      onAsteroidMusicDebugChange?.()
+    })
+    row.append(lab, sel)
+    parent.appendChild(row)
+  }
+
+  function appendScaleClampModeRow(parent: HTMLElement): void {
+    const row = document.createElement('div')
+    row.className = 'settings-row settings-debug-row'
+    const lab = document.createElement('label')
+    lab.className = 'settings-label'
+    lab.htmlFor = 'settings-music-scale-clamp'
+    lab.textContent = 'Note pitch — scale clamp'
+    const sel = document.createElement('select')
+    sel.id = 'settings-music-scale-clamp'
+    const opts: { value: ScaleClampMode; label: string }[] = [
+      { value: 'major', label: 'Major' },
+      { value: 'minor', label: 'Minor' },
+      { value: 'iwato', label: 'Iwato' },
+      { value: 'hirajoshi', label: 'Hirajoshi' },
+      { value: 'majorPentatonic', label: 'Major Pentatonic' },
+      { value: 'locrian', label: 'Locrian' },
+    ]
+    for (const { value, label } of opts) {
+      const o = document.createElement('option')
+      o.value = value
+      o.textContent = label
+      sel.appendChild(o)
+    }
+    sel.value = parseScaleClampMode(asteroidMusicDebug.scaleClampMode, 'major')
+    sel.addEventListener('change', () => {
+      asteroidMusicDebug.scaleClampMode = parseScaleClampMode(sel.value, 'major')
+      applyVoiceMacrosToVoices(asteroidMusicDebug, getMusicRootMidi())
+      onAsteroidMusicDebugChange?.()
+    })
+    row.append(lab, sel)
+    parent.appendChild(row)
+  }
+
+  function appendScaleCycleSection(parent: HTMLElement): void {
+    const rowEn = document.createElement('div')
+    rowEn.className = 'settings-row settings-debug-row'
+    const labEn = document.createElement('label')
+    labEn.className = 'settings-checkbox-label'
+    const inpEn = document.createElement('input')
+    inpEn.type = 'checkbox'
+    inpEn.id = 'settings-music-scale-cycle-enabled'
+    inpEn.checked = asteroidMusicDebug.scaleCycleEnabled !== false
+    const spanEn = document.createElement('span')
+    spanEn.textContent = 'Scale cycle — advance tonic along circle (timer)'
+    labEn.append(inpEn, spanEn)
+    rowEn.appendChild(labEn)
+    inpEn.addEventListener('change', () => {
+      asteroidMusicDebug.scaleCycleEnabled = inpEn.checked
+      onAsteroidMusicDebugChange?.()
+    })
+    parent.appendChild(rowEn)
+
+    appendMusicSliderRow(parent, {
+      id: 'settings-music-scale-cycle-interval',
+      label: 'Scale cycle — interval (s) between advances',
+      min: 30,
+      max: 3600,
+      step: 1,
+      decimals: 0,
+      read: () => asteroidMusicDebug.scaleCycleIntervalSec,
+      write: (n) => {
+        asteroidMusicDebug.scaleCycleIntervalSec = n
+      },
+    })
+
+    appendMusicSliderRow(parent, {
+      id: 'settings-music-scale-cycle-jitter',
+      label: 'Scale cycle — jitter (±s on each interval, deterministic)',
+      min: 0,
+      max: 120,
+      step: 1,
+      decimals: 0,
+      read: () => asteroidMusicDebug.scaleCycleJitterSec,
+      write: (n) => {
+        asteroidMusicDebug.scaleCycleJitterSec = n
+      },
+    })
+
+    const rowDir = document.createElement('div')
+    rowDir.className = 'settings-row settings-debug-row'
+    const labDir = document.createElement('label')
+    labDir.className = 'settings-label'
+    labDir.htmlFor = 'settings-music-scale-cycle-direction'
+    labDir.textContent = 'Scale cycle — direction'
+    const selDir = document.createElement('select')
+    selDir.id = 'settings-music-scale-cycle-direction'
+    const dirOpts: { value: ScaleCycleDirection; label: string }[] = [
+      { value: 'fifths', label: 'Circle of fifths (+7 semitones/step)' },
+      { value: 'fourths', label: 'Circle of fourths (+5 semitones/step)' },
+    ]
+    for (const { value, label } of dirOpts) {
+      const o = document.createElement('option')
+      o.value = value
+      o.textContent = label
+      selDir.appendChild(o)
+    }
+    selDir.value = parseScaleCycleDirection(asteroidMusicDebug.scaleCycleDirection, 'fifths')
+    selDir.addEventListener('change', () => {
+      asteroidMusicDebug.scaleCycleDirection = parseScaleCycleDirection(selDir.value, 'fifths')
+      applyVoiceMacrosToVoices(asteroidMusicDebug, getMusicRootMidi())
+      onAsteroidMusicDebugChange?.()
+    })
+    rowDir.append(labDir, selDir)
+    parent.appendChild(rowDir)
+  }
+
   /** Log scale 80 Hz … 20 kHz — slider travel concentrates on the low/mid range. */
   const BUS_LP_HZ_LO = 80
   const BUS_LP_HZ_HI = 20000
@@ -1409,6 +1712,59 @@ export function createSettingsMenu(
   function busLpSliderPosToHz(pos: number): number {
     const t = Math.min(1, Math.max(0, pos / BUS_LP_HZ_SLIDER_STEPS))
     return BUS_LP_HZ_LO * (BUS_LP_HZ_HI / BUS_LP_HZ_LO) ** t
+  }
+
+  /** Log Hz 1e-8 … 0.28 — travel concentrates on very slow wander rates. */
+  const PRE_DELAY_JIT_SPEED_HZ_LO = 1e-8
+  const PRE_DELAY_JIT_SPEED_HZ_HI = 0.28
+  const PRE_DELAY_JIT_SPEED_SLIDER_STEPS = 1000
+
+  function fmtPreDelayJitSpeedHz(hz: number): string {
+    if (!Number.isFinite(hz) || hz <= 0) return '0'
+    if (hz < 0.0001) return hz.toExponential(2)
+    if (hz < 0.01) return hz.toFixed(5)
+    return hz.toFixed(3)
+  }
+
+  function appendPreDelayJitSpeedLogSliderRow(parent: HTMLElement): void {
+    const row = document.createElement('div')
+    row.className = 'settings-row settings-debug-row'
+    const label = document.createElement('label')
+    label.className = 'settings-label'
+    const id = 'settings-music-pre-reverb-stereo-delay-rate-jitter-speed'
+    label.htmlFor = id
+    label.textContent =
+      'Bus — pre-reverb delay rate jitter speed (Hz; log slider; biased to slow wander)'
+    const input = document.createElement('input')
+    input.id = id
+    input.type = 'range'
+    input.min = '0'
+    input.max = String(PRE_DELAY_JIT_SPEED_SLIDER_STEPS)
+    input.step = '1'
+    input.value = String(
+      logHzToSliderPos(
+        asteroidMusicDebug.preReverbStereoDelayRateJitterSpeedHz,
+        PRE_DELAY_JIT_SPEED_HZ_LO,
+        PRE_DELAY_JIT_SPEED_HZ_HI,
+        PRE_DELAY_JIT_SPEED_SLIDER_STEPS,
+      ),
+    )
+    const valSpan = document.createElement('span')
+    valSpan.className = 'settings-value'
+    valSpan.textContent = `${fmtPreDelayJitSpeedHz(asteroidMusicDebug.preReverbStereoDelayRateJitterSpeedHz)} Hz`
+    input.addEventListener('input', () => {
+      const hz = logSliderPosToHz(
+        Number(input.value),
+        PRE_DELAY_JIT_SPEED_HZ_LO,
+        PRE_DELAY_JIT_SPEED_HZ_HI,
+        PRE_DELAY_JIT_SPEED_SLIDER_STEPS,
+      )
+      asteroidMusicDebug.preReverbStereoDelayRateJitterSpeedHz = hz
+      valSpan.textContent = `${fmtPreDelayJitSpeedHz(hz)} Hz`
+      onAsteroidMusicDebugChange?.()
+    })
+    row.append(label, input, valSpan)
+    parent.appendChild(row)
   }
 
   function appendBusLowpassHzLogSliderRow(parent: HTMLElement): void {
@@ -1508,6 +1864,30 @@ export function createSettingsMenu(
       },
     },
     {
+      id: 'settings-music-avg-voice-lifetime',
+      label: 'Voice count — average voice lifetime (s), 0 = fixed first-N voices',
+      min: 0,
+      max: 300,
+      step: 1,
+      decimals: 0,
+      read: () => asteroidMusicDebug.averageVoiceLifetimeSec,
+      write: (n) => {
+        asteroidMusicDebug.averageVoiceLifetimeSec = n
+      },
+    },
+    {
+      id: 'settings-music-voice-lifetime-jitter',
+      label: 'Voice count — lifetime jitter (0–1, × spread around mean; death rate per slot)',
+      min: 0,
+      max: 1,
+      step: 0.05,
+      decimals: 2,
+      read: () => asteroidMusicDebug.voiceLifetimeJitter,
+      write: (n) => {
+        asteroidMusicDebug.voiceLifetimeJitter = n
+      },
+    },
+    {
       id: 'settings-music-voxel-w',
       label: 'Activity weight — structure voxels',
       min: 0,
@@ -1555,11 +1935,86 @@ export function createSettingsMenu(
         asteroidMusicDebug.voiceFadeOutSec = n
       },
     },
+    {
+      id: 'settings-music-note-pitch-slide-jitter',
+      label: 'Carrier pitch glide — extra duration (s) per voice (0…value, deterministic spread)',
+      min: 0,
+      max: 30,
+      step: 0.1,
+      decimals: 2,
+      read: () => asteroidMusicDebug.notePitchSlideJitterSec,
+      write: (n) => {
+        asteroidMusicDebug.notePitchSlideJitterSec = n
+      },
+    },
+    {
+      id: 'settings-music-voice-pitch-spread',
+      label: 'Voices — pitch spread (× static + note jitter; 1 = default)',
+      min: VOICE_PITCH_SPREAD_MIN,
+      max: VOICE_PITCH_SPREAD_MAX,
+      step: 0.05,
+      decimals: 2,
+      read: () => asteroidMusicDebug.voicePitchSpread,
+      write: (n) => {
+        asteroidMusicDebug.voicePitchSpread = n
+      },
+    },
   ]
 
   for (const spec of musicMapSpecs) {
     appendMusicSliderRow(debugDetails, spec)
+    if (spec.id === 'settings-music-voice-fade-out') {
+      appendGlideBaseSliderRow(debugDetails)
+    }
   }
+
+  appendScaleClampModeRow(debugDetails)
+  appendScaleCycleSection(debugDetails)
+
+  const pitchBpRow = document.createElement('div')
+  pitchBpRow.className = 'settings-row settings-debug-row'
+  const pitchBpLabel = document.createElement('label')
+  pitchBpLabel.className = 'settings-checkbox-label'
+  const pitchBpInput = document.createElement('input')
+  pitchBpInput.type = 'checkbox'
+  pitchBpInput.id = 'settings-music-voice-pitch-bandpass'
+  pitchBpInput.checked = asteroidMusicDebug.voicePitchBandpassEnabled
+  const pitchBpText = document.createElement('span')
+  pitchBpText.textContent =
+    'Per-voice pitch-tracking bandpass (center follows carrier glide)'
+  pitchBpLabel.append(pitchBpInput, pitchBpText)
+  pitchBpRow.appendChild(pitchBpLabel)
+  pitchBpInput.addEventListener('change', () => {
+    asteroidMusicDebug.voicePitchBandpassEnabled = pitchBpInput.checked
+    onAsteroidMusicDebugChange?.()
+  })
+  debugDetails.appendChild(pitchBpRow)
+
+  appendMusicSliderRow(debugDetails, {
+    id: 'settings-music-voice-pitch-bandpass-center',
+    label: 'Pitch bandpass — center offset (semitones vs fundamental)',
+    min: -36,
+    max: 36,
+    step: 1,
+    decimals: 0,
+    read: () => asteroidMusicDebug.voicePitchBandpassCenterSemitones,
+    write: (n) => {
+      asteroidMusicDebug.voicePitchBandpassCenterSemitones = Math.round(n)
+    },
+  })
+
+  appendMusicSliderRow(debugDetails, {
+    id: 'settings-music-voice-pitch-bandpass-q',
+    label: 'Pitch bandpass — resonance (Q), macro for all voices',
+    min: 0.25,
+    max: 30,
+    step: 0.05,
+    decimals: 2,
+    read: () => asteroidMusicDebug.voicePitchBandpassQ,
+    write: (n) => {
+      asteroidMusicDebug.voicePitchBandpassQ = n
+    },
+  })
 
   const macroMusicHeading = document.createElement('h4')
   macroMusicHeading.className = 'settings-debug-subheading'
@@ -1571,6 +2026,10 @@ export function createSettingsMenu(
   macroVoiceHint.textContent =
     'Each control sets a center value; all voices are updated with small deterministic spread. Changing a macro overwrites per-voice tweaks below until you edit them again.'
   debugDetails.appendChild(macroVoiceHint)
+
+  const applyVoiceMacros = (): void => {
+    applyVoiceMacrosToVoices(asteroidMusicDebug, getMusicRootMidi())
+  }
 
   const vm = () => asteroidMusicDebug.voiceMacros
   const macroMusicSpecs: MusicSliderSpec[] = [
@@ -1584,7 +2043,7 @@ export function createSettingsMenu(
       read: () => vm().amp,
       write: (n) => {
         vm().amp = n
-        applyVoiceMacrosToVoices(asteroidMusicDebug)
+        applyVoiceMacros()
       },
     },
     {
@@ -1597,7 +2056,7 @@ export function createSettingsMenu(
       read: () => vm().ampLfoDepth,
       write: (n) => {
         vm().ampLfoDepth = n
-        applyVoiceMacrosToVoices(asteroidMusicDebug)
+        applyVoiceMacros()
       },
     },
     {
@@ -1610,7 +2069,7 @@ export function createSettingsMenu(
       read: () => vm().ampLfoSpeedModDepthHz,
       write: (n) => {
         vm().ampLfoSpeedModDepthHz = n
-        applyVoiceMacrosToVoices(asteroidMusicDebug)
+        applyVoiceMacros()
       },
     },
     {
@@ -1623,7 +2082,7 @@ export function createSettingsMenu(
       read: () => vm().ampLfoSpeedModHz,
       write: (n) => {
         vm().ampLfoSpeedModHz = n
-        applyVoiceMacrosToVoices(asteroidMusicDebug)
+        applyVoiceMacros()
       },
     },
     {
@@ -1636,7 +2095,7 @@ export function createSettingsMenu(
       read: () => vm().ampLfo2Depth,
       write: (n) => {
         vm().ampLfo2Depth = n
-        applyVoiceMacrosToVoices(asteroidMusicDebug)
+        applyVoiceMacros()
       },
     },
     {
@@ -1649,7 +2108,7 @@ export function createSettingsMenu(
       read: () => vm().ampLfo2SpeedModDepthHz,
       write: (n) => {
         vm().ampLfo2SpeedModDepthHz = n
-        applyVoiceMacrosToVoices(asteroidMusicDebug)
+        applyVoiceMacros()
       },
     },
     {
@@ -1662,7 +2121,7 @@ export function createSettingsMenu(
       read: () => vm().ampLfo2SpeedModHz,
       write: (n) => {
         vm().ampLfo2SpeedModHz = n
-        applyVoiceMacrosToVoices(asteroidMusicDebug)
+        applyVoiceMacros()
       },
     },
     {
@@ -1675,7 +2134,7 @@ export function createSettingsMenu(
       read: () => vm().panLfoDepth,
       write: (n) => {
         vm().panLfoDepth = n
-        applyVoiceMacrosToVoices(asteroidMusicDebug)
+        applyVoiceMacros()
       },
     },
     {
@@ -1688,13 +2147,193 @@ export function createSettingsMenu(
       read: () => vm().noteOffset,
       write: (n) => {
         vm().noteOffset = Math.round(n)
-        applyVoiceMacrosToVoices(asteroidMusicDebug)
+        applyVoiceMacros()
+      },
+    },
+    {
+      id: 'settings-music-macro-note-jitter-depth',
+      label: 'Macro — note offset jitter depth (semitones; 0 = static spread only)',
+      min: 0,
+      max: 6,
+      step: 1,
+      decimals: 0,
+      read: () => vm().noteJitterDepthSemitones,
+      write: (n) => {
+        vm().noteJitterDepthSemitones = n
+        applyVoiceMacros()
+      },
+    },
+    {
+      id: 'settings-music-macro-phrase-avg-length',
+      label: 'Macro — music phrase avg length (sec)',
+      min: PHRASE_AVG_LENGTH_MIN,
+      max: PHRASE_AVG_LENGTH_MAX,
+      step: 0.05,
+      decimals: 2,
+      read: () => vm().phraseAvgLengthSec,
+      write: (n) => {
+        vm().phraseAvgLengthSec = n
+        applyVoiceMacros()
+      },
+    },
+    {
+      id: 'settings-music-macro-phrase-depth',
+      label: 'Macro — music phrase depth (jitter boost; 0 = off)',
+      min: 0,
+      max: PHRASE_DEPTH_MAX,
+      step: 0.05,
+      decimals: 2,
+      read: () => vm().phraseDepth,
+      write: (n) => {
+        vm().phraseDepth = n
+        applyVoiceMacros()
+      },
+    },
+    {
+      id: 'settings-music-macro-rate-jitter-depth',
+      label: 'Macro — LFO/pan rate jitter depth (0 = static spread only)',
+      min: 0,
+      max: 0.5,
+      step: 0.02,
+      decimals: 2,
+      read: () => vm().rateJitterDepth,
+      write: (n) => {
+        vm().rateJitterDepth = n
+        applyVoiceMacros()
       },
     },
   ]
   for (const spec of macroMusicSpecs) {
     appendMusicSliderRow(debugDetails, spec)
+    if (spec.id === 'settings-music-macro-note-jitter-depth') {
+      appendPhraseRateLogHzSliderRow(
+        debugDetails,
+        'Macro — music phrase rate (starts/sec, log; 0 = off)',
+        'settings-music-macro-phrase-rate-hz',
+        PHRASE_RATE_HZ_MIN,
+        PHRASE_RATE_HZ_MAX,
+        () => vm().phraseRateHz,
+        (hz) => {
+          vm().phraseRateHz = hz
+          applyVoiceMacros()
+        },
+      )
+      appendMusicSliderRow(debugDetails, {
+        id: 'settings-music-macro-phrase-rate-jitter-depth',
+        label: 'Macro — music phrase rate jitter depth (0 = static phrase rate)',
+        min: 0,
+        max: 0.5,
+        step: 0.02,
+        decimals: 2,
+        read: () => vm().phraseRateJitterDepth,
+        write: (n) => {
+          vm().phraseRateJitterDepth = n
+          applyVoiceMacros()
+        },
+      })
+      appendVoiceLogHzSliderRow(
+        debugDetails,
+        'Macro — music phrase rate jitter rate (Hz, log slider; slow)',
+        'settings-music-macro-phrase-rate-jitter-hz',
+        JITTER_HZ_LO,
+        JITTER_HZ_HI,
+        () => vm().phraseRateJitterHz,
+        (hz) => {
+          vm().phraseRateJitterHz = hz
+          applyVoiceMacros()
+        },
+      )
+      appendMacroJitterModeRow(
+        debugDetails,
+        'Macro — music phrase rate jitter mode',
+        'settings-music-macro-phrase-rate-jitter-mode',
+        () => vm().phraseRateJitterMode,
+        (m) => {
+          vm().phraseRateJitterMode = m
+          applyVoiceMacros()
+        },
+      )
+    }
   }
+  appendVoiceLogHzSliderRow(
+    debugDetails,
+    'Macro — note offset jitter rate (Hz, log slider)',
+    'settings-music-macro-note-jitter-hz',
+    NOTE_JITTER_HZ_LO,
+    NOTE_JITTER_HZ_HI,
+    () => vm().noteJitterHz,
+    (hz) => {
+      vm().noteJitterHz = hz
+      applyVoiceMacros()
+    },
+  )
+  appendMacroJitterModeRow(
+    debugDetails,
+    'Macro — note offset jitter mode',
+    'settings-music-macro-note-jitter-mode',
+    () => vm().noteJitterMode,
+    (m) => {
+      vm().noteJitterMode = m
+      applyVoiceMacros()
+    },
+  )
+  appendMusicSliderRow(debugDetails, {
+    id: 'settings-music-macro-note-jitter-rate-jitter-depth',
+    label: 'Macro — note jitter rate jitter depth (0 = static note jitter rate)',
+    min: 0,
+    max: 0.5,
+    step: 0.02,
+    decimals: 2,
+    read: () => vm().noteJitterRateJitterDepth,
+    write: (n) => {
+      vm().noteJitterRateJitterDepth = n
+      applyVoiceMacros()
+    },
+  })
+  appendVoiceLogHzSliderRow(
+    debugDetails,
+    'Macro — note jitter rate jitter rate (Hz, log slider; slow)',
+    'settings-music-macro-note-jitter-rate-jitter-hz',
+    JITTER_HZ_LO,
+    JITTER_HZ_HI,
+    () => vm().noteJitterRateJitterHz,
+    (hz) => {
+      vm().noteJitterRateJitterHz = hz
+      applyVoiceMacros()
+    },
+  )
+  appendMacroJitterModeRow(
+    debugDetails,
+    'Macro — note jitter rate jitter mode',
+    'settings-music-macro-note-jitter-rate-jitter-mode',
+    () => vm().noteJitterRateJitterMode,
+    (m) => {
+      vm().noteJitterRateJitterMode = m
+      applyVoiceMacros()
+    },
+  )
+  appendVoiceLogHzSliderRow(
+    debugDetails,
+    'Macro — rate jitter rate (Hz, log slider; slow)',
+    'settings-music-macro-rate-jitter-hz',
+    JITTER_HZ_LO,
+    JITTER_HZ_HI,
+    () => vm().rateJitterHz,
+    (hz) => {
+      vm().rateJitterHz = hz
+      applyVoiceMacros()
+    },
+  )
+  appendMacroJitterModeRow(
+    debugDetails,
+    'Macro — rate jitter mode',
+    'settings-music-macro-rate-jitter-mode',
+    () => vm().rateJitterMode,
+    (m) => {
+      vm().rateJitterMode = m
+      applyVoiceMacros()
+    },
+  )
   appendVoiceLogHzSliderRow(
     debugDetails,
     'Macro — amp LFO speed (Hz, log slider)',
@@ -1704,7 +2343,7 @@ export function createSettingsMenu(
     () => vm().ampLfoHz,
     (hz) => {
       vm().ampLfoHz = hz
-      applyVoiceMacrosToVoices(asteroidMusicDebug)
+      applyVoiceMacros()
     },
   )
   appendVoiceLogHzSliderRow(
@@ -1716,7 +2355,7 @@ export function createSettingsMenu(
     () => vm().ampLfo2Hz,
     (hz) => {
       vm().ampLfo2Hz = hz
-      applyVoiceMacrosToVoices(asteroidMusicDebug)
+      applyVoiceMacros()
     },
   )
   appendVoiceLogHzSliderRow(
@@ -1728,7 +2367,7 @@ export function createSettingsMenu(
     () => vm().panLfoHz,
     (hz) => {
       vm().panLfoHz = hz
-      applyVoiceMacrosToVoices(asteroidMusicDebug)
+      applyVoiceMacros()
     },
   )
 
@@ -1846,7 +2485,7 @@ export function createSettingsMenu(
       },
       {
         id: `settings-music-v${vi}-note`,
-        label: `V${vi + 1} — note (semitones, then major-scale snap)`,
+        label: `V${vi + 1} — note (semitones, then scale snap)`,
         min: -12,
         max: 24,
         step: 1,
@@ -2024,6 +2663,117 @@ export function createSettingsMenu(
     },
   ]
 
+  const musicBusPreReverbStereoDelaySpecs: MusicSliderSpec[] = [
+    {
+      id: 'settings-music-pre-reverb-stereo-delay-time',
+      label: 'Bus — pre-reverb stereo delay time (ms; L/R; up to 16 s)',
+      min: 1,
+      max: 16000,
+      step: 1,
+      decimals: 0,
+      read: () => asteroidMusicDebug.preReverbStereoDelayTimeMs,
+      write: (n) => {
+        asteroidMusicDebug.preReverbStereoDelayTimeMs = n
+      },
+    },
+    {
+      id: 'settings-music-pre-reverb-stereo-delay-feedback',
+      label: 'Bus — pre-reverb stereo delay feedback (HPF in loop)',
+      min: 0,
+      max: 0.92,
+      step: 0.02,
+      decimals: 2,
+      read: () => asteroidMusicDebug.preReverbStereoDelayFeedback,
+      write: (n) => {
+        asteroidMusicDebug.preReverbStereoDelayFeedback = n
+      },
+    },
+    {
+      id: 'settings-music-pre-reverb-stereo-delay-hpf',
+      label: 'Bus — pre-reverb stereo delay feedback highpass (Hz)',
+      min: 20,
+      max: 8000,
+      step: 1,
+      decimals: 0,
+      read: () => asteroidMusicDebug.preReverbStereoDelayHighpassHz,
+      write: (n) => {
+        asteroidMusicDebug.preReverbStereoDelayHighpassHz = n
+      },
+    },
+    {
+      id: 'settings-music-pre-reverb-stereo-delay-lpf',
+      label: 'Bus — pre-reverb stereo delay feedback lowpass (Hz)',
+      min: 200,
+      max: 20000,
+      step: 10,
+      decimals: 0,
+      read: () => asteroidMusicDebug.preReverbStereoDelayLowpassHz,
+      write: (n) => {
+        asteroidMusicDebug.preReverbStereoDelayLowpassHz = n
+      },
+    },
+    {
+      id: 'settings-music-pre-reverb-stereo-delay-volume',
+      label: 'Bus — pre-reverb stereo delay send (0 = delay off; direct wet unchanged)',
+      min: 0,
+      max: 1,
+      step: 0.02,
+      decimals: 2,
+      read: () => asteroidMusicDebug.preReverbStereoDelayVolume,
+      write: (n) => {
+        asteroidMusicDebug.preReverbStereoDelayVolume = n
+      },
+    },
+    {
+      id: 'settings-music-pre-reverb-stereo-delay-2-time',
+      label: 'Bus — pre-reverb stereo delay tap 2 time (ms; L/R; parallel loop, up to 16 s)',
+      min: 1,
+      max: 16000,
+      step: 1,
+      decimals: 0,
+      read: () => asteroidMusicDebug.preReverbStereoDelay2TimeMs,
+      write: (n) => {
+        asteroidMusicDebug.preReverbStereoDelay2TimeMs = n
+      },
+    },
+    {
+      id: 'settings-music-pre-reverb-stereo-delay-2-volume',
+      label: 'Bus — pre-reverb stereo delay tap 2 send (0 = tap off; shares feedback/HPF/LPF with tap 1)',
+      min: 0,
+      max: 1,
+      step: 0.02,
+      decimals: 2,
+      read: () => asteroidMusicDebug.preReverbStereoDelay2Volume,
+      write: (n) => {
+        asteroidMusicDebug.preReverbStereoDelay2Volume = n
+      },
+    },
+    {
+      id: 'settings-music-pre-reverb-stereo-delay-rate-jitter-depth',
+      label: 'Bus — pre-reverb delay rate jitter depth (ms peak; both taps; up to 8 s)',
+      min: 0,
+      max: 8000,
+      step: 1,
+      decimals: 0,
+      read: () => asteroidMusicDebug.preReverbStereoDelayRateJitterDepthMs,
+      write: (n) => {
+        asteroidMusicDebug.preReverbStereoDelayRateJitterDepthMs = n
+      },
+    },
+    {
+      id: 'settings-music-pre-reverb-stereo-delay-rate-jitter-randomness',
+      label: 'Bus — pre-reverb delay rate jitter randomness (wander-rate drift; 0–1)',
+      min: 0,
+      max: 1,
+      step: 0.02,
+      decimals: 2,
+      read: () => asteroidMusicDebug.preReverbStereoDelayRateJitterRandomness,
+      write: (n) => {
+        asteroidMusicDebug.preReverbStereoDelayRateJitterRandomness = n
+      },
+    },
+  ]
+
   const musicBusReverbSpecs: MusicSliderSpec[] = [
     {
       id: 'settings-music-reverb-mix',
@@ -2050,15 +2800,111 @@ export function createSettingsMenu(
       },
     },
     {
-      id: 'settings-music-reverb-decay',
-      label: 'Bus — reverb decay (s, regenerates IR)',
-      min: 0.15,
-      max: 10,
+      id: 'settings-music-reverb-ir-duration',
+      label: 'Bus — IR buffer length (s; regenerates impulse)',
+      min: 0.35,
+      max: 6,
       step: 0.05,
       decimals: 2,
-      read: () => asteroidMusicDebug.reverbDecaySec,
+      read: () => asteroidMusicDebug.reverbIrDurationSec,
       write: (n) => {
-        asteroidMusicDebug.reverbDecaySec = n
+        asteroidMusicDebug.reverbIrDurationSec = n
+      },
+    },
+    {
+      id: 'settings-music-reverb-ir-decay',
+      label: 'Bus — IR decay rate (higher = shorter tail; regenerates impulse)',
+      min: 0.4,
+      max: 24,
+      step: 0.05,
+      decimals: 2,
+      read: () => asteroidMusicDebug.reverbIrDecayPerSec,
+      write: (n) => {
+        asteroidMusicDebug.reverbIrDecayPerSec = n
+      },
+    },
+    {
+      id: 'settings-music-reverb-pre-delay',
+      label: 'Bus — pre-delay before reverb (ms, wet path only)',
+      min: 0,
+      max: 150,
+      step: 1,
+      decimals: 0,
+      read: () => asteroidMusicDebug.reverbPreDelayMs,
+      write: (n) => {
+        asteroidMusicDebug.reverbPreDelayMs = n
+      },
+    },
+    {
+      id: 'settings-music-reverb-ir-decorrelate',
+      label: 'Bus — IR stereo decorrelation (0 = mono; 1 = wide)',
+      min: 0,
+      max: 1,
+      step: 0.02,
+      decimals: 2,
+      read: () => asteroidMusicDebug.reverbIrDecorrelate,
+      write: (n) => {
+        asteroidMusicDebug.reverbIrDecorrelate = n
+      },
+    },
+    {
+      id: 'settings-music-reverb-ir-damping',
+      label: 'Bus — IR high-frequency damping (0 = bright; 1 = dark tail)',
+      min: 0,
+      max: 1,
+      step: 0.02,
+      decimals: 2,
+      read: () => asteroidMusicDebug.reverbIrDamping,
+      write: (n) => {
+        asteroidMusicDebug.reverbIrDamping = n
+      },
+    },
+    {
+      id: 'settings-music-reverb-ir-early-density',
+      label: 'Bus — IR early reflection density (sparse taps in first ~80 ms)',
+      min: 0,
+      max: 1,
+      step: 0.02,
+      decimals: 2,
+      read: () => asteroidMusicDebug.reverbIrEarlyDensity,
+      write: (n) => {
+        asteroidMusicDebug.reverbIrEarlyDensity = n
+      },
+    },
+    {
+      id: 'settings-music-reverb-wet-fb-delay',
+      label: 'Bus — wet feedback delay (ms; smear loop after convolver)',
+      min: 4,
+      max: 120,
+      step: 1,
+      decimals: 0,
+      read: () => asteroidMusicDebug.reverbWetFeedbackMs,
+      write: (n) => {
+        asteroidMusicDebug.reverbWetFeedbackMs = n
+      },
+    },
+    {
+      id: 'settings-music-reverb-wet-fb',
+      label: 'Bus — wet feedback amount (0 = off)',
+      min: 0,
+      max: 0.92,
+      step: 0.02,
+      decimals: 2,
+      read: () => asteroidMusicDebug.reverbWetFeedback,
+      write: (n) => {
+        asteroidMusicDebug.reverbWetFeedback = n
+      },
+    },
+    {
+      id: 'settings-music-reverb-normalize',
+      label: 'Bus — convolver normalize IR energy (0 = off; 1 = on)',
+      min: 0,
+      max: 1,
+      step: 1,
+      decimals: 0,
+      read: () => (asteroidMusicDebug.reverbConvolverNormalize ? 1 : 0),
+      write: (n) => {
+        asteroidMusicDebug.reverbConvolverNormalize = n >= 0.5
       },
     },
   ]
@@ -2096,7 +2942,24 @@ export function createSettingsMenu(
   for (const spec of musicBusFilterSpecs) {
     appendMusicSliderRow(debugDetails, spec)
   }
+  appendMusicBusSubheading('Music bus — pre-reverb stereo delay')
+  const musicBusPreReverbStereoDelayHint = document.createElement('p')
+  musicBusPreReverbStereoDelayHint.className = 'settings-debug-hint'
+  musicBusPreReverbStereoDelayHint.textContent =
+    'Stereo delay sits on the wet path after the bus lowpass and before the short reverb pre-delay and convolver. Feedback runs HPF then LPF (darken repeats). Direct wet is always mixed in; raise send to add delayed taps. Tap 2 is a second parallel L/R loop with a longer allowed time; it uses the same feedback and filter sliders as tap 1. Rate jitter adds slow delay-time wander per tap (separate LFOs, unsynced); the wander-speed slider is logarithmic toward the slow end; randomness modulates how much each wander rate drifts over time.'
+  debugDetails.appendChild(musicBusPreReverbStereoDelayHint)
+  for (const spec of musicBusPreReverbStereoDelaySpecs) {
+    appendMusicSliderRow(debugDetails, spec)
+    if (spec.id === 'settings-music-pre-reverb-stereo-delay-rate-jitter-depth') {
+      appendPreDelayJitSpeedLogSliderRow(debugDetails)
+    }
+  }
   appendMusicBusSubheading('Music bus — reverb')
+  const musicBusReverbHint = document.createElement('p')
+  musicBusReverbHint.className = 'settings-debug-hint'
+  musicBusReverbHint.textContent =
+    'Impulse buffers regenerate when IR length, decay, or density sliders change. Pre-delay is wet-only; feedback loops the wet path after the convolver (main wet path stays direct for zero feedback).'
+  debugDetails.appendChild(musicBusReverbHint)
   for (const spec of musicBusReverbSpecs) {
     appendMusicSliderRow(debugDetails, spec)
   }
@@ -2117,7 +2980,20 @@ export function createSettingsMenu(
     matterHudCompactRow,
     debugDetails,
   )
-  topBar.appendChild(toggle)
+  if (onOpenTips) {
+    const tipsBtn = document.createElement('button')
+    tipsBtn.type = 'button'
+    tipsBtn.className = 'settings-toggle'
+    tipsBtn.title = 'Tips'
+    tipsBtn.textContent = 'Tips'
+    tipsBtn.setAttribute('aria-label', 'Tips')
+    tipsBtn.addEventListener('click', () => {
+      onOpenTips()
+    })
+    topBar.append(tipsBtn, toggle)
+  } else {
+    topBar.appendChild(toggle)
+  }
   overlay.append(topBar, panel)
   container.appendChild(overlay)
 

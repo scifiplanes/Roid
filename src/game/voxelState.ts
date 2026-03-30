@@ -1,5 +1,5 @@
 import type { VoxelPos } from '../scene/asteroid/generateAsteroidVoxels'
-import type { AsteroidGenProfile } from './asteroidGenProfile'
+import { float01FromSeed, type AsteroidGenProfile } from './asteroidGenProfile'
 import type { VoxelKind } from './voxelKinds'
 import { gameBalance } from './gameBalance'
 import { getKindDef } from './voxelKinds'
@@ -65,9 +65,13 @@ export interface VoxelCell {
   explosiveFuseEndMs?: number
 }
 
+const LITHO_AXIS_U = 0x4f1bbcdc
+const LITHO_AXIS_V = 0x4e2b3d91
+
 /**
  * Radial bands + hash jitter: outer shell → regolith, mid-depth → silicate mantle,
- * deep interior → metal-rich (differentiation analog). crustProximity is high near the surface.
+ * deep interior → metal-rich (differentiation analog). `crustProximity` is high near the surface;
+ * may include a small anisotropic term (seed axis) so layering is not perfectly spherical.
  */
 function pickKind(
   seed: number,
@@ -97,12 +101,19 @@ export interface EnrichVoxelCellsParams {
 
 /**
  * Maps procedural positions to typed cells with full HP.
- * Lithology uses seeded hash plus radial depth proxy (see pickKind).
+ * Lithology uses seeded hash plus radial depth proxy and optional axis blend (see pickKind).
  */
 export function enrichVoxelCells(positions: VoxelPos[], params: EnrichVoxelCellsParams): VoxelCell[] {
   const { seed, gridSize, baseRadius, noiseAmplitude, profile } = params
   const center = (gridSize - 1) / 2
   const outerApprox = Math.max(baseRadius + noiseAmplitude, 1e-6)
+
+  const axisU = float01FromSeed(seed, LITHO_AXIS_U) * 2 * Math.PI
+  const axisV = float01FromSeed(seed, LITHO_AXIS_V) * Math.PI
+  const ax = Math.sin(axisV) * Math.cos(axisU)
+  const ay = Math.sin(axisV) * Math.sin(axisU)
+  const az = Math.cos(axisV)
+  const anisoWeight = 0.1 * profile.pickKind.hashScale
 
   const out: VoxelCell[] = []
   for (const pos of positions) {
@@ -110,7 +121,9 @@ export function enrichVoxelCells(positions: VoxelPos[], params: EnrichVoxelCells
     const dy = pos.y - center
     const dz = pos.z - center
     const dist = Math.sqrt(dx * dx + dy * dy + dz * dz)
-    const crustProximity = Math.min(1, dist / outerApprox)
+    const radialCrust = Math.min(1, dist / outerApprox)
+    const aligned = dist > 1e-9 ? (dx * ax + dy * ay + dz * az) / dist : 0
+    const crustProximity = Math.min(1, Math.max(0, radialCrust + anisoWeight * aligned))
 
     const kind = pickKind(seed, pos, crustProximity, profile)
     const def = getKindDef(kind)

@@ -41,13 +41,17 @@ function u32ToUnit(h: number): number {
   return (h >>> 0) / 0x1_0000_0000
 }
 
-/** Deterministic: fraction of voxels that are discovery sites (scan hint + claim eligibility). */
+/**
+ * Deterministic: fraction of voxels that are discovery sites (scan hint + claim eligibility).
+ * `densityScale` (default 1) comes from `discoveryDensityScale(profile)` — spectral/regime prior on top of balance.
+ */
 export function isDiscoverySite(
   asteroidSeed: number,
   pos: { x: number; y: number; z: number },
   balance: GameBalance,
+  densityScale = 1,
 ): boolean {
-  const d = balance.discoverySiteDensity
+  const d = Math.min(1, Math.max(0, balance.discoverySiteDensity * densityScale))
   if (d <= 0) return false
   let h = mixU32(asteroidSeed, pos.x, pos.y, pos.z)
   h = mixU32(h, 0x53495445, 0x44495343, 0x544553)
@@ -68,10 +72,11 @@ export function tryDiscoveryClaim(
   balance: GameBalance,
   consumed: Set<string>,
   discoveryCounter: { current: number },
+  densityScale = 1,
 ): DiscoveryOffer | null {
   const key = discoveryPosKey(pos)
   if (consumed.has(key)) return null
-  if (!isDiscoverySite(asteroidSeed, pos, balance)) return null
+  if (!isDiscoverySite(asteroidSeed, pos, balance, densityScale)) return null
   consumed.add(key)
   discoveryCounter.current += 1
   return rollDiscoveryOffer(asteroidSeed, pos, discoveryCounter.current, balance)

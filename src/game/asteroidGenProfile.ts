@@ -381,6 +381,87 @@ function deriveShape(dials: AsteroidAnalogDials): AsteroidShapeParams {
   }
 }
 
+/** Bounded multipliers on base shape — regime (structure) × spectral (density prior). */
+function regimeShapeMult(reg: AsteroidRegime): { br: number; amp: number; ns: number } {
+  switch (reg) {
+    case 'impactShattered':
+    case 'collisionalFamilyDebris':
+      return { br: 1, amp: 1.1, ns: 1.05 }
+    case 'competentMonolith':
+      return { br: 0.98, amp: 0.88, ns: 0.94 }
+    case 'contactBinaryRubble':
+      return { br: 1.02, amp: 1.06, ns: 1.03 }
+    case 'gardenedAncient':
+      return { br: 1.01, amp: 1.04, ns: 1.02 }
+    case 'freshExposure':
+      return { br: 1, amp: 0.93, ns: 0.97 }
+    case 'outerBeltCold':
+      return { br: 1.02, amp: 1.03, ns: 1.01 }
+    case 'volatileRichPrimitive':
+      return { br: 1.03, amp: 1.05, ns: 1.01 }
+    case 'rubblePileLoose':
+      return { br: 1.02, amp: 1.05, ns: 1.02 }
+    case 'rubblePileCompact':
+      return { br: 0.99, amp: 0.97, ns: 0.99 }
+    case 'thermallyProcessed':
+      return { br: 0.99, amp: 0.96, ns: 1 }
+    default:
+      return { br: 1, amp: 1, ns: 1 }
+  }
+}
+
+function spectralShapeMult(cls: SpectralClass): { br: number; amp: number; ns: number } {
+  switch (cls) {
+    case 'C':
+    case 'D':
+      return { br: 1.03, amp: 1.025, ns: 1.01 }
+    case 'M':
+    case 'X':
+      return { br: 0.98, amp: 0.97, ns: 0.99 }
+    default:
+      return { br: 1, amp: 1, ns: 1 }
+  }
+}
+
+function modulateShapeForSpectralRegime(
+  base: AsteroidShapeParams,
+  spectralClass: SpectralClass,
+  regime: AsteroidRegime,
+): AsteroidShapeParams {
+  const rm = regimeShapeMult(regime)
+  const sm = spectralShapeMult(spectralClass)
+  return {
+    baseRadius: Math.max(8.5, base.baseRadius * rm.br * sm.br),
+    noiseAmplitude: Math.max(0.35, base.noiseAmplitude * rm.amp * sm.amp),
+    noiseScale: Math.max(0.055, base.noiseScale * rm.ns * sm.ns),
+  }
+}
+
+/**
+ * Scales Debug → balance discovery site density per asteroid (spectral × regime priors).
+ * Clamped to [0.85, 1.15] relative to the balance slider.
+ */
+export function discoveryDensityScale(p: AsteroidGenProfile): number {
+  let s = 1
+  switch (p.regime) {
+    case 'volatileRichPrimitive':
+    case 'outerBeltCold':
+      s *= 1.06
+      break
+    case 'competentMonolith':
+      s *= 0.92
+      break
+    case 'impactShattered':
+      s *= 1.04
+      break
+    default:
+      break
+  }
+  if (p.spectralClass === 'X' || p.spectralClass === 'M') s *= 1.05
+  if (p.spectralClass === 'C') s *= 0.97
+  return Math.min(1.15, Math.max(0.85, s))
+}
+
 function deriveRockVisuals(cls: SpectralClass, regime: AsteroidRegime, dials: AsteroidAnalogDials): {
   rockMetalness: number
   rockBaseColorRgb: { r: number; g: number; b: number }
@@ -446,7 +527,7 @@ export function deriveAsteroidProfile(seed: number): AsteroidGenProfile {
     noiseScaleT: float01FromSeed(seed, SALT_DIAL6),
   }
 
-  const shape = deriveShape(dials)
+  const shape = modulateShapeForSpectralRegime(deriveShape(dials), spectralClass, regime)
 
   let rootTemplateBias = mergeRootBias(spectralRootBias(spectralClass), regimeRootBias(regime))
   rootTemplateBias = applySurfaceAlteration(rootTemplateBias, dials.surfaceAlteration)

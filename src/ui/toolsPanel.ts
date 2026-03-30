@@ -16,6 +16,7 @@ import {
   formatResourceCostWithTallies,
   type ResourceId,
 } from '../game/resources'
+import { schedulePersistSettingsClient } from '../game/settingsClientPersist'
 import { loadToolsBarCollapsed, saveToolsBarCollapsed } from './uiLayoutPrefs'
 
 export type PlayerTool =
@@ -74,9 +75,9 @@ export interface ToolsPanelOptions {
   onDeploySatellite?: (kind: SatelliteDeployKind) => boolean
   /** Remove satellites of the selected type (after confirmation); count is clamped to deployed. */
   onDecommissionSatellite?: (kind: SatelliteDeployKind, count: number) => void
-  /** Tier-5 dross collector deploy row: visibility matches computronium ladder. */
+  /** Tier-5 cleanup collector deploy row: visibility matches computronium ladder. */
   getDrossCollectorDeployUiPhase?: () => LaserToolUiPhase
-  /** Main-row Dross tool (F13): same phase as deploy row; defaults to deploy phase if omitted. */
+  /** Main-row Cleanup tool (F13): same phase as deploy row; defaults to deploy phase if omitted. */
   getDrossCollectorToolUiPhase?: () => LaserToolUiPhase
   /** If set, unaffordable resource costs dim the tool (`aria-disabled`) and the status line notes unmet requirements. */
   canAffordResourceCost?: (cost: Partial<Record<ResourceId, number>>) => boolean
@@ -124,30 +125,30 @@ const TOOLS: ReadonlyArray<{
     id: 'pick',
     fKey: 'F1',
     label: 'Pick',
-    title: 'Pick voxels for resources (click)',
-    short: 'Mine voxels for resources',
+    title: 'Pick rocks.',
+    short: 'Pick rocks.',
   },
   {
     id: 'inspect',
     fKey: 'Ins',
     label: 'Inspect',
     title:
-      'Click a voxel for position, kind, and state; bulk/refined composition only after surface scan or depth reveal on that cell',
-    short: 'HUD readout for clicked voxel',
+      'Show info in top menu. Click a voxel for position, kind, and state; orbit markers open satellite info. Bulk/refined composition only after surface scan or depth reveal on that cell',
+    short: 'Show info in top menu',
   },
   {
     id: 'replicator',
     fKey: 'F2',
     label: 'Replicator',
-    title: 'Place a replicator on a voxel; it consumes rock and spreads',
-    short: 'Converts rocks.',
+    title: 'Convert rocks into stored resources and itself',
+    short: 'Rocks → stored resources; spreads',
     costTool: 'replicatorPlace',
   },
   {
     id: 'reactor',
     fKey: 'F3',
     label: 'Reactor',
-    title: 'Convert a mature replicator into a reactor; generates energy',
+    title: 'Generate energy. Convert a mature replicator into a reactor',
     short: 'Replicator → reactor; generates energy',
     costTool: 'reactor',
   },
@@ -164,8 +165,8 @@ const TOOLS: ReadonlyArray<{
     fKey: 'F5',
     label: 'Hub',
     title:
-      'Convert a mature replicator into a hub, or click an existing hub to toggle it on/off (standby saves energy). Pulls local stock into global root tallies.',
-    short: 'Hub from replicator; toggles; stock → roots',
+      'Collects resources. Convert a mature replicator into a hub, or click an existing hub to toggle it on/off (standby saves energy). Pulls local stock into global root tallies.',
+    short: 'Replicator → hub; collects resources; toggles',
     costTool: 'hub',
   },
   {
@@ -173,8 +174,8 @@ const TOOLS: ReadonlyArray<{
     fKey: 'F6',
     label: 'Refinery',
     title:
-      'Convert a mature replicator into a refinery, or click an existing refinery to toggle it on/off. Processes global root resources into second-order resources.',
-    short: 'Refinery from replicator; toggles; refine roots',
+      'Process resources. Convert a mature replicator into a refinery, or click an existing refinery to toggle it on/off. Processes global root resources into second-order resources.',
+    short: 'Replicator → refinery; process resources; toggles',
     costTool: 'refinery',
   },
   {
@@ -227,10 +228,10 @@ const TOOLS: ReadonlyArray<{
   {
     id: 'drossCollector',
     fKey: 'F13',
-    label: 'Dross',
+    label: 'Cleanup',
     title:
-      'Computronium tier 5 unlocks dross collector satellites. Deploy with + Dross sat; collectors convert debris into resources. No voxel action on the asteroid.',
-    short: 'Dross satellites; debris → resources',
+      'Computronium tier 5 unlocks cleanup collector satellites. Deploy with + Cleanup sat; collectors convert debris into resources. No voxel action on the asteroid.',
+    short: 'Cleanup satellites; debris → resources',
     costTool: 'drossCollectorInfo',
   },
   {
@@ -392,7 +393,7 @@ export function createToolsPanel(
   const drossDeployBtn = document.createElement('button')
   drossDeployBtn.type = 'button'
   drossDeployBtn.className = 'tools-sat-btn'
-  drossDeployBtn.textContent = '+ Dross sat'
+  drossDeployBtn.textContent = '+ Cleanup sat'
 
   const satContextRow = document.createElement('div')
   satContextRow.className = 'tools-sat-context'
@@ -621,7 +622,7 @@ export function createToolsPanel(
     if (ui.kind === 'drossCollectorInfo') {
       ui.costSpan.textContent = 'Tier 5'
       setToolBlockedByAffordance(ui.button, false)
-      ui.button.title = `${ui.baseTitle} Unlocked: deploy collectors from + Dross sat.`
+      ui.button.title = `${ui.baseTitle} Unlocked: deploy collectors from + Cleanup sat.`
       ui.button.setAttribute('aria-label', ui.button.title)
       return
     }
@@ -669,7 +670,7 @@ export function createToolsPanel(
     orbital: 'Mining satellite',
     excavating: 'Dig laser satellite',
     scanner: 'Scanner satellite',
-    drossCollector: 'Dross collector satellite',
+    drossCollector: 'Cleanup collector satellite',
   }
 
   let openSatDecommissionModal: (
@@ -851,7 +852,7 @@ export function createToolsPanel(
       if (pendingSatelliteKind === 'drossCollector') pendingSatelliteKind = null
     } else if (drossPhase === 'unlocked') {
       drossDeployBtn.disabled = false
-      drossDeployBtn.title = `Select to deploy another dross collector satellite. Next deploy: ${d.deployCostLine}.`
+      drossDeployBtn.title = `Select to deploy another cleanup collector satellite. Next deploy: ${d.deployCostLine}.`
     } else {
       drossDeployBtn.disabled = true
       drossDeployBtn.title = ''
@@ -1104,6 +1105,7 @@ export function createToolsPanel(
     toolsDockCollapsed = !toolsDockCollapsed
     saveToolsBarCollapsed(toolsDockCollapsed)
     syncToolsDockUi()
+    schedulePersistSettingsClient()
   })
 
   dockShell.append(dockMinBtn, dockBody)

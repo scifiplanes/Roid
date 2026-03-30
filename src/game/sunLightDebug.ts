@@ -43,3 +43,12 @@ export function createDefaultSunLightDebug(): SunLightDebug {
     showSunHelper: false,
   }
 }
+
+/** Fixed defaults for merging persisted JSON without re-rolling °/s (see `settingsClientPersist`). */
+export function createStaticSunLightDebugForPersistenceMerge(): SunLightDebug {
+  return {
+    rotateSunAzimuth: true,
+    rotationDegPerSec: 2,
+    showSunHelper: false,
+  }
+}

@@ -33,7 +33,7 @@ import {
 } from './scene/asteroid/buildAsteroidMesh'
 import { raycastFirstOccupiedCellIndex } from './game/voxelGridRaycast'
 import { compositionToYields } from './game/compositionYields'
-import { deriveAsteroidProfile, formatProfileFingerprint } from './game/asteroidGenProfile'
+import { deriveAsteroidProfile, discoveryDensityScale, formatProfileFingerprint } from './game/asteroidGenProfile'
 import { enrichVoxelCells, hpForVoxelKind, type VoxelCell } from './game/voxelState'
 import type { VoxelKind } from './game/voxelKinds'
 import { resourceHudCssColorForId } from './game/resourceOriginDepth'
@@ -119,12 +119,12 @@ import { gameBalance, initGameBalanceFromPersisted } from './game/gameBalance'
 import { applySfxReverbFromBalance } from './game/sfxReverbBus'
 import persistedSnapshot from './game/gameBalance.persisted.json' with { type: 'json' }
 import musicDebugSnapshot from './game/asteroidMusicDebug.persisted.json' with { type: 'json' }
+import settingsClientSnapshot from './game/settingsClient.persisted.json' with { type: 'json' }
 import { createDefaultAsteroidMusicDebug } from './game/asteroidMusicDebug'
 import {
   createDefaultSunLightDebug,
   randomAsteroidAxisRotationRad,
   randomKeyLightIntensityFactorForAsteroid,
-  randomRotationDegPerSecForAsteroid,
   randomSunAnglesForAsteroid,
 } from './game/sunLightDebug'
 import { initAsteroidMusicDebugFromPersisted, schedulePersistAsteroidMusicDebug } from './game/asteroidMusicPersist'
@@ -155,6 +155,8 @@ import { createSettingsMenu } from './ui/settingsMenu'
 import { updateDrossFog } from './scene/drossFog'
 import { createDrossParticlesGroup } from './scene/drossParticles'
 import { createSatelliteDotsGroup } from './scene/satelliteDots'
+import { loadGameStartTipsDismissed, saveGameStartTipsDismissed } from './game/gameStartTipsPrefs'
+import { createGameStartTipsModal } from './ui/gameStartTipsModal'
 import { createDiscoveryModal } from './ui/discoveryModal'
 import {
   createSatelliteInspectModal,
@@ -179,18 +181,30 @@ import {
   ensureAudioContextInitialized,
   isAudioContextReady,
   onAudioContextStateChange,
+  resetAudioInitializedAfterBackgrounding,
   resumeAudioContextSync,
   setAudioSessionPlayback,
 } from './game/audioContext'
 import { autoLoadBundledDebugPreset } from './game/autoLoadDebugPreset'
+import {
+  loadSunAnglesFromLocalStorage,
+  loadSunLightDebugPartialFromLocalStorage,
+  registerSettingsClientSnapshot,
+  schedulePersistSettingsClient,
+  seedSettingsClientLocalStorageFromBundleIfMissing,
+  writeSunAnglesToLocalStorage,
+  writeSunLightDebugToLocalStorage,
+} from './game/settingsClientPersist'
 
 await autoLoadBundledDebugPreset()
 
 initGameBalanceFromPersisted(persistedSnapshot)
+seedSettingsClientLocalStorageFromBundleIfMissing(settingsClientSnapshot)
 
 let musicVolumeLinear = loadMusicVolumeLinear()
 const asteroidMusicDebug = createDefaultAsteroidMusicDebug()
 const sunLightDebug = createDefaultSunLightDebug()
+Object.assign(sunLightDebug, loadSunLightDebugPartialFromLocalStorage())
 const scanVisualizationDebug = createDefaultScanVisualizationDebug()
 Object.assign(scanVisualizationDebug, loadPersistedScanVisualizationDebug())
 setScanVisualizationDebugGetter(() => scanVisualizationDebug)
@@ -206,9 +220,15 @@ const asteroidAmbientMusic = createAsteroidAmbientMusic({
 const app = document.querySelector<HTMLDivElement>('#app')!
 app.replaceChildren()
 
+const audioUnlockFallback = document.createElement('button')
+audioUnlockFallback.type = 'button'
+audioUnlockFallback.setAttribute('aria-label', 'Enable audio')
+audioUnlockFallback.style.cssText =
+  'position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0'
+
 const viewport = document.createElement('div')
 viewport.id = 'viewport'
-app.appendChild(viewport)
+app.append(audioUnlockFallback, viewport)
 
 const audioFallbackBtn = document.createElement('button')
 audioFallbackBtn.id = 'audio-fallback-btn'
@@ -273,6 +293,7 @@ document.addEventListener('keydown', gestureUnlockAudio, { passive: true })
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') {
     audioUnlockDone = false
+    resetAudioInitializedAfterBackgrounding()
   }
 })
 
@@ -280,9 +301,11 @@ const { scene, camera, renderer, sun, stepStarfield } = setupScene(viewport)
 sun.intensity = KEY_LIGHT_INTENSITY_BASE * randomKeyLightIntensityFactorForAsteroid()
 
 const SUN_RADIUS = Math.hypot(8, 12, 10)
-const startSunAngles = randomSunAnglesForAsteroid()
+const startSunAngles = loadSunAnglesFromLocalStorage() ?? randomSunAnglesForAsteroid()
 let sunAzimuthDeg = startSunAngles.azimuthDeg
 let sunElevationDeg = startSunAngles.elevationDeg
+/** Throttle localStorage + project JSON while key-light azimuth auto-rotates. */
+let lastPersistedSunAnglesWallMs = 0
 
 let asteroidRotX = 0
 let asteroidRotY = 0
@@ -325,6 +348,8 @@ function onLightAngleChange(azimuthDeg: number, elevationDeg: number): void {
     sunAzimuthDeg = azimuthDeg
   }
   applySunFromState()
+  writeSunAnglesToLocalStorage(sunAzimuthDeg, sunElevationDeg)
+  schedulePersistSettingsClient()
 }
 
 const gridSize = 33
@@ -475,6 +500,7 @@ matterHudMinBtn.addEventListener('click', (e) => {
   matterHudCollapsed = !matterHudCollapsed
   saveMatterHudCollapsed(matterHudCollapsed)
   syncMatterHudUi()
+  schedulePersistSettingsClient()
 })
 
 matterHudShell.append(matterHudMinBtn, matterHud)
@@ -490,7 +516,22 @@ let depthOverlayVisible = overlayVizLoaded.depthOverlayVisible
 
 function persistOverlayVisualizationPrefs(): void {
   saveOverlayVisualizationPrefs({ surfaceScanOverlayVisible, depthOverlayVisible })
+  schedulePersistSettingsClient()
 }
+
+registerSettingsClientSnapshot(() => ({
+  sunAzimuthDeg,
+  sunElevationDeg,
+  sunLightDebug,
+  scanVisualizationDebug,
+  audioMasterDebug,
+  surfaceScanOverlayVisible,
+  depthOverlayVisible,
+  discoveryAutoResolve,
+  musicVolumeLinear,
+  matterHudCollapsed,
+  matterHudCompact,
+}))
 /** Last scanner hit refined-material preview (HUD); cleared on regenerate. */
 let lastScanRefinedPreviewLine: string | null = null
 /** Last Inspect tool readout (HUD); cleared on regenerate. */
@@ -706,9 +747,6 @@ function regenerateAsteroid(): void {
   resetDrossState(drossState)
   invalidateVoxelPosIndexMap()
   setResourceHud()
-  const nextSun = randomSunAnglesForAsteroid()
-  sunAzimuthDeg = nextSun.azimuthDeg
-  sunElevationDeg = nextSun.elevationDeg
   applySunFromState()
   randomizeAsteroidOrientation()
   replaceAsteroidMesh(voxelCells)
@@ -717,7 +755,6 @@ function regenerateAsteroid(): void {
   satelliteDots.setCounts(0, 0, 0, 0, orbitVisualRadius)
   asteroidAmbientMusic.setSeed(currentSeed)
   asteroidAmbientMusic.resetVoiceSmoothing()
-  sunLightDebug.rotationDegPerSec = randomRotationDegPerSecForAsteroid()
   sun.intensity = KEY_LIGHT_INTENSITY_BASE * randomKeyLightIntensityFactorForAsteroid()
   syncLightAngleSliders(sunAzimuthDeg, sunElevationDeg)
   syncSunRotationSpeedUi()
@@ -761,7 +798,7 @@ function buildDiscoveryScanHintIndices(): Set<number> | null {
     const c = voxelCells[i]!
     if (c.surfaceScanTintRgb === undefined) continue
     if (discoveryConsumedPos.has(discoveryPosKey(c.pos))) continue
-    if (isDiscoverySite(currentSeed, c.pos, gameBalance)) s.add(i)
+    if (isDiscoverySite(currentSeed, c.pos, gameBalance, discoveryDensityScale(asteroidProfile))) s.add(i)
   }
   return s.size > 0 ? s : null
 }
@@ -942,8 +979,17 @@ const debugUnlockAllToolsHandlers: { apply: () => void } = {
   apply: () => {},
 }
 
+const gameStartTipsModal = createGameStartTipsModal(app, {
+  onDismiss: () => {
+    saveGameStartTipsDismissed(true)
+  },
+})
+
 const { syncSunRotationSpeed, syncLightAngleSliders } = createSettingsMenu(app, {
   leadingActions: overlaysLeading,
+  onOpenTips: () => {
+    gameStartTipsModal.show()
+  },
   onRegenerate: regenerateAsteroid,
   onLightAngleChange,
   initialAzimuthDeg: sunAzimuthDeg,
@@ -952,27 +998,36 @@ const { syncSunRotationSpeed, syncLightAngleSliders } = createSettingsMenu(app, 
   onDiscoveryAutoResolveChange: (value) => {
     discoveryAutoResolve = value
     saveDiscoveryAutoResolve(value)
+    schedulePersistSettingsClient()
   },
   initialMatterHudCompact: matterHudCompact,
   onMatterHudCompactChange: (value) => {
     matterHudCompact = value
     saveMatterHudCompact(value)
     syncMatterHudCompactUi()
+    schedulePersistSettingsClient()
   },
   onBalanceChange,
   asteroidMusicDebug,
+  getMusicRootMidi: () => asteroidAmbientMusic.getEffectiveRootMidi(),
   sunLightDebug,
   getSunAnglesForLight: () => ({ az: sunAzimuthDeg, el: sunElevationDeg }),
-  onSunLightDebugChange: syncSunDirectionHelper,
+  onSunLightDebugChange: () => {
+    syncSunDirectionHelper()
+    writeSunLightDebugToLocalStorage(sunLightDebug)
+    schedulePersistSettingsClient()
+  },
   scanVisualizationDebug,
   onScanVisualizationDebugChange: () => {
     reapplyAllRockColorsNoLaser()
     schedulePersistScanVisualizationDebug(scanVisualizationDebug)
+    schedulePersistSettingsClient()
   },
   audioMasterDebug,
   onAudioMasterDebugChange: () => {
     applyAudioMasterDebug(audioMasterDebug)
     schedulePersistAudioMasterDebug(audioMasterDebug)
+    schedulePersistSettingsClient()
   },
   onAsteroidMusicDebugChange: () => {
     asteroidAmbientMusic.applyDebugNow()
@@ -983,6 +1038,7 @@ const { syncSunRotationSpeed, syncLightAngleSliders } = createSettingsMenu(app, 
     musicVolumeLinear = linear
     saveMusicVolumeLinear(linear)
     asteroidAmbientMusic.tryEnsureGraph()
+    schedulePersistSettingsClient()
   },
   onDebugAddResources: () => {
     addResourceYields(resourceTallies, DEBUG_RESOURCE_GRANT)
@@ -1151,7 +1207,14 @@ function syncDiscoveryHud(): void {
 }
 
 function tryDiscoveryAt(pos: VoxelPos): void {
-  const offer = tryDiscoveryClaim(currentSeed, pos, gameBalance, discoveryConsumedPos, discoveryCounter)
+  const offer = tryDiscoveryClaim(
+    currentSeed,
+    pos,
+    gameBalance,
+    discoveryConsumedPos,
+    discoveryCounter,
+    discoveryDensityScale(asteroidProfile),
+  )
   if (offer) {
     if (discoveryAutoResolve) {
       discoveryModal.show(offer)
@@ -1617,7 +1680,7 @@ function formatSatelliteGameplayLine(kind: SatelliteInspectKind): string {
     case 'scanner':
       return 'Scanner: neighborhood scan energy scales with deployed count and scan volume.'
     case 'drossCollector':
-      return 'Dross collectors: collection rate scales with deployed count (balance).'
+      return 'Cleanup collectors: collection rate scales with deployed count (balance).'
     default:
       return ''
   }
@@ -2253,6 +2316,14 @@ function tick(): void {
       sunAzimuthDeg = (sunAzimuthDeg + sunDegPerSecUse * dtSec + 360) % 360
     }
     applySunFromState()
+    if (sunDegPerSecUse !== 0) {
+      const t = performance.now()
+      if (t - lastPersistedSunAnglesWallMs > 2000) {
+        lastPersistedSunAnglesWallMs = t
+        writeSunAnglesToLocalStorage(sunAzimuthDeg, sunElevationDeg)
+        schedulePersistSettingsClient()
+      }
+    }
   }
 
   if (sunDirectionHelper) {
@@ -2288,4 +2359,11 @@ function tick(): void {
 }
 
 syncDepthOverlayMaterials()
+
+if (!loadGameStartTipsDismissed()) {
+  requestAnimationFrame(() => {
+    gameStartTipsModal.show()
+  })
+}
+
 tick()

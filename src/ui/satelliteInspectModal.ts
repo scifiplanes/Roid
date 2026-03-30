@@ -20,7 +20,7 @@ const TITLE: Record<SatelliteInspectKind, string> = {
   orbital: 'Mining laser satellite',
   excavating: 'Dig laser satellite',
   scanner: 'Scanner satellite',
-  drossCollector: 'Dross collector satellite',
+  drossCollector: 'Cleanup collector satellite',
 }
 
 function kindLabel(kind: SatelliteInspectKind): string {

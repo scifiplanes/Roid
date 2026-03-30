@@ -1,3 +1,4 @@
+import { schedulePersistSettingsClient } from '../game/settingsClientPersist'
 import { getScanOverlayLegendGrouped } from '../game/scanVisualization'
 import { loadOverlayLegendCollapsed, saveOverlayLegendCollapsed } from './uiLayoutPrefs'
 
@@ -136,6 +137,7 @@ export function createOverlaysMenu(_container: HTMLElement, options: OverlaysMen
     legendCollapsed = !legendCollapsed
     saveOverlayLegendCollapsed(legendCollapsed)
     syncLegendCollapsedUi()
+    schedulePersistSettingsClient()
   })
   root.append(btn, pop)
 

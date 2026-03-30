@@ -14,6 +14,7 @@ import { cellParticipatesInDepthReveal } from '../../game/depthScannerSim'
 import { gameBalance } from '../../game/gameBalance'
 import type { ScanVisualizationDebug } from '../../game/scanVisualizationDebug'
 import {
+  blendBulkRockHintOntoBase,
   compositionToBulkRockHintColor,
   compositionToScanColor,
   getActiveScanVisualizationDebug,
@@ -487,7 +488,7 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
       }
       if (kindUsesBulkRockHint(kind)) {
         compositionToBulkRockHintColor(cell, _bulkRockHint, scanVizForBuild)
-        _c.lerp(_bulkRockHint, scanVizForBuild.baseRockBulkHintLerp)
+        blendBulkRockHintOntoBase(_c, _bulkRockHint, scanVizForBuild.baseRockBulkHintLerp, _c)
       }
       solid.setColorAt(j, _c)
     }
@@ -516,7 +517,7 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
         _c.copy(baseColor).multiply(_blend).multiplyScalar(tv)
         if (kindUsesBulkRockHint(kind)) {
           compositionToBulkRockHintColor(cell, _bulkRockHint, scanVizForBuild)
-          _c.lerp(_bulkRockHint, scanVizForBuild.baseRockBulkHintLerp * 0.65)
+          blendBulkRockHintOntoBase(_c, _bulkRockHint, scanVizForBuild.baseRockBulkHintLerp * 0.72, _c)
         }
         eating.setColorAt(j, _c)
       }
@@ -922,7 +923,7 @@ export function reapplyRockInstanceColors(
       }
       if (kindUsesBulkRockHint(kind)) {
         compositionToBulkRockHintColor(cell, _bulkRockHint, scanDebug)
-        _c.lerp(_bulkRockHint, scanDebug.baseRockBulkHintLerp)
+        blendBulkRockHintOntoBase(_c, _bulkRockHint, scanDebug.baseRockBulkHintLerp, _c)
       }
       applyDepthOverlayRock(cell, _c, i)
       applyScannerTint(i, _c)
@@ -950,7 +951,7 @@ export function reapplyRockInstanceColors(
         _c.copy(baseColor).multiply(_blend).multiplyScalar(tv)
         if (kindUsesBulkRockHint(kind)) {
           compositionToBulkRockHintColor(cell, _bulkRockHint, scanDebug)
-          _c.lerp(_bulkRockHint, scanDebug.baseRockBulkHintLerp * 0.65)
+          blendBulkRockHintOntoBase(_c, _bulkRockHint, scanDebug.baseRockBulkHintLerp * 0.72, _c)
         }
         applyDepthOverlayRock(cell, _c, i)
         applyScannerTint(i, _c)

@@ -1,3 +1,5 @@
+import { getDebugProjectAutosave, setDebugProjectAutosave } from './debugProjectAutosave'
+
 export interface GameBalance {
   durabilityMult: number
   replicatorFeedSpeedMult: number
@@ -283,21 +285,11 @@ const IMPACT_CRATER_RADIUS_VOXELS_CLAMP = { min: 0.5, max: 24 }
 let persistTimer: ReturnType<typeof setTimeout> | null = null
 
 export function getBalanceAutoSaveToFile(): boolean {
-  try {
-    const v = localStorage.getItem(BALANCE_AUTO_SAVE_FILE_KEY)
-    if (v === null) return true
-    return v === '1' || v === 'true'
-  } catch {
-    return true
-  }
+  return getDebugProjectAutosave()
 }
 
 export function setBalanceAutoSaveToFile(on: boolean): void {
-  try {
-    localStorage.setItem(BALANCE_AUTO_SAVE_FILE_KEY, on ? '1' : '0')
-  } catch {
-    /* ignore */
-  }
+  setDebugProjectAutosave(on)
   if (!on) cancelScheduledPersist()
 }
 
@@ -622,7 +614,7 @@ export function resetGameBalance(): void {
 
 export function schedulePersistGameBalance(): void {
   cancelScheduledPersist()
-  if (!getBalanceAutoSaveToFile()) return
+  if (!getDebugProjectAutosave()) return
   persistTimer = setTimeout(() => {
     persistTimer = null
     if (!import.meta.env.DEV) return
