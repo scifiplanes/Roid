@@ -41,7 +41,7 @@
 |-----------|------|
 | Bundled JSON in repo | [`gameBalance.persisted.json`](src/game/gameBalance.persisted.json), [`asteroidMusicDebug.persisted.json`](src/game/asteroidMusicDebug.persisted.json) — merged at startup; in **dev**, Settings → Save / auto-save POSTs to Vite and overwrites those files. |
 | `localStorage` only | Scan visualization, music post EQ (`audioMaster`), overlay toggles, layout/HUD prefs, discovery auto-resolve, music volume, live balance mirror — see [`debugPreset.ts`](src/game/debugPreset.ts) key list. |
-| Debug preset JSON | Settings → **Download / Copy / Import debug preset** exports or applies the allowed `localStorage` keys (versioned `{ v: 1, entries }`); import **reloads** the page. Commit or share the file to align another clone with your tuned browser-only debug. |
+| Debug preset JSON | [`public/roid-debug-preset.json`](public/roid-debug-preset.json) is **auto-loaded at startup in published builds** (not in dev) via [`autoLoadDebugPreset.ts`](src/game/autoLoadDebugPreset.ts) before game state initialization, applying `localStorage` keys early so browser-only debug/settings travel with the release. Settings → **Download / Copy / Import debug preset** exports or applies the allowed `localStorage` keys (versioned `{ v: 1, entries }`); manual import **reloads** the page and takes precedence. Commit or share the preset file to align another clone with your tuned debug state. |
 
 ## Tech stack
 

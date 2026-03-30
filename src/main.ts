@@ -175,6 +175,9 @@ import { resetReplicatorSimAccumulators, stepReplicators } from './game/replicat
 import { stepHubs } from './game/hubSim'
 import { stepRefineryProcessing } from './game/refineryProcessSim'
 import { ensureAudioContextInitialized } from './game/audioContext'
+import { autoLoadBundledDebugPreset } from './game/autoLoadDebugPreset'
+
+await autoLoadBundledDebugPreset()
 
 initGameBalanceFromPersisted(persistedSnapshot)
 
