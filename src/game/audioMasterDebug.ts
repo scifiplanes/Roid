@@ -1,6 +1,6 @@
 /**
  * Debug tunables for the asteroid music post chain (Settings → Debug → Music output).
- * EQ + high-pass only on the music dry/wet buses, before `AudioContext.destination`.
+ * EQ + high-pass only on the music dry/wet buses, before the global master compressor / `destination`.
  */
 export interface AudioMasterDebug {
   /** High-pass cutoff (Hz); default rolls off sub-bass. */

@@ -1,4 +1,5 @@
 import { getAudioContext } from './audioContext'
+import { getGlobalMasterInput } from './globalMasterBus'
 import {
   createDefaultAudioMasterDebug,
   type AudioMasterDebug,
@@ -34,7 +35,7 @@ function clampEqDb(db: number): number {
 
 /**
  * Unity-gain input at the end of the **asteroid music** graph only (dry + wet buses).
- * Chain: lowshelf → peaking → highshelf → highpass → `destination`.
+ * Chain: lowshelf → peaking → highshelf → highpass → [`global master bus`](globalMasterBus.ts).
  */
 export function getMusicPostChainInput(c: AudioContext): GainNode {
   if (masterIn && ctxRef === c) return masterIn
@@ -67,7 +68,7 @@ export function getMusicPostChainInput(c: AudioContext): GainNode {
   ls.connect(pk)
   pk.connect(hs)
   hs.connect(hp)
-  hp.connect(c.destination)
+  hp.connect(getGlobalMasterInput(c))
 
   ctxRef = c
   masterIn = inGain

@@ -1,4 +1,5 @@
 import { gameBalance } from './gameBalance'
+import { getGlobalMasterInput } from './globalMasterBus'
 import { createReverbImpulseBuffer } from './reverbImpulse'
 
 let ctxRef: AudioContext | null = null
@@ -33,7 +34,8 @@ export function applySfxReverbFromBalance(): void {
 }
 
 /**
- * Final node for all gameplay SFX chains: parallel dry (unity) + convolver wet into `destination`.
+ * Final node for all gameplay SFX chains: parallel dry (unity) + convolver wet into
+ * [`global master bus`](globalMasterBus.ts) (summed with music → compressor → `destination`).
  */
 export function getSfxBusInput(c: AudioContext): GainNode {
   if (busInput && ctxRef === c) return busInput
@@ -53,8 +55,9 @@ export function getSfxBusInput(c: AudioContext): GainNode {
   input.connect(wetSend)
   wetSend.connect(convolver)
   convolver.connect(wetOut)
-  dry.connect(c.destination)
-  wetOut.connect(c.destination)
+  const masterIn = getGlobalMasterInput(c)
+  dry.connect(masterIn)
+  wetOut.connect(masterIn)
 
   ctxRef = c
   busInput = input

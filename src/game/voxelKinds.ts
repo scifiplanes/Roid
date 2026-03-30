@@ -29,6 +29,11 @@ export interface VoxelKindDef {
  */
 export const REPLICATOR_PROCESSING_TINT = new Color(0.1, 0.88, 0.78)
 
+/** Warmer endpoint when a mature replicator holds unconsolidated root stock (instance tint lerp). */
+export const REPLICATOR_STOCK_TINT = new Color(0.82, 0.62, 0.28)
+/** Max lerp weight toward `REPLICATOR_STOCK_TINT` when `replicatorResourceFill01` is 1. */
+export const REPLICATOR_STOCK_TINT_LERP = 0.55
+
 export const VOXEL_KIND_DEFS: Record<VoxelKind, VoxelKindDef> = {
   regolith: {
     maxDurability: 1,

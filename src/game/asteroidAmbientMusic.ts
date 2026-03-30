@@ -273,6 +273,41 @@ export function createAsteroidAmbientMusic(options: {
     { length: ASTEROID_MUSIC_VOICE_COUNT },
     () => 440,
   )
+  /** Skip redundant `setValueAtTime` when values are unchanged (reduces main-thread churn). */
+  const lastSentAtVoice = {
+    carrierHz: new Float32Array(ASTEROID_MUSIC_VOICE_COUNT),
+    pitchBpHz: new Float32Array(ASTEROID_MUSIC_VOICE_COUNT),
+    pitchBpQ: new Float32Array(ASTEROID_MUSIC_VOICE_COUNT),
+    ampLfoHz: new Float32Array(ASTEROID_MUSIC_VOICE_COUNT),
+    ampLfo2Hz: new Float32Array(ASTEROID_MUSIC_VOICE_COUNT),
+    panLfoHz: new Float32Array(ASTEROID_MUSIC_VOICE_COUNT),
+    speedLfoHz: new Float32Array(ASTEROID_MUSIC_VOICE_COUNT),
+    speedLfo2Hz: new Float32Array(ASTEROID_MUSIC_VOICE_COUNT),
+  }
+  function clearLastSentVoiceAudioParams(): void {
+    lastSentAtVoice.carrierHz.fill(Number.NaN)
+    lastSentAtVoice.pitchBpHz.fill(Number.NaN)
+    lastSentAtVoice.pitchBpQ.fill(Number.NaN)
+    lastSentAtVoice.ampLfoHz.fill(Number.NaN)
+    lastSentAtVoice.ampLfo2Hz.fill(Number.NaN)
+    lastSentAtVoice.panLfoHz.fill(Number.NaN)
+    lastSentAtVoice.speedLfoHz.fill(Number.NaN)
+    lastSentAtVoice.speedLfo2Hz.fill(Number.NaN)
+  }
+  function setVoiceParamIfChanged(
+    buf: Float32Array,
+    i: number,
+    next: number,
+    param: AudioParam,
+    t: number,
+    eps: number,
+  ): void {
+    const v = audioFinite(next, next)
+    const prev = buf[i]!
+    if (Number.isFinite(prev) && Math.abs(prev - v) <= eps) return
+    buf[i] = v
+    param.setValueAtTime(v, t)
+  }
   let carrierPitchSmoothPrimed = true
   let lastPitchSyncPerfMs: number | null = null
   let masterGain: GainNode | null = null
@@ -385,6 +420,7 @@ export function createAsteroidAmbientMusic(options: {
     }
     masterGain = null
     ctxRef = null
+    clearLastSentVoiceAudioParams()
   }
 
   function cancelBusParamAutomation(t: number): void {
@@ -621,6 +657,7 @@ export function createAsteroidAmbientMusic(options: {
   function resetCarrierPitchSmoothState(): void {
     carrierPitchSmoothPrimed = true
     lastPitchSyncPerfMs = null
+    clearLastSentVoiceAudioParams()
   }
 
   function rollScaleCycleDelay(): void {
@@ -681,7 +718,14 @@ export function createAsteroidAmbientMusic(options: {
         hzOut = prev + (targetHz - prev) * (1 - Math.exp(-dtSec / tauSec))
         smoothedCarrierHz[i] = hzOut
       }
-      v.carrier.frequency.setValueAtTime(audioFinite(hzOut, targetHz), t)
+      setVoiceParamIfChanged(
+        lastSentAtVoice.carrierHz,
+        i,
+        audioFinite(hzOut, targetHz),
+        v.carrier.frequency,
+        t,
+        1e-3,
+      )
 
       const bpOn = d.voicePitchBandpassEnabled === true
       const semi = Math.min(
@@ -689,9 +733,9 @@ export function createAsteroidAmbientMusic(options: {
         Math.max(-36, busNum(d, 'voicePitchBandpassCenterSemitones', 0)),
       )
       const centerHz = audioFinite(hzOut * 2 ** (semi / 12), hzOut)
-      v.pitchBandpass.frequency.setValueAtTime(centerHz, t)
+      setVoiceParamIfChanged(lastSentAtVoice.pitchBpHz, i, centerHz, v.pitchBandpass.frequency, t, 1e-3)
       const bpQ = Math.min(30, Math.max(0.25, busNum(d, 'voicePitchBandpassQ', 5)))
-      v.pitchBandpass.Q.setValueAtTime(bpQ, t)
+      setVoiceParamIfChanged(lastSentAtVoice.pitchBpQ, i, bpQ, v.pitchBandpass.Q, t, 1e-5)
       v.bpDryGain.gain.setValueAtTime(bpOn ? 0 : 1, t)
       v.bpWetGain.gain.setValueAtTime(bpOn ? 1 : 0, t)
 
@@ -704,11 +748,15 @@ export function createAsteroidAmbientMusic(options: {
         Math.max(0, maxDep),
         Math.max(0, audioFinite(vd.ampLfoSpeedModDepthHz, 0)),
       )
-      v.ampLfo.frequency.setValueAtTime(ampHz, t)
+      setVoiceParamIfChanged(lastSentAtVoice.ampLfoHz, i, ampHz, v.ampLfo.frequency, t, 1e-5)
       v.speedDepth.gain.setValueAtTime(dep, t)
-      v.speedLfo.frequency.setValueAtTime(
+      setVoiceParamIfChanged(
+        lastSentAtVoice.speedLfoHz,
+        i,
         Math.min(0.35, Math.max(0.02, audioFinite(vd.ampLfoSpeedModHz, 0.02))),
+        v.speedLfo.frequency,
         t,
+        1e-5,
       )
       const tremoloAmount = Math.min(1, Math.max(0, audioFinite(vd.ampLfoDepth, 0)) / 1.6)
       v.lfoDepth.gain.setValueAtTime(0.5 * tremoloAmount, t)
@@ -722,11 +770,15 @@ export function createAsteroidAmbientMusic(options: {
         Math.max(0, maxDep2),
         Math.max(0, audioFinite(vd.ampLfo2SpeedModDepthHz, 0)),
       )
-      v.ampLfo2.frequency.setValueAtTime(ampHz2, t)
+      setVoiceParamIfChanged(lastSentAtVoice.ampLfo2Hz, i, ampHz2, v.ampLfo2.frequency, t, 1e-5)
       v.speedDepth2.gain.setValueAtTime(dep2, t)
-      v.speedLfo2.frequency.setValueAtTime(
+      setVoiceParamIfChanged(
+        lastSentAtVoice.speedLfo2Hz,
+        i,
         Math.min(0.35, Math.max(0.02, audioFinite(vd.ampLfo2SpeedModHz, 0.02))),
+        v.speedLfo2.frequency,
         t,
+        1e-5,
       )
       const tremoloAmount2 = Math.min(1, Math.max(0, audioFinite(vd.ampLfo2Depth, 0)) / 1.6)
       // Inverted vs layer 1: subtractive tremolo at vca.gain (additive slow + subtractive fast).
@@ -736,7 +788,7 @@ export function createAsteroidAmbientMusic(options: {
         maxPanHz,
         Math.max(minPanHz, audioFinite(vd.panLfoHz, minPanHz)),
       )
-      v.panLfo.frequency.setValueAtTime(panHz, t)
+      setVoiceParamIfChanged(lastSentAtVoice.panLfoHz, i, panHz, v.panLfo.frequency, t, 1e-6)
       v.panLfoDepth.gain.setValueAtTime(
         Math.min(0.95, Math.max(0, audioFinite(vd.panLfoDepth, 0))),
         t,

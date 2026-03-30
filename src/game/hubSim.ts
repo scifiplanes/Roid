@@ -85,6 +85,8 @@ function scoreForPull(cell: VoxelCell, dist: number): number {
 export interface StepHubsResult {
   meshDirty: boolean
   tallyChanged: boolean
+  /** True when a root unit was pulled from a mature replicator (local stock display). */
+  replicatorStoreChanged: boolean
 }
 
 export interface StepHubsOptions {
@@ -100,12 +102,12 @@ export function stepHubs(
   options?: StepHubsOptions,
 ): StepHubsResult {
   if (dtSec <= 0 || cells.length === 0) {
-    return { meshDirty: false, tallyChanged: false }
+    return { meshDirty: false, tallyChanged: false, replicatorStoreChanged: false }
   }
 
   const activeHubs = cells.filter(isHubProcessing)
   if (activeHubs.length === 0) {
-    return { meshDirty: false, tallyChanged: false }
+    return { meshDirty: false, tallyChanged: false, replicatorStoreChanged: false }
   }
 
   const attemptsPerHub = Math.min(
@@ -119,6 +121,7 @@ export function stepHubs(
 
   let meshDirty = false
   let tallyChanged = false
+  let replicatorStoreChanged = false
 
   const index = buildPosIndex(cells)
   for (const hub of activeHubs) {
@@ -184,8 +187,9 @@ export function stepHubs(
       energySpentHub += spent
       tallies[rid] = (tallies[rid] ?? 0) + 1
       tallyChanged = true
+      if (best.kind === 'replicator') replicatorStoreChanged = true
     }
   }
 
-  return { meshDirty, tallyChanged }
+  return { meshDirty, tallyChanged, replicatorStoreChanged }
 }

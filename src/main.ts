@@ -135,6 +135,7 @@ import {
   undoFrameShake,
 } from './game/clickFeedback'
 import { gameBalance, initGameBalanceFromPersisted } from './game/gameBalance'
+import { perfMark, perfMeasure } from './game/perfMarks'
 import { applySfxReverbFromBalance } from './game/sfxReverbBus'
 import persistedSnapshot from './game/gameBalance.persisted.json' with { type: 'json' }
 import musicDebugSnapshot from './game/asteroidMusicDebug.persisted.json' with { type: 'json' }
@@ -453,6 +454,37 @@ scene.add(satelliteDots.group)
 
 const controls = createOrbitControls(camera, renderer.domElement)
 
+/** Baseline for skipping depth-overlay resort when the camera and rock pose are static. */
+const lastDepthViewCam = new Vector3(Number.NaN, Number.NaN, Number.NaN)
+const lastDepthViewTarget = new Vector3(Number.NaN, Number.NaN, Number.NaN)
+const lastDepthAsteroidRot = new Vector3(Number.NaN, Number.NaN, Number.NaN)
+const DEPTH_VIEW_EPS_SQ = 1e-7
+
+function resetDepthOverlayViewBaseline(): void {
+  lastDepthViewCam.set(Number.NaN, Number.NaN, Number.NaN)
+}
+
+function depthOverlayViewChanged(): boolean {
+  const cam = camera.position
+  const tgt = controls.target
+  if (!Number.isFinite(lastDepthViewCam.x)) {
+    lastDepthViewCam.copy(cam)
+    lastDepthViewTarget.copy(tgt)
+    lastDepthAsteroidRot.set(asteroidRotX, asteroidRotY, asteroidRotZ)
+    return true
+  }
+  const camMoved = cam.distanceToSquared(lastDepthViewCam) > DEPTH_VIEW_EPS_SQ
+  const tgtMoved = tgt.distanceToSquared(lastDepthViewTarget) > DEPTH_VIEW_EPS_SQ
+  const rotMoved =
+    Math.abs(asteroidRotX - lastDepthAsteroidRot.x) > 1e-9 ||
+    Math.abs(asteroidRotY - lastDepthAsteroidRot.y) > 1e-9 ||
+    Math.abs(asteroidRotZ - lastDepthAsteroidRot.z) > 1e-9
+  lastDepthViewCam.copy(cam)
+  lastDepthViewTarget.copy(tgt)
+  lastDepthAsteroidRot.set(asteroidRotX, asteroidRotY, asteroidRotZ)
+  return camMoved || tgtMoved || rotMoved
+}
+
 const resourceTallies = createEmptyResourceTallies()
 const DEBUG_RESOURCE_GRANT: Partial<Record<ResourceId, number>> = (() => {
   const roots: Partial<Record<ResourceId, number>> = {
@@ -518,6 +550,8 @@ const matterHud = document.createElement('div')
 matterHud.id = 'matter-hud'
 
 const pendingDiscoveries: DiscoveryOffer[] = []
+/** Filled in `syncDiscoveryHud` for O(1) lookup in `updateDiscoveryPendingAnchors`. */
+const discoveryPendingDomById = new Map<string, { wrap: HTMLElement; line: SVGLineElement }>()
 let discoveryAutoResolve = loadDiscoveryAutoResolve()
 
 let matterHudCollapsed = loadMatterHudCollapsed()
@@ -620,6 +654,22 @@ const surfaceScanTintIndexMapReuse = new Map<number, Color>()
 const tintColorBorrowPool: Color[] = []
 let tintColorBorrowNext = 0
 
+/** Bumped when voxel/tint/balance data affecting cached scan or discovery maps changes. */
+let rockTintCacheGeneration = 0
+let lastBuiltSurfaceScanTintGen = -1
+let lastBuiltDiscoveryHintGen = -1
+
+function invalidateRockTintCaches(): void {
+  rockTintCacheGeneration++
+}
+
+/** When true, full rock instance colors must be recomputed (see depth-overlay tick path). */
+let rockInstanceColorsDirty = true
+
+function markRockInstanceColorsDirty(): void {
+  rockInstanceColorsDirty = true
+}
+
 function resetTintColorBorrowPool(): void {
   tintColorBorrowNext = 0
 }
@@ -630,12 +680,15 @@ function borrowTintColorForScanMap(): Color {
 }
 
 /**
- * Colors for the surface-scan overlay: recomputed from live composition + debug each frame so
- * tints match `compositionToScanColor` / legend when sliders change (`surfaceScanTintRgb` only
- * marks voxels that have been scanned).
+ * Colors for the surface-scan overlay: cached until tint data or `invalidateRockTintCaches`.
+ * Live debug sliders call `invalidateRockTintCaches` via `onScanVisualizationDebugChange`.
  */
 function buildSurfaceScanTintIndexMap(): Map<number, Color> | null {
   if (!surfaceScanOverlayVisible) return null
+  if (lastBuiltSurfaceScanTintGen === rockTintCacheGeneration) {
+    return surfaceScanTintIndexMapReuse.size > 0 ? surfaceScanTintIndexMapReuse : null
+  }
+  lastBuiltSurfaceScanTintGen = rockTintCacheGeneration
   resetTintColorBorrowPool()
   const m = surfaceScanTintIndexMapReuse
   m.clear()
@@ -727,6 +780,9 @@ function setResourceHud(): void {
 
 function replaceAsteroidMesh(cells: VoxelCell[]): void {
   debugLodeDisplayIndices = null
+  invalidateRockTintCaches()
+  markRockInstanceColorsDirty()
+  resetDepthOverlayViewBaseline()
   drossParticles.group.removeFromParent()
   scene.remove(asteroidBundle.group)
   disposeAsteroidBundle(asteroidBundle)
@@ -903,6 +959,10 @@ const discoveryScanHintIndicesReuse = new Set<number>()
 function buildDiscoveryScanHintIndices(): Set<number> | null {
   if (!surfaceScanOverlayVisible && !depthOverlayTintActive()) return null
   if (gameBalance.discoverySiteDensity <= 0) return null
+  if (lastBuiltDiscoveryHintGen === rockTintCacheGeneration) {
+    return discoveryScanHintIndicesReuse.size > 0 ? discoveryScanHintIndicesReuse : null
+  }
+  lastBuiltDiscoveryHintGen = rockTintCacheGeneration
   const s = discoveryScanHintIndicesReuse
   s.clear()
   for (let i = 0; i < voxelCells.length; i++) {
@@ -1034,6 +1094,7 @@ function decommissionSatelliteByKind(kind: SatelliteInspectKind, count: number =
     drossCollectorSatelliteCount,
     orbitVisualRadius,
   )
+  invalidateRockTintCaches()
   reapplyAllRockColorsNoLaser()
 }
 
@@ -1076,6 +1137,7 @@ const overlaysMenu = createOverlaysMenu(app, {
   onSurfaceScanChange: (v) => {
     surfaceScanOverlayVisible = v
     persistOverlayVisualizationPrefs()
+    invalidateRockTintCaches()
     if (
       (laserPointerDown && orbitalLaserUnlocked && lastLaserDragTool === 'orbitalLaser' && lastLaserDragClient) ||
       (excavatingLaserPointerDown &&
@@ -1093,6 +1155,7 @@ const overlaysMenu = createOverlaysMenu(app, {
   onDepthOverlayChange: (v) => {
     depthOverlayVisible = v
     persistOverlayVisualizationPrefs()
+    invalidateRockTintCaches()
     reapplyAllRockColorsNoLaser()
   },
 })
@@ -1157,6 +1220,7 @@ const { syncSunRotationSpeed, syncLightAngleSliders } = createSettingsMenu(app, 
   },
   scanVisualizationDebug,
   onScanVisualizationDebugChange: () => {
+    invalidateRockTintCaches()
     reapplyAllRockColorsNoLaser()
     schedulePersistScanVisualizationDebug(scanVisualizationDebug)
     schedulePersistSettingsClient()
@@ -1202,10 +1266,12 @@ const { syncSunRotationSpeed, syncLightAngleSliders } = createSettingsMenu(app, 
       if (rl !== undefined && rl > eps) next.add(i)
     }
     debugLodeDisplayIndices = next.size > 0 ? next : null
+    invalidateRockTintCaches()
     reapplyAllRockColorsNoLaser()
   },
   onDebugClearLodeDisplay: () => {
     debugLodeDisplayIndices = null
+    invalidateRockTintCaches()
     reapplyAllRockColorsNoLaser()
   },
 })
@@ -1348,6 +1414,7 @@ const {
     refineryRecipesModal.refresh()
   },
   onGameBalancePatch: () => {
+    invalidateRockTintCaches()
     reapplyAllRockColorsNoLaser()
   },
 })
@@ -1379,13 +1446,9 @@ function updateDiscoveryPendingAnchors(): void {
 
   for (let idx = 0; idx < pendingDiscoveries.length; idx++) {
     const offer = pendingDiscoveries[idx]!
-    const wrap = discoveryPendingChips.querySelector(
-      `[data-discovery-id="${CSS.escape(offer.id)}"]`,
-    ) as HTMLElement | null
-    const line = discoveryPendingSvg.querySelector(
-      `line[data-discovery-id="${CSS.escape(offer.id)}"]`,
-    ) as SVGLineElement | null
-    if (!wrap || !line) continue
+    const dom = discoveryPendingDomById.get(offer.id)
+    if (!dom) continue
+    const { wrap, line } = dom
 
     const { clientX: vx, clientY: vy, onScreen } = projectVoxelPosToClient(
       offer.foundAt,
@@ -1463,6 +1526,7 @@ const discoveryModal = createDiscoveryModal(app, {
       drossCollectorSatelliteCount,
       orbitVisualRadius,
     )
+    invalidateRockTintCaches()
     reapplyAllRockColorsNoLaser()
   },
 })
@@ -1474,6 +1538,7 @@ const satelliteInspectModal = createSatelliteInspectModal(app, {
 function syncDiscoveryHud(): void {
   discoveryPendingChips.replaceChildren()
   discoveryPendingSvg.replaceChildren()
+  discoveryPendingDomById.clear()
   if (pendingDiscoveries.length === 0) {
     discoveryPendingLayer.hidden = true
     return
@@ -1504,6 +1569,7 @@ function syncDiscoveryHud(): void {
     line.classList.add('discovery-pending-connector-line')
     line.dataset.discoveryId = offer.id
     discoveryPendingSvg.appendChild(line)
+    discoveryPendingDomById.set(offer.id, { wrap, line })
   }
   updateDiscoveryPendingAnchors()
 }
@@ -1529,6 +1595,7 @@ function tryDiscoveryAt(pos: VoxelPos): void {
     playDiscoveryFalseSignal()
     showFalseSignalToast()
   }
+  invalidateRockTintCaches()
   reapplyAllRockColorsNoLaser()
 }
 
@@ -1841,6 +1908,7 @@ function tryScannerAt(clientX: number, clientY: number): void {
     cell.surfaceScanTintRgb = { r: scratch.r, g: scratch.g, b: scratch.b }
   }
   lastScanRefinedPreviewLine = formatScanRefinedPreviewLine(voxelCells[i]!)
+  invalidateRockTintCaches()
   reapplyAllRockColorsNoLaser()
   playScanPing()
   setResourceHud()
@@ -2448,6 +2516,8 @@ function tick(): void {
   const dtMs = Math.min(MAX_STEP_MS, Math.max(0, now - lastTickMs))
   lastTickMs = now
 
+  perfMark('roid-sim-start')
+
   stepExplosiveCharges(now)
 
   const { meshDirty: transformMeshDirty, completedTransforms } = stepReplicatorTransforms(
@@ -2461,16 +2531,23 @@ function tick(): void {
     syncOverlaysDepthRow()
   }
 
-  const { meshDirty, replicatorConsumeTicks } = stepReplicators(dtMs, voxelCells, {
-    replicatorPaused: replicatorKillswitchEngaged,
-    onReplicatorRockHpConsumed(cell) {
-      tryDiscoveryAt(cell.pos)
-      if (Math.random() >= gameBalance.drossReplicatorSpawnChance) return
-      spawnDrossReplicatorScrap(drossState, cell, gameBalance)
+  const { meshDirty, tallyChanged: replicatorTallyChanged, replicatorConsumeTicks } = stepReplicators(
+    dtMs,
+    voxelCells,
+    {
+      replicatorPaused: replicatorKillswitchEngaged,
+      onReplicatorRockHpConsumed(cell) {
+        tryDiscoveryAt(cell.pos)
+        if (Math.random() >= gameBalance.drossReplicatorSpawnChance) return
+        spawnDrossReplicatorScrap(drossState, cell, gameBalance)
+      },
     },
-  })
+  )
   if (replicatorConsumeTicks > 0) {
     playReplicatorConsumeClicks(replicatorConsumeTicks)
+  }
+  if (replicatorTallyChanged) {
+    markRockInstanceColorsDirty()
   }
   if (meshDirty || transformMeshDirty) {
     replaceAsteroidMesh(voxelCells)
@@ -2528,6 +2605,9 @@ function tick(): void {
   if (hubResult.tallyChanged) {
     markMatterHudDirty()
   }
+  if (hubResult.replicatorStoreChanged) {
+    markRockInstanceColorsDirty()
+  }
   if (hubResult.meshDirty) {
     replaceAsteroidMesh(voxelCells)
   }
@@ -2540,9 +2620,12 @@ function tick(): void {
     markMatterHudDirty()
   }
 
-  const depthProgressChanged = stepDepthReveal(dtMs / 1000, voxelCells, gameBalance, depthScanUnlocked)
-  if (depthProgressChanged && depthOverlayTintActive()) {
-    reapplyAllRockColorsNoLaser()
+  const depthProgressChanged = stepDepthReveal(dtMs / 1000, voxelCells, gameBalance, depthScanUnlocked, gridSize)
+  if (depthProgressChanged) {
+    invalidateRockTintCaches()
+    if (depthOverlayTintActive()) {
+      markRockInstanceColorsDirty()
+    }
   }
 
   if (
@@ -2564,6 +2647,9 @@ function tick(): void {
   } else {
     refreshToolCosts()
   }
+
+  perfMark('roid-sim-end')
+  perfMeasure('roid-sim', 'roid-sim-start', 'roid-sim-end')
 
   drossParticles.syncFromState(drossState, gridSize, voxelSize, currentSeed, now, scanVisualizationDebug)
 
@@ -2612,21 +2698,9 @@ function tick(): void {
     computroniumMat.emissiveIntensity = 0.82 + 0.12 * Math.sin(now * 0.00048)
   }
 
-  if (
-    !depthOverlayTintActive() &&
-    ((laserPointerDown && orbitalLaserUnlocked && lastLaserDragTool === 'orbitalLaser' && lastLaserDragClient) ||
-      (excavatingLaserPointerDown &&
-        excavatingLaserUnlocked &&
-        lastLaserDragTool === 'excavatingLaser' &&
-        lastLaserDragClient))
-  ) {
-    refreshLaserRockHighlightColors()
-  } else if (!depthOverlayTintActive() && hasActiveExplosiveFuse(now)) {
-    refreshExplosiveFuseRockColors()
-  }
-
   satelliteDots.tick(now)
 
+  perfMark('roid-music-start')
   asteroidAmbientMusic.tick(
     dtMs / 1000,
     structureVoxelCountForMusic,
@@ -2635,6 +2709,8 @@ function tick(): void {
     scannerSatelliteCount,
     drossCollectorSatelliteCount,
   )
+  perfMark('roid-music-end')
+  perfMeasure('roid-music', 'roid-music-start', 'roid-music-end')
 
   const dtSec = dtMs / 1000
   const sunDegPerSec = Number(sunLightDebug.rotationDegPerSec)
@@ -2677,29 +2753,72 @@ function tick(): void {
   if (discoveryModal.isOpen()) {
     discoveryModal.syncAnchor()
   }
-  if (depthOverlayTintActive()) {
-    sortDepthOverlayRockInstancesByViewDistance(
-      asteroidBundle,
-      voxelCells,
-      voxelSize,
-      gridSize,
-      camera.position,
-    )
-    if (
-      (laserPointerDown && orbitalLaserUnlocked && lastLaserDragTool === 'orbitalLaser' && lastLaserDragClient) ||
-      (excavatingLaserPointerDown &&
-        excavatingLaserUnlocked &&
-        lastLaserDragTool === 'excavatingLaser' &&
-        lastLaserDragClient)
-    ) {
+
+  perfMark('roid-depth-overlay-start')
+  const depthOn = depthOverlayTintActive()
+  const laserDragActive =
+    (laserPointerDown && orbitalLaserUnlocked && lastLaserDragTool === 'orbitalLaser' && lastLaserDragClient) ||
+    (excavatingLaserPointerDown &&
+      excavatingLaserUnlocked &&
+      lastLaserDragTool === 'excavatingLaser' &&
+      lastLaserDragClient)
+  const fuseActive = hasActiveExplosiveFuse(now)
+
+  if (depthOn) {
+    const viewChanged = depthOverlayViewChanged()
+    if (laserDragActive) {
+      if (viewChanged) {
+        sortDepthOverlayRockInstancesByViewDistance(
+          asteroidBundle,
+          voxelCells,
+          voxelSize,
+          gridSize,
+          camera.position,
+        )
+      }
       refreshLaserRockHighlightColors()
-    } else if (hasActiveExplosiveFuse(now)) {
+    } else if (fuseActive) {
+      if (viewChanged) {
+        sortDepthOverlayRockInstancesByViewDistance(
+          asteroidBundle,
+          voxelCells,
+          voxelSize,
+          gridSize,
+          camera.position,
+        )
+      }
       refreshExplosiveFuseRockColors()
-    } else {
+    } else if (viewChanged || rockInstanceColorsDirty) {
+      if (viewChanged) {
+        sortDepthOverlayRockInstancesByViewDistance(
+          asteroidBundle,
+          voxelCells,
+          voxelSize,
+          gridSize,
+          camera.position,
+        )
+      }
       reapplyAllRockColorsNoLaser()
+      rockInstanceColorsDirty = false
+    }
+  } else {
+    if (rockInstanceColorsDirty) {
+      reapplyAllRockColorsNoLaser()
+      rockInstanceColorsDirty = false
+    }
+    if (laserDragActive) {
+      refreshLaserRockHighlightColors()
+    } else if (fuseActive) {
+      refreshExplosiveFuseRockColors()
     }
   }
+  perfMark('roid-depth-overlay-end')
+  perfMeasure('roid-depth-overlay', 'roid-depth-overlay-start', 'roid-depth-overlay-end')
+
+  perfMark('roid-render-start')
   renderer.render(scene, camera)
+  perfMark('roid-render-end')
+  perfMeasure('roid-render', 'roid-render-start', 'roid-render-end')
   undoFrameShake(camera)
 }
 

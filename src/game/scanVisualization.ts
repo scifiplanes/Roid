@@ -388,6 +388,14 @@ export function blendBulkRockHintOntoBase(base: Color, bulkHint: Color, t: numbe
  * then acid/gray saturation envelope (display-only jitter on fractions). Darkens slightly toward
  * higher composite bulk density (g/cm³).
  */
+/**
+ * Compact key for caches (e.g. dross particles) that only depend on bulk-hint tint fields from
+ * {@link compositionToBulkRockHintColor}.
+ */
+export function scanVisualizationBulkHintKeyForDross(debug: ScanVisualizationDebug): string {
+  return `${debug.baseRockBulkHintLerp}|${debug.baseRockBulkHintSaturation}|${debug.baseRockBulkHintLightness}|${debug.baseRockDensityShade}`
+}
+
 export function compositionToBulkRockHintColor(
   cell: VoxelCell,
   out: Color,

@@ -84,7 +84,8 @@
 | `src/scene/drossParticles.ts` | Instanced cubic dross debris; child of asteroid group (re-parented on mesh rebuild). |
 | `src/scene/drossFog.ts` | `FogExp2` + dross fog color (tint lerps toward black at max orbit zoom); `scene.background` lerps void→fog by `density/cap` (clear isn’t shader-fogged). |
 | `src/game/drossSim.ts` | Dross clusters (spawn on voxel removal, proportional collection → yields). |
-| `src/main.ts` | App entry: layout, generation, render loop, resize. |
+| `src/main.ts` | App entry: layout, generation, render loop, resize; depth-overlay view/color dirty updates; dev perf marks. |
+| `src/game/perfMarks.ts` | Dev-only `performance.mark` / `measure` helpers for profiling (`roid-depth-overlay` User Timing). |
 | `src/game/voxelGridRaycast.ts` | Grid DDA in asteroid local space: first occupied voxel along the view ray (picking / lasers / inspect; avoids far-side triangle hits when zoomed in). |
 | `src/game/resources.ts` | Resource tree defs, refinement recipes, HUD formatters. |
 | `src/game/resourceOriginDepth.ts` | Usual origin depth from lithology yields; matter HUD per-commodity CSS color. |
@@ -102,8 +103,9 @@
 | `src/ui/satelliteInspectModal.ts` | Inspect-tool modal for orbit markers: info + decommission (confirm). |
 | `src/game/audioContext.ts` | Shared lazy `AudioContext` (`webkitAudioContext` fallback); `setAudioSessionPlayback`, `resumeAudioContextSync`, backgrounding reset. |
 | `src/game/reverbImpulse.ts` | Stereo noise-decay impulse buffers for `ConvolverNode` (music + SFX); optional music-only IR shaping (decorrelation, damping, early taps). |
-| `src/game/sfxReverbBus.ts` | Lazy SFX master: dry + convolver wet to `destination`. |
-| `src/game/masterOutputChain.ts` | Music-only post chain: lowshelf → peaking → highshelf → highpass → `destination`; `getMusicPostChainInput`; `applyAudioMasterDebug` + getter. |
+| `src/game/globalMasterBus.ts` | Shared output: `getGlobalMasterInput` → `DynamicsCompressorNode` → `destination` (music post + SFX summed before compressor). |
+| `src/game/sfxReverbBus.ts` | Lazy SFX master: dry + convolver wet into [`global master bus`](src/game/globalMasterBus.ts). |
+| `src/game/masterOutputChain.ts` | Music-only post chain: lowshelf → peaking → highshelf → highpass → [`global master bus`](src/game/globalMasterBus.ts); `getMusicPostChainInput`; `applyAudioMasterDebug` + getter. |
 | `src/game/audioMasterDebug.ts` | Defaults for music post HP Hz + 3-band EQ dB. |
 | `src/game/audioMasterPersist.ts` | Persist master debug (`roid:audioMasterDebug`, debounced). |
 | `src/game/asteroidMusicScale.ts` | Scale helpers: seed → MIDI root, triad/octave layout per voice, `snapMidiToScale`, **circle of fifths/fourths** tonic transpose (`effectiveRootMidiAfterCycleSteps`). |

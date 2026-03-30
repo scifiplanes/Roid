@@ -34,6 +34,20 @@ export function totalStoredResourceUnits(cell: VoxelCell): number {
   return n
 }
 
+/** Scale: ~10 root units → ~63% of the way to full tint (1 − 1/e). */
+const REPLICATOR_STOCK_FILL_UNITS_PER_E = 10
+
+/**
+ * Normalized 0–1 fill for mature replicator voxel coloring from local `storedResources` / PM units.
+ * Non-replicator cells always return 0.
+ */
+export function replicatorResourceFill01(cell: VoxelCell): number {
+  if (cell.kind !== 'replicator') return 0
+  const n = totalStoredResourceUnits(cell)
+  if (n <= 0) return 0
+  return 1 - Math.exp(-n / REPLICATOR_STOCK_FILL_UNITS_PER_E)
+}
+
 /** Take one unit of a specific resource id from cell store. Returns true if taken. */
 export function takeOneResource(cell: VoxelCell, id: ResourceId): boolean {
   if (!cell.storedResources) return false

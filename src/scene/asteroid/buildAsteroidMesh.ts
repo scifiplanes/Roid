@@ -21,7 +21,14 @@ import {
   getActiveScanVisualizationDebug,
 } from '../../game/scanVisualization'
 import type { VoxelCell } from '../../game/voxelState'
-import { getKindDef, REPLICATOR_PROCESSING_TINT, type VoxelKind } from '../../game/voxelKinds'
+import {
+  getKindDef,
+  REPLICATOR_PROCESSING_TINT,
+  REPLICATOR_STOCK_TINT,
+  REPLICATOR_STOCK_TINT_LERP,
+  type VoxelKind,
+} from '../../game/voxelKinds'
+import { replicatorResourceFill01 } from '../../game/localStores'
 import {
   addDepthOverlayAlphaMulAttribute,
   flagDepthOverlayAlphaMulNeedsUpdate,
@@ -79,7 +86,8 @@ const _bulkRockHint = new Color()
 const _depthHeatmap = new Color()
 const _surfaceHeatmap = new Color()
 const _debugLodeHeatmap = new Color()
-const _depthSortWorld = new Vector3()
+const _depthSortInv = new Matrix4()
+const _depthSortCamLocal = new Vector3()
 /** Reused for depth-overlay back-to-front sort (avoid slice + O(n log n) world transforms in comparator). */
 const _depthSortDistSq: number[] = []
 const _depthSortOrder: number[] = []
@@ -124,20 +132,21 @@ function setCellMatrixAt(
   mesh.setMatrixAt(j, _m)
 }
 
-function voxelCenterWorldDistSq(
+/** Squared distance in asteroid local space (same ordering as world space for rigid `group` transform). */
+function voxelCenterLocalDistSq(
   cell: VoxelCell,
   center: number,
   voxelSize: number,
-  group: Group,
-  cameraPosition: Vector3,
+  cameraLocal: Vector3,
 ): number {
   const { pos } = cell
   const px = (pos.x - center) * voxelSize
   const py = (pos.y - center) * voxelSize
   const pz = (pos.z - center) * voxelSize
-  _depthSortWorld.set(px, py, pz)
-  _depthSortWorld.applyMatrix4(group.matrixWorld)
-  return _depthSortWorld.distanceToSquared(cameraPosition)
+  const dx = px - cameraLocal.x
+  const dy = py - cameraLocal.y
+  const dz = pz - cameraLocal.z
+  return dx * dx + dy * dy + dz * dz
 }
 
 function sortRockCellIndicesByViewDistanceDesc(
@@ -146,21 +155,14 @@ function sortRockCellIndicesByViewDistanceDesc(
   cells: VoxelCell[],
   center: number,
   voxelSize: number,
-  group: Group,
-  cameraPosition: Vector3,
+  cameraLocal: Vector3,
 ): void {
   if (count <= 1) return
   while (_depthSortDistSq.length < count) _depthSortDistSq.push(0)
   while (_depthSortOrder.length < count) _depthSortOrder.push(0)
   while (_depthSortCellCopy.length < count) _depthSortCellCopy.push(0)
   for (let j = 0; j < count; j++) {
-    _depthSortDistSq[j] = voxelCenterWorldDistSq(
-      cells[cellIndices[j]!],
-      center,
-      voxelSize,
-      group,
-      cameraPosition,
-    )
+    _depthSortDistSq[j] = voxelCenterLocalDistSq(cells[cellIndices[j]!], center, voxelSize, cameraLocal)
     _depthSortOrder[j] = j
   }
   _depthSortOrder.length = count
@@ -179,14 +181,13 @@ function minInstanceDistSqToCamera(
   cells: VoxelCell[],
   center: number,
   voxelSize: number,
-  group: Group,
-  cameraPosition: Vector3,
+  cameraLocal: Vector3,
 ): number {
   const cellIndices = mesh.userData.cellIndices as number[] | undefined
   if (!cellIndices || mesh.count <= 0) return Infinity
   let m = Infinity
   for (let j = 0; j < mesh.count; j++) {
-    const d = voxelCenterWorldDistSq(cells[cellIndices[j]], center, voxelSize, group, cameraPosition)
+    const d = voxelCenterLocalDistSq(cells[cellIndices[j]], center, voxelSize, cameraLocal)
     if (d < m) m = d
   }
   return m
@@ -207,6 +208,8 @@ export function sortDepthOverlayRockInstancesByViewDistance(
   const center = (gridSize - 1) / 2
   const { group, solid, eating } = bundle
   group.updateMatrixWorld(true)
+  _depthSortInv.copy(group.matrixWorld).invert()
+  _depthSortCamLocal.copy(cameraPosition).applyMatrix4(_depthSortInv)
 
   if (solid.visible && solid.count > 0) {
     const cellIndices = solid.userData.cellIndices as number[] | undefined
@@ -217,8 +220,7 @@ export function sortDepthOverlayRockInstancesByViewDistance(
         cells,
         center,
         voxelSize,
-        group,
-        cameraPosition,
+        _depthSortCamLocal,
       )
       for (let j = 0; j < solid.count; j++) {
         setCellMatrixAt(solid, j, cells[cellIndices[j]], center, voxelSize)
@@ -236,8 +238,7 @@ export function sortDepthOverlayRockInstancesByViewDistance(
         cells,
         center,
         voxelSize,
-        group,
-        cameraPosition,
+        _depthSortCamLocal,
       )
       for (let j = 0; j < eating.count; j++) {
         setCellMatrixAt(eating, j, cells[cellIndices[j]], center, voxelSize)
@@ -249,8 +250,8 @@ export function sortDepthOverlayRockInstancesByViewDistance(
   solid.renderOrder = 0
   eating.renderOrder = 0
   if (solid.visible && solid.count > 0 && eating.visible && eating.count > 0) {
-    const minS = minInstanceDistSqToCamera(solid, cells, center, voxelSize, group, cameraPosition)
-    const minE = minInstanceDistSqToCamera(eating, cells, center, voxelSize, group, cameraPosition)
+    const minS = minInstanceDistSqToCamera(solid, cells, center, voxelSize, _depthSortCamLocal)
+    const minE = minInstanceDistSqToCamera(eating, cells, center, voxelSize, _depthSortCamLocal)
     if (minE < minS) {
       eating.renderOrder = 1
     } else {
@@ -510,7 +511,9 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
       const rockDef = getKindDef(kind)
       let kindTint = rockDef.colorTint
       if (kind === 'replicator') {
-        kindTint = matureReplicatorTint
+        const fill = replicatorResourceFill01(cell)
+        _blend.copy(matureReplicatorTint).lerp(REPLICATOR_STOCK_TINT, fill * REPLICATOR_STOCK_TINT_LERP)
+        kindTint = _blend
       }
       const h = (pos.x * 73 + pos.y * 137 + pos.z * 211) >>> 0
       const tv = 0.78 + (h % 40) / 200
@@ -1012,7 +1015,9 @@ export function reapplyRockInstanceColors(
       const rockDef = getKindDef(kind)
       let kindTint = rockDef.colorTint
       if (kind === 'replicator') {
-        kindTint = matureReplicatorTint
+        const fill = replicatorResourceFill01(cell)
+        _blend.copy(matureReplicatorTint).lerp(REPLICATOR_STOCK_TINT, fill * REPLICATOR_STOCK_TINT_LERP)
+        kindTint = _blend
       }
       const h = (pos.x * 73 + pos.y * 137 + pos.z * 211) >>> 0
       const tv = 0.78 + (h % 40) / 200
@@ -1275,16 +1280,22 @@ export function reapplyRockInstanceColors(
   }
 }
 
+const depthOverlayMatLast = new WeakMap<AsteroidRenderBundle, { active: boolean; opacity: number }>()
+
 export function setDepthOverlayRockMaterials(
   bundle: AsteroidRenderBundle,
   active: boolean,
   rockOpacity: number,
 ): void {
+  const a = Math.min(1, Math.max(0.05, rockOpacity))
+  const prev = depthOverlayMatLast.get(bundle)
+  if (prev && prev.active === active && prev.opacity === a) return
+  depthOverlayMatLast.set(bundle, { active, opacity: a })
+
   const solid = bundle.solid.material as MeshStandardMaterial
   const eating = bundle.eating.material as MeshStandardMaterial
   solid.transparent = active
   eating.transparent = active
-  const a = Math.min(1, Math.max(0.05, rockOpacity))
   solid.opacity = active ? a : 1
   eating.opacity = active ? a : 1
   solid.depthWrite = !active

@@ -8,7 +8,10 @@ import {
   Vector3,
 } from 'three'
 import { latticeHash } from '../game/compositionYields'
-import { compositionToBulkRockHintColor } from '../game/scanVisualization'
+import {
+  compositionToBulkRockHintColor,
+  scanVisualizationBulkHintKeyForDross,
+} from '../game/scanVisualization'
 import type { ScanVisualizationDebug } from '../game/scanVisualizationDebug'
 import type { DrossCluster, DrossState } from '../game/drossSim'
 import type { VoxelCell } from '../game/voxelState'
@@ -70,6 +73,14 @@ export function createDrossParticlesGroup(): DrossParticlesHandle {
   mesh.frustumCulled = false
   group.add(mesh)
 
+  /** Base translation (no bob); reused when only `timeMs` changes. */
+  const baseX = new Float32Array(MAX_INSTANCES)
+  const baseY = new Float32Array(MAX_INSTANCES)
+  const baseZ = new Float32Array(MAX_INSTANCES)
+  /** Same phase offset as full build: `ci * 0.7 + j * 0.35`. */
+  const bobPhaseK = new Float32Array(MAX_INSTANCES)
+  let lastSyncKey = ''
+
   return {
     group,
     syncFromState(
@@ -81,8 +92,38 @@ export function createDrossParticlesGroup(): DrossParticlesHandle {
       scanViz: ScanVisualizationDebug,
     ): void {
       const center = (gridSize - 1) / 2
-      let idx = 0
       const clusters = state.clusters
+      const parts: string[] = []
+      for (let ci = 0; ci < clusters.length; ci++) {
+        const c = clusters[ci]!
+        const n = Math.min(
+          MAX_PER_CLUSTER,
+          Math.max(1, Math.ceil(c.mass * PARTICLES_PER_MASS_UNIT)),
+        )
+        parts.push(`${c.pos.x},${c.pos.y},${c.pos.z}:${c.mass.toFixed(5)}:${c.kind}:${n}`)
+      }
+      const clusterKey = parts.join(';')
+      const vizKey = scanVisualizationBulkHintKeyForDross(scanViz)
+      const fullKey = `${clusterKey}|${vizKey}|${seed}|${gridSize}|${voxelSize}`
+      const fastBobOnly = fullKey === lastSyncKey && mesh.count > 0
+
+      if (fastBobOnly) {
+        const n = mesh.count
+        const amp = 0.04 * voxelSize
+        const wt = timeMs * 0.0011
+        for (let i = 0; i < n; i++) {
+          const bob = Math.sin(wt + bobPhaseK[i]!) * amp
+          _p.set(baseX[i]!, baseY[i]! + bob, baseZ[i]!)
+          _m.makeTranslation(_p.x, _p.y, _p.z)
+          mesh.setMatrixAt(i, _m)
+        }
+        mesh.instanceMatrix.needsUpdate = true
+        return
+      }
+
+      lastSyncKey = fullKey
+
+      let idx = 0
       for (let ci = 0; ci < clusters.length && idx < MAX_INSTANCES; ci++) {
         const c = clusters[ci]!
         const n = Math.min(
@@ -100,8 +141,15 @@ export function createDrossParticlesGroup(): DrossParticlesHandle {
           const ox = (h1 - 0.5) * 2 * JITTER * voxelSize
           const oy = (h2 - 0.5) * 2 * JITTER * voxelSize
           const oz = (h3 - 0.5) * 2 * JITTER * voxelSize
-          const bob = Math.sin(timeMs * 0.0011 + ci * 0.7 + j * 0.35) * 0.04 * voxelSize
-          _p.set(px + ox, py + oy + bob, pz + oz)
+          const bx = px + ox
+          const by = py + oy
+          const bz = pz + oz
+          baseX[idx] = bx
+          baseY[idx] = by
+          baseZ[idx] = bz
+          bobPhaseK[idx] = ci * 0.7 + j * 0.35
+          const bob = Math.sin(timeMs * 0.0011 + bobPhaseK[idx]!) * 0.04 * voxelSize
+          _p.set(bx, by + bob, bz)
           _m.makeTranslation(_p.x, _p.y, _p.z)
           mesh.setMatrixAt(idx, _m)
 
