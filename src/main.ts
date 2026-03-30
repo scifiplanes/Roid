@@ -203,16 +203,21 @@ const viewport = document.createElement('div')
 viewport.id = 'viewport'
 app.appendChild(viewport)
 
-const initializeAudio = () => {
-  ensureAudioContextInitialized()
+const initializeAudio = async () => {
+  await ensureAudioContextInitialized()
   asteroidAmbientMusic.tryEnsureGraph()
 }
 
-viewport.addEventListener('pointerdown', initializeAudio, { passive: true })
-viewport.addEventListener('touchstart', initializeAudio, { passive: true })
+const audioEventOptions = { passive: true }
 
-document.addEventListener('click', initializeAudio, { passive: true, once: true })
-document.addEventListener('touchend', initializeAudio, { passive: true, once: true })
+viewport.addEventListener('pointerdown', () => void initializeAudio(), audioEventOptions)
+viewport.addEventListener('pointerup', () => void initializeAudio(), audioEventOptions)
+viewport.addEventListener('touchstart', () => void initializeAudio(), audioEventOptions)
+viewport.addEventListener('touchend', () => void initializeAudio(), audioEventOptions)
+viewport.addEventListener('mousedown', () => void initializeAudio(), audioEventOptions)
+
+document.addEventListener('click', () => void initializeAudio(), audioEventOptions)
+document.addEventListener('focus', () => void initializeAudio(), audioEventOptions)
 
 const { scene, camera, renderer, sun, stepStarfield } = setupScene(viewport)
 sun.intensity = KEY_LIGHT_INTENSITY_BASE * randomKeyLightIntensityFactorForAsteroid()

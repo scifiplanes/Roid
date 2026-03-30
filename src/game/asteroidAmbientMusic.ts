@@ -1,4 +1,4 @@
-import { getAudioContext, resumeAudioContext } from './audioContext'
+import { getAudioContext, resumeAudioContext, isAudioContextReady } from './audioContext'
 import { getMusicPostChainInput } from './masterOutputChain'
 import {
   type AsteroidMusicDebug,
@@ -683,6 +683,7 @@ export function createAsteroidAmbientMusic(options: {
   return {
     tryEnsureGraph(): void {
       void resumeAudioContext().then(() => {
+        if (!isAudioContextReady()) return
         if (voices.length > 0 && ctxRef) return
         buildGraph()
       })
@@ -690,6 +691,7 @@ export function createAsteroidAmbientMusic(options: {
 
     applyDebugNow(): void {
       void resumeAudioContext().then(() => {
+        if (!isAudioContextReady()) return
         if (voices.length > 0 && ctxRef) {
           syncAllParams()
         } else {
