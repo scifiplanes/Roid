@@ -180,6 +180,7 @@ import {
   isAudioContextReady,
   onAudioContextStateChange,
   resumeAudioContextSync,
+  setAudioSessionPlayback,
 } from './game/audioContext'
 import { autoLoadBundledDebugPreset } from './game/autoLoadDebugPreset'
 
@@ -213,9 +214,16 @@ const audioFallbackBtn = document.createElement('button')
 audioFallbackBtn.id = 'audio-fallback-btn'
 audioFallbackBtn.textContent = 'TAP TO ENABLE AUDIO'
 audioFallbackBtn.style.display = 'none'
-audioFallbackBtn.addEventListener('pointerdown', () => {
+audioFallbackBtn.addEventListener('touchend', (e) => {
+  e.preventDefault()
+  setAudioSessionPlayback()
   createAudioContextNow()
-  void initializeAudio()
+  void resumeAudioContextSync().then(() => { void initializeAudio() })
+})
+audioFallbackBtn.addEventListener('click', () => {
+  setAudioSessionPlayback()
+  createAudioContextNow()
+  void resumeAudioContextSync().then(() => { void initializeAudio() })
 })
 viewport.appendChild(audioFallbackBtn)
 
@@ -244,21 +252,29 @@ onAudioContextStateChange(() => {
   }
 })
 
+let audioUnlockDone = false
+
 const gestureUnlockAudio = () => {
+  setAudioSessionPlayback()
   createAudioContextNow()
   void resumeAudioContextSync().then(() => {
+    if (!audioUnlockDone && isAudioContextReady()) {
+      audioUnlockDone = true
+    }
     void initializeAudio()
   })
 }
 
-viewport.addEventListener('pointerdown', gestureUnlockAudio, { passive: false })
-viewport.addEventListener('pointerup', gestureUnlockAudio, { passive: true })
-viewport.addEventListener('touchstart', gestureUnlockAudio, { passive: false })
-viewport.addEventListener('touchend', gestureUnlockAudio, { passive: false })
+viewport.addEventListener('touchend', gestureUnlockAudio, { passive: true })
 viewport.addEventListener('mousedown', gestureUnlockAudio, { passive: true })
-
 document.addEventListener('click', gestureUnlockAudio, { passive: true })
-document.addEventListener('focus', gestureUnlockAudio, { passive: true })
+document.addEventListener('keydown', gestureUnlockAudio, { passive: true })
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    audioUnlockDone = false
+  }
+})
 
 const { scene, camera, renderer, sun, stepStarfield } = setupScene(viewport)
 sun.intensity = KEY_LIGHT_INTENSITY_BASE * randomKeyLightIntensityFactorForAsteroid()

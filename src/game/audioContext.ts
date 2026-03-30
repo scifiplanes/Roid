@@ -114,3 +114,19 @@ export function isAudioContextReady(): boolean {
 export function ensureAudioContextInitialized(): Promise<void> {
   return resumeAudioContext()
 }
+
+/**
+ * Sets the iOS audio session type to 'playback' so that the silent/ringer
+ * switch does not mute Web Audio. Must be called inside a user gesture.
+ * No-op on platforms that don't support navigator.audioSession.
+ */
+export function setAudioSessionPlayback(): void {
+  try {
+    const nav = navigator as unknown as { audioSession?: { type: string } }
+    if (nav.audioSession) {
+      nav.audioSession.type = 'playback'
+    }
+  } catch {
+    /* ignore */
+  }
+}
