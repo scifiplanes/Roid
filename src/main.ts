@@ -174,6 +174,7 @@ import { createDefaultScanVisualizationDebug } from './game/scanVisualizationDeb
 import { resetReplicatorSimAccumulators, stepReplicators } from './game/replicatorSim'
 import { stepHubs } from './game/hubSim'
 import { stepRefineryProcessing } from './game/refineryProcessSim'
+import { ensureAudioContextInitialized } from './game/audioContext'
 
 initGameBalanceFromPersisted(persistedSnapshot)
 
@@ -199,13 +200,16 @@ const viewport = document.createElement('div')
 viewport.id = 'viewport'
 app.appendChild(viewport)
 
-viewport.addEventListener(
-  'pointerdown',
-  () => {
-    asteroidAmbientMusic.tryEnsureGraph()
-  },
-  { passive: true },
-)
+const initializeAudio = () => {
+  ensureAudioContextInitialized()
+  asteroidAmbientMusic.tryEnsureGraph()
+}
+
+viewport.addEventListener('pointerdown', initializeAudio, { passive: true })
+viewport.addEventListener('touchstart', initializeAudio, { passive: true })
+
+document.addEventListener('click', initializeAudio, { passive: true, once: true })
+document.addEventListener('touchend', initializeAudio, { passive: true, once: true })
 
 const { scene, camera, renderer, sun, stepStarfield } = setupScene(viewport)
 sun.intensity = KEY_LIGHT_INTENSITY_BASE * randomKeyLightIntensityFactorForAsteroid()
