@@ -20,6 +20,10 @@ import {
   persistAsteroidMusicDebugToProjectNow,
   setMusicAutoSaveToFile,
 } from '../game/asteroidMusicPersist'
+import {
+  applyDebugPresetFromJsonString,
+  exportDebugPresetJson,
+} from '../game/debugPreset'
 
 export interface SettingsMenuOptions {
   /** Optional control(s) to the left of the Settings (F10) button (e.g. overlays menu). */
@@ -705,7 +709,7 @@ export function createSettingsMenu(
   const debugHint = document.createElement('p')
   debugHint.className = 'settings-debug-hint'
   debugHint.textContent =
-    'Rock durability applies after Regenerate. Balance and asteroid music debug are stored in localStorage on change. In dev, use Save or enable auto-save to write gameBalance.persisted.json and asteroidMusicDebug.persisted.json.'
+    'Rock durability applies after Regenerate. Balance and asteroid music debug are stored in localStorage on change. In dev, use Save or enable auto-save to write gameBalance.persisted.json and asteroidMusicDebug.persisted.json. For scan viz, music post EQ, overlays, and other browser-only keys, use Debug preset export/import (JSON file you can commit or move to another machine; import reloads the page).'
 
   const autoSaveRow = document.createElement('div')
   autoSaveRow.className = 'settings-row settings-debug-row settings-save-row'
@@ -804,6 +808,82 @@ export function createSettingsMenu(
     })()
   })
 
+  const presetRow = document.createElement('div')
+  presetRow.className = 'settings-row settings-debug-row settings-save-row'
+  const presetDownloadBtn = document.createElement('button')
+  presetDownloadBtn.type = 'button'
+  presetDownloadBtn.className = 'settings-secondary'
+  presetDownloadBtn.textContent = 'Download debug preset (.json)'
+  const presetCopyBtn = document.createElement('button')
+  presetCopyBtn.type = 'button'
+  presetCopyBtn.className = 'settings-secondary'
+  presetCopyBtn.textContent = 'Copy preset to clipboard'
+  const presetFileInput = document.createElement('input')
+  presetFileInput.type = 'file'
+  presetFileInput.accept = 'application/json,.json'
+  presetFileInput.className = 'settings-preset-file-input'
+  presetFileInput.id = 'settings-debug-preset-import'
+  const presetFileLabel = document.createElement('label')
+  presetFileLabel.className = 'settings-secondary settings-preset-file-label'
+  presetFileLabel.htmlFor = presetFileInput.id
+  presetFileLabel.textContent = 'Import debug preset…'
+  const presetStatus = document.createElement('span')
+  presetStatus.className = 'settings-save-status'
+  presetStatus.setAttribute('aria-live', 'polite')
+  presetRow.append(presetDownloadBtn, presetCopyBtn, presetFileInput, presetFileLabel, presetStatus)
+
+  let presetStatusClear: ReturnType<typeof setTimeout> | null = null
+  function flashPresetStatus(message: string): void {
+    if (presetStatusClear !== null) clearTimeout(presetStatusClear)
+    presetStatus.textContent = message
+    presetStatusClear = setTimeout(() => {
+      presetStatus.textContent = ''
+      presetStatusClear = null
+    }, 4200)
+  }
+
+  presetDownloadBtn.addEventListener('click', () => {
+    const json = exportDebugPresetJson()
+    const blob = new Blob([json], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'roid-debug-preset.json'
+    a.rel = 'noopener'
+    a.click()
+    URL.revokeObjectURL(url)
+    flashPresetStatus('Download started.')
+  })
+
+  presetCopyBtn.addEventListener('click', () => {
+    void (async () => {
+      try {
+        await navigator.clipboard.writeText(exportDebugPresetJson())
+        flashPresetStatus('Copied JSON to clipboard.')
+      } catch {
+        flashPresetStatus('Copy failed (clipboard permission).')
+      }
+    })()
+  })
+
+  presetFileInput.addEventListener('change', () => {
+    const file = presetFileInput.files?.[0]
+    presetFileInput.value = ''
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      const text = typeof reader.result === 'string' ? reader.result : ''
+      const result = applyDebugPresetFromJsonString(text)
+      if (!result.ok) {
+        flashPresetStatus(result.error)
+        return
+      }
+      location.reload()
+    }
+    reader.onerror = () => flashPresetStatus('Could not read file.')
+    reader.readAsText(file)
+  })
+
   const balanceInputs = new Map<keyof GameBalance, HTMLInputElement>()
 
   function formatSliderValue(spec: SliderRow, n: number): string {
@@ -863,7 +943,7 @@ export function createSettingsMenu(
     }
     debugDetails.appendChild(cheatRow)
   }
-  debugDetails.append(debugHint, autoSaveRow, saveRow, musicSaveRow)
+  debugDetails.append(debugHint, autoSaveRow, saveRow, musicSaveRow, presetRow)
 
   function setAzimuthSliderDisabled(disabled: boolean): void {
     azimuthInput.disabled = disabled
