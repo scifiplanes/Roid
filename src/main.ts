@@ -179,6 +179,7 @@ import {
   ensureAudioContextInitialized,
   isAudioContextReady,
   onAudioContextStateChange,
+  resumeAudioContextSync,
 } from './game/audioContext'
 import { autoLoadBundledDebugPreset } from './game/autoLoadDebugPreset'
 
@@ -243,21 +244,21 @@ onAudioContextStateChange(() => {
   }
 })
 
-const audioEventOptions = { passive: true }
-
 const gestureUnlockAudio = () => {
   createAudioContextNow()
-  void initializeAudio()
+  void resumeAudioContextSync().then(() => {
+    void initializeAudio()
+  })
 }
 
-viewport.addEventListener('pointerdown', gestureUnlockAudio, audioEventOptions)
-viewport.addEventListener('pointerup', gestureUnlockAudio, audioEventOptions)
-viewport.addEventListener('touchstart', gestureUnlockAudio, audioEventOptions)
-viewport.addEventListener('touchend', gestureUnlockAudio, audioEventOptions)
-viewport.addEventListener('mousedown', gestureUnlockAudio, audioEventOptions)
+viewport.addEventListener('pointerdown', gestureUnlockAudio, { passive: false })
+viewport.addEventListener('pointerup', gestureUnlockAudio, { passive: true })
+viewport.addEventListener('touchstart', gestureUnlockAudio, { passive: false })
+viewport.addEventListener('touchend', gestureUnlockAudio, { passive: false })
+viewport.addEventListener('mousedown', gestureUnlockAudio, { passive: true })
 
-document.addEventListener('click', gestureUnlockAudio, audioEventOptions)
-document.addEventListener('focus', gestureUnlockAudio, audioEventOptions)
+document.addEventListener('click', gestureUnlockAudio, { passive: true })
+document.addEventListener('focus', gestureUnlockAudio, { passive: true })
 
 const { scene, camera, renderer, sun, stepStarfield } = setupScene(viewport)
 sun.intensity = KEY_LIGHT_INTENSITY_BASE * randomKeyLightIntensityFactorForAsteroid()

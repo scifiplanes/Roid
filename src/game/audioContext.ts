@@ -53,6 +53,30 @@ export function getAudioContext(): AudioContext | null {
   return audioCtx
 }
 
+/**
+ * Fires `c.resume()` and returns the promise. Safe to call from within a
+ * synchronous user-gesture handler — the returned promise must NOT be awaited
+ * in the gesture callstack, just fire-and-forget or chain with `.then()`.
+ * iOS requires the `.resume()` call itself to be initiated synchronously
+ * inside the gesture; the resolution can be async.
+ */
+export function resumeAudioContextSync(): Promise<void> {
+  const c = audioCtx
+  if (!c) return Promise.resolve()
+  const state = c.state as string
+  if (state === 'suspended' || state === 'interrupted') {
+    try {
+      return c.resume().then(
+        () => { audioInitialized = c.state === 'running' },
+        () => { audioInitialized = false },
+      )
+    } catch {
+      return Promise.resolve()
+    }
+  }
+  return Promise.resolve()
+}
+
 export function resumeAudioContext(): Promise<void> {
   if (audioInitPromise) return audioInitPromise
 
@@ -63,7 +87,8 @@ export function resumeAudioContext(): Promise<void> {
 
   audioInitPromise = (async () => {
     try {
-      if (c.state === 'suspended') {
+      const state = c.state as string
+      if (state === 'suspended' || state === 'interrupted') {
         await c.resume()
       }
       audioInitialized = c.state === 'running'
