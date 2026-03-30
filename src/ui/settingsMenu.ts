@@ -45,7 +45,7 @@ import {
 export interface SettingsMenuOptions {
   /** Optional control(s) to the left of the Settings (F10) button (e.g. overlays menu). */
   leadingActions?: HTMLElement
-  /** Opens the game tips modal (top bar, before F10). */
+  /** Opens the game tips modal (Settings panel). */
   onOpenTips?: () => void
   onRegenerate: () => void
   onLightAngleChange: (azimuthDeg: number, elevationDeg: number) => void
@@ -2970,8 +2970,26 @@ export function createSettingsMenu(
 
   debugDetails.appendChild(resetBalanceBtn)
 
+  let tipsRow: HTMLDivElement | undefined
+  if (onOpenTips) {
+    const openTips = onOpenTips
+    tipsRow = document.createElement('div')
+    tipsRow.className = 'settings-row'
+    const tipsBtn = document.createElement('button')
+    tipsBtn.type = 'button'
+    tipsBtn.className = 'settings-secondary'
+    tipsBtn.title = 'Game tips'
+    tipsBtn.textContent = 'Tips'
+    tipsBtn.setAttribute('aria-label', 'Tips')
+    tipsBtn.addEventListener('click', () => {
+      openTips()
+    })
+    tipsRow.appendChild(tipsBtn)
+  }
+
   panel.append(
     heading,
+    ...(tipsRow ? [tipsRow] : []),
     regenBtn,
     azRow,
     elRow,
@@ -2980,20 +2998,7 @@ export function createSettingsMenu(
     matterHudCompactRow,
     debugDetails,
   )
-  if (onOpenTips) {
-    const tipsBtn = document.createElement('button')
-    tipsBtn.type = 'button'
-    tipsBtn.className = 'settings-toggle'
-    tipsBtn.title = 'Tips'
-    tipsBtn.textContent = 'Tips'
-    tipsBtn.setAttribute('aria-label', 'Tips')
-    tipsBtn.addEventListener('click', () => {
-      onOpenTips()
-    })
-    topBar.append(tipsBtn, toggle)
-  } else {
-    topBar.appendChild(toggle)
-  }
+  topBar.appendChild(toggle)
   overlay.append(topBar, panel)
   container.appendChild(overlay)
 
