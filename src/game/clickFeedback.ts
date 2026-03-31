@@ -372,12 +372,12 @@ export function startHooverSustain(): void {
     src.loop = true
 
     const bp = c.createBiquadFilter()
-    bp.type = 'bandpass'
-    bp.frequency.value = 420
-    bp.Q.value = 1.2
+    bp.type = 'lowpass'
+    bp.frequency.value = 520
+    bp.Q.value = 0.8
 
     const master = c.createGain()
-    const peak = 0.14
+    const peak = 0.15
     const atk = 0.045
     master.gain.setValueAtTime(0.0001, t0)
     master.gain.exponentialRampToValueAtTime(peak, t0 + atk)

@@ -21,6 +21,7 @@ import {
   MATTER_HUD_COLLAPSED_STORAGE_KEY,
   MATTER_HUD_COMPACT_STORAGE_KEY,
 } from '../ui/uiLayoutPrefs'
+import type { ColorSchemeId } from '../ui/colorScheme'
 
 export const SUN_LIGHT_ANGLES_STORAGE_KEY = 'roid:sunLightAngles'
 export const SUN_LIGHT_DEBUG_STORAGE_KEY = 'roid:sunLightDebug'
@@ -49,6 +50,7 @@ export interface SettingsClientPersistedV1 {
   overlayLegendCollapsed?: boolean
   matterHudCollapsed?: boolean
   matterHudCompact?: boolean
+  colorScheme?: ColorSchemeId
 }
 
 export interface SettingsClientRuntimeSnapshot {
@@ -63,6 +65,7 @@ export interface SettingsClientRuntimeSnapshot {
   musicVolumeLinear: number
   matterHudCollapsed: boolean
   matterHudCompact: boolean
+  colorScheme: ColorSchemeId
 }
 
 let snapshotGetter: (() => SettingsClientRuntimeSnapshot) | null = null
@@ -89,6 +92,7 @@ export function buildSettingsClientPayload(s: SettingsClientRuntimeSnapshot): Se
     overlayLegendCollapsed: loadOverlayLegendCollapsed(),
     matterHudCollapsed: s.matterHudCollapsed,
     matterHudCompact: s.matterHudCompact,
+    colorScheme: s.colorScheme,
   }
 }
 

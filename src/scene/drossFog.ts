@@ -35,6 +35,7 @@ export interface DrossFogBalance {
   drossFogColorR: number
   drossFogColorG: number
   drossFogColorB: number
+  drossFogTintLerp01: number
 }
 
 export function updateDrossFog(
@@ -42,6 +43,7 @@ export function updateDrossFog(
   totalMass: number,
   balance: DrossFogBalance,
   zoomBlacken01 = 0,
+  drossTint: Color | null = null,
 ): void {
   const perMassBase = balance.drossFogDensityPerMass
   const mult = Number.isFinite(balance.drossFogDensityMult) ? balance.drossFogDensityMult : 1
@@ -69,8 +71,13 @@ export function updateDrossFog(
     setSceneBackgroundVoid(scene)
     return
   }
-  _fogRgb.setRGB(balance.drossFogColorR, balance.drossFogColorG, balance.drossFogColorB)
   const zb = Number.isFinite(zoomBlacken01) ? Math.min(1, Math.max(0, zoomBlacken01)) : 0
+  _fogRgb.setRGB(balance.drossFogColorR, balance.drossFogColorG, balance.drossFogColorB)
+  if (drossTint) {
+    const kRaw = balance.drossFogTintLerp01
+    const k = Number.isFinite(kRaw) ? Math.min(1, Math.max(0, kRaw)) : 1
+    _fogRgb.lerp(drossTint, k)
+  }
   _fogTintDisplay.copy(_fogRgb).lerp(_black, zb)
   if (fog === null) {
     fog = new FogExp2(_fogTintDisplay, density)

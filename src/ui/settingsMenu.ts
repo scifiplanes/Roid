@@ -41,6 +41,7 @@ import {
   applyDebugPresetFromJsonString,
   exportDebugPresetJson,
 } from '../game/debugPreset'
+import { COLOR_SCHEME_OPTIONS, type ColorSchemeId } from './colorScheme'
 
 export interface SettingsMenuOptions {
   /** Optional control(s) to the left of the Settings (F10) button (e.g. overlays menu). */
@@ -56,7 +57,7 @@ export interface SettingsMenuOptions {
   onDebugAddResources?: () => void
   onDebugAddEnergy?: () => void
   onDebugIncreaseEnergyCap?: () => void
-  /** Unlock all tools: research tiers, satellites, structure gates, explosive (debug). */
+  /** Unlock all: tools, refinery recipes, and Seed recipes (debug). */
   onDebugUnlockAllTools?: () => void
   /** Highlight every voxel with rare-lode strength on the rock (heatmap). */
   onDebugShowAllLodes?: () => void
@@ -75,6 +76,9 @@ export interface SettingsMenuOptions {
   /** Tighter typography and padding for the top-left resource HUD (persisted; default true). */
   initialMatterHudCompact?: boolean
   onMatterHudCompactChange?: (value: boolean) => void
+  /** UI color scheme for menus / HUD / tools (persisted). */
+  initialColorScheme?: ColorSchemeId
+  onColorSchemeChange?: (scheme: ColorSchemeId) => void
   /** Key light azimuth/elevation while rotating (authoritative azimuth lives in main). */
   sunLightDebug: SunLightDebug
   getSunAnglesForLight: () => { az: number; el: number }
@@ -313,13 +317,21 @@ const GAMEPLAY_BALANCE_SLIDERS: SliderRow[] = [
     step: 0.02,
     valueDecimals: 2,
   },
+  {
+    key: 'drossFogTintLerp01',
+    label: 'Cleanup fog composition tint strength (0 = base color, 1 = full dross tint)',
+    min: 0,
+    max: 1,
+    step: 0.02,
+    valueDecimals: 2,
+  },
 ]
 
 /** Discovery sites + offer archetypes — own Debug subsection (see also `discoveryDensityScale(profile)`). */
 const DISCOVERY_DEBUG_SLIDERS: SliderRow[] = [
   {
     key: 'discoverySiteDensity',
-    label: 'Discovery site density (fraction of voxels; × profile scale; red overlay when scanned)',
+    label: 'Discovery site density (nominal fraction of voxels; varies per asteroid; red overlay when scanned)',
     min: 0,
     max: 1,
     step: 0.001,
@@ -698,6 +710,8 @@ export function createSettingsMenu(
     onDiscoveryAutoResolveChange,
     initialMatterHudCompact = true,
     onMatterHudCompactChange,
+    initialColorScheme = 'blue',
+    onColorSchemeChange,
     sunLightDebug,
     getSunAnglesForLight,
     onSunLightDebugChange,
@@ -833,6 +847,38 @@ export function createSettingsMenu(
   matterHudCompactInput.addEventListener('change', () => {
     onMatterHudCompactChange?.(matterHudCompactInput.checked)
   })
+
+  const colorSchemeRow = document.createElement('div')
+  colorSchemeRow.className = 'settings-row'
+  const colorSchemeLabel = document.createElement('div')
+  colorSchemeLabel.className = 'settings-label'
+  colorSchemeLabel.textContent = 'Color scheme'
+  const colorSchemeChoices = document.createElement('div')
+  colorSchemeChoices.className = 'settings-color-schemes'
+
+  for (const opt of COLOR_SCHEME_OPTIONS) {
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'settings-color-scheme-btn'
+    btn.textContent = opt.label
+    if (opt.id === initialColorScheme) {
+      btn.classList.add('settings-color-scheme-btn--active')
+    }
+    btn.addEventListener('click', () => {
+      onColorSchemeChange?.(opt.id)
+      for (const child of colorSchemeChoices.children) {
+        if (child instanceof HTMLButtonElement) {
+          child.classList.toggle(
+            'settings-color-scheme-btn--active',
+            child === btn,
+          )
+        }
+      }
+    })
+    colorSchemeChoices.appendChild(btn)
+  }
+
+  colorSchemeRow.append(colorSchemeLabel, colorSchemeChoices)
 
   const debugDetails = document.createElement('details')
   debugDetails.className = 'settings-details'
@@ -1181,10 +1227,7 @@ export function createSettingsMenu(
       appendCheatButton('Increase energy cap', onDebugIncreaseEnergyCap)
     }
     if (onDebugUnlockAllTools) {
-      appendCheatButton(
-        'Unlock all tools',
-        onDebugUnlockAllTools,
-      )
+      appendCheatButton('Unlock all', onDebugUnlockAllTools)
     }
     if (onDebugShowAllLodes) appendCheatButton('Show all lodes', onDebugShowAllLodes)
     if (onDebugClearLodeDisplay) appendCheatButton('Clear lode display', onDebugClearLodeDisplay)
@@ -3756,6 +3799,7 @@ export function createSettingsMenu(
     musicVolRow,
     discoveryAutoResolveRow,
     matterHudCompactRow,
+    colorSchemeRow,
     debugDetails,
   )
   topBar.appendChild(toggle)

@@ -28,6 +28,7 @@ import {
   REPLICATOR_STOCK_TINT_LERP,
   type VoxelKind,
 } from '../../game/voxelKinds'
+import { getSeedColor } from '../../game/seedColors'
 import { replicatorResourceFill01 } from '../../game/localStores'
 import {
   addDepthOverlayAlphaMulAttribute,
@@ -83,6 +84,7 @@ const _depthBase = new Color()
 const _depthCompose = new Color()
 const _voidColor = new Color(0, 0, 0)
 const _bulkRockHint = new Color()
+const _seedColor = new Color()
 const _depthHeatmap = new Color()
 const _surfaceHeatmap = new Color()
 const _debugLodeHeatmap = new Color()
@@ -540,6 +542,13 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
       if (kind === 'replicator') {
         const fill = replicatorResourceFill01(cell)
         _blend.copy(matureReplicatorTint).lerp(REPLICATOR_STOCK_TINT, fill * REPLICATOR_STOCK_TINT_LERP)
+        const seedRuntime = cell.seedRuntime
+        if (seedRuntime) {
+          const sc = getSeedColor(seedRuntime.seedTypeId)
+          _seedColor.setRGB(sc.r, sc.g, sc.b)
+          // Blend a portion of the seed color into the base replicator tint.
+          _blend.lerp(_seedColor, 0.45)
+        }
         kindTint = _blend
       }
       const h = (pos.x * 73 + pos.y * 137 + pos.z * 211) >>> 0
@@ -577,6 +586,11 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
         const tLinear = maxHp > 0 ? 1 - hpRemaining / maxHp : 0
         const t = tLinear * tLinear * (3 - 2 * tLinear)
         _blend.copy(rockDef.colorTint).lerp(REPLICATOR_PROCESSING_TINT, 0.12 + t * 0.88)
+        if (kind === 'replicator' && cell.seedRuntime) {
+          const sc = getSeedColor(cell.seedRuntime.seedTypeId)
+          _seedColor.setRGB(sc.r, sc.g, sc.b)
+          _blend.lerp(_seedColor, 0.45)
+        }
         const h = (pos.x * 73 + pos.y * 137 + pos.z * 211) >>> 0
         const tv = 0.82 + (h % 40) / 200
         _c.copy(baseColor).multiply(_blend).multiplyScalar(tv)
@@ -1048,6 +1062,12 @@ export function reapplyRockInstanceColors(
       if (kind === 'replicator') {
         const fill = replicatorResourceFill01(cell)
         _blend.copy(matureReplicatorTint).lerp(REPLICATOR_STOCK_TINT, fill * REPLICATOR_STOCK_TINT_LERP)
+        const seedRuntime = cell.seedRuntime
+        if (seedRuntime) {
+          const sc = getSeedColor(seedRuntime.seedTypeId)
+          _seedColor.setRGB(sc.r, sc.g, sc.b)
+          _blend.lerp(_seedColor, 0.45)
+        }
         kindTint = _blend
       }
       const h = (pos.x * 73 + pos.y * 137 + pos.z * 211) >>> 0

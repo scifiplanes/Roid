@@ -7,9 +7,9 @@ function findAnyDiscoverySite(
   balance: typeof gameBalance,
   densityScale: number,
 ): { x: number; y: number; z: number } | null {
-  for (let x = 0; x < 24; x++) {
-    for (let y = 0; y < 24; y++) {
-      for (let z = 0; z < 24; z++) {
+  for (let x = 0; x < 64; x++) {
+    for (let y = 0; y < 64; y++) {
+      for (let z = 0; z < 64; z++) {
         if (isDiscoverySite(seed, { x, y, z }, balance, densityScale)) {
           return { x, y, z }
         }
@@ -40,11 +40,12 @@ describe('tryDiscoveryClaim', () => {
   })
 
   it('returns offer with positive archetype weights', () => {
-    const site = findAnyDiscoverySite(42, gameBalance, 1)
+    const boosted = { ...gameBalance, discoverySiteDensity: 0.2 }
+    const site = findAnyDiscoverySite(42, boosted, 1)
     expect(site).not.toBeNull()
     const consumed = new Set<string>()
     const counter = { current: 0 }
-    const r = tryDiscoveryClaim(42, site!, gameBalance, consumed, counter, 1)
+    const r = tryDiscoveryClaim(42, site!, boosted, consumed, counter, 1)
     expect(r.kind).toBe('offer')
     if (r.kind === 'offer') {
       expect(r.offer.id.length).toBeGreaterThan(0)
@@ -71,11 +72,12 @@ describe('tryDiscoveryClaim', () => {
   })
 
   it('returns none if position was already consumed', () => {
-    const site = findAnyDiscoverySite(7, gameBalance, 1)
+    const boosted = { ...gameBalance, discoverySiteDensity: 0.2 }
+    const site = findAnyDiscoverySite(7, boosted, 1)
     expect(site).not.toBeNull()
     const consumed = new Set<string>()
     const counter = { current: 0 }
-    const first = tryDiscoveryClaim(7, site!, gameBalance, consumed, counter, 1)
+    const first = tryDiscoveryClaim(7, site!, boosted, consumed, counter, 1)
     expect(first.kind).toBe('offer')
     const second = tryDiscoveryClaim(7, site!, gameBalance, consumed, counter, 1)
     expect(second.kind).toBe('none')

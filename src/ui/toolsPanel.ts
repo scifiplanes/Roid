@@ -24,6 +24,7 @@ export type PlayerTool =
   | 'pick'
   | 'inspect'
   | 'replicator'
+  | 'seed'
   | 'reactor'
   | 'battery'
   | 'hub'
@@ -37,6 +38,37 @@ export type PlayerTool =
   | 'drossCollector'
   | 'computronium'
   | 'emCatapult'
+
+type ToolCategoryId =
+  | 'all'
+  | 'basic'
+  | 'structures'
+  | 'lasers'
+  | 'scanningDepth'
+  | 'cleanup'
+  | 'travel'
+
+type ToolFilterId = ToolCategoryId
+
+const TOOL_CATEGORY: Readonly<Record<PlayerTool, ToolCategoryId>> = {
+  pick: 'basic',
+  inspect: 'basic',
+  hoover: 'basic',
+  replicator: 'structures',
+  seed: 'structures',
+  reactor: 'structures',
+  battery: 'structures',
+  hub: 'structures',
+  refinery: 'structures',
+  computronium: 'scanningDepth',
+  orbitalLaser: 'lasers',
+  excavatingLaser: 'lasers',
+  scanner: 'scanningDepth',
+  explosiveCharge: 'lasers',
+  depthScanner: 'scanningDepth',
+  drossCollector: 'cleanup',
+  emCatapult: 'travel',
+}
 
 export interface LaserSatelliteRowSnapshot {
   orbital: {
@@ -110,6 +142,8 @@ export interface ToolsPanelOptions {
   getCurrentEnergy?: () => number
   /** Refinery tool: opens refinement recipe modal (global recipe selection). */
   openRefineryRecipesModal?: () => void
+  /** Seed tool: opens Seed Assembly modal (per-replicator programming). */
+  openSeedAssemblyModal?: () => void
   /** Replicator tool: pause feeding + transform progress after modal confirm. */
   onReplicatorKillswitch?: () => void
   /** Clear killswitch pause (no modal). */
@@ -126,6 +160,7 @@ export interface ToolsPanelOptions {
 
 type CostToolKind =
   | 'replicatorPlace'
+  | 'seedReplicatorPlace'
   | 'reactor'
   | 'battery'
   | 'hub'
@@ -138,6 +173,19 @@ type CostToolKind =
   | 'scannerUnlock'
   | 'drossCollectorInfo'
   | 'emCatapultInfo'
+
+const TOOL_FILTERS: ReadonlyArray<{
+  id: ToolFilterId
+  label: string
+}> = [
+  { id: 'all', label: 'All' },
+  { id: 'basic', label: 'Basics' },
+  { id: 'structures', label: 'Structures' },
+  { id: 'lasers', label: 'Lasers' },
+  { id: 'scanningDepth', label: 'Scanning/Depth' },
+  { id: 'cleanup', label: 'Cleanup' },
+  { id: 'travel', label: 'Travel' },
+]
 
 const TOOLS: ReadonlyArray<{
   id: PlayerTool
@@ -155,6 +203,15 @@ const TOOLS: ReadonlyArray<{
     label: 'Poke',
     title: 'Poke rocks.',
     short: 'Poke rocks.',
+  },
+  {
+    id: 'seed',
+    fKey: 'F15',
+    label: 'Seed',
+    title:
+      'Program Replicators with Seeds. Select a Seed stack, then place Replicators that follow that programming until their Seed lifetime expires.',
+    short: 'Configure custom Replicator seeds',
+    costTool: 'seedReplicatorPlace',
   },
   {
     id: 'inspect',
@@ -291,6 +348,7 @@ const TOOLS: ReadonlyArray<{
 
 function costForTool(kind: CostToolKind): Partial<Record<ResourceId, number>> {
   if (kind === 'replicatorPlace') return getScaledReplicatorPlaceCost()
+  if (kind === 'seedReplicatorPlace') return getScaledReplicatorPlaceCost()
   if (kind === 'reactor') return getScaledReactorBuildCost()
   if (kind === 'battery') return getScaledBatteryBuildCost()
   if (kind === 'hub') return getScaledHubBuildCost()
@@ -367,6 +425,7 @@ export function createToolsPanel(
     hasReplicatorNetworkActivity,
     onAfterRefreshToolCosts,
     onGameBalancePatch,
+    openSeedAssemblyModal,
   }: ToolsPanelOptions = {},
 ): {
   getSelectedTool: () => PlayerTool
@@ -415,6 +474,13 @@ export function createToolsPanel(
 
   let selected: PlayerTool = initialTool
   const buttons = new Map<PlayerTool, HTMLButtonElement>()
+  const buttonCategories = new Map<
+    PlayerTool,
+    {
+      button: HTMLButtonElement
+      category: ToolCategoryId
+    }
+  >()
   const costUi = new Map<
     PlayerTool,
     {
@@ -515,6 +581,9 @@ export function createToolsPanel(
   let replicatorKillswitchBtn: HTMLButtonElement | undefined
 
   let openReplicatorKillswitchModal: () => void = () => {}
+
+  let seedContextRow: HTMLDivElement | undefined
+  let seedAssemblyBtn: HTMLButtonElement | undefined
 
   if (onReplicatorKillswitch) {
     const runKillswitch = onReplicatorKillswitch
@@ -618,6 +687,24 @@ export function createToolsPanel(
     }
   }
 
+  if (openSeedAssemblyModal) {
+    seedContextRow = document.createElement('div')
+    seedContextRow.className = 'tools-refinery-context tools-seed-context'
+    seedContextRow.hidden = true
+
+    seedAssemblyBtn = document.createElement('button')
+    seedAssemblyBtn.type = 'button'
+    seedAssemblyBtn.className = 'tools-refinery-recipes-btn tools-seed-assembly-btn'
+    seedAssemblyBtn.textContent = 'Assembly'
+    seedAssemblyBtn.setAttribute('aria-label', 'Seed assembly')
+    seedAssemblyBtn.title = 'Configure Seed stacks for future Replicators'
+    seedAssemblyBtn.addEventListener('click', () => {
+      openSeedAssemblyModal?.()
+    })
+
+    seedContextRow.append(seedAssemblyBtn)
+  }
+
   function syncDepthLodeOpacityRow(): void {
     const show =
       selected === 'depthScanner' &&
@@ -648,6 +735,13 @@ export function createToolsPanel(
     } else {
       replicatorKillswitchBtn.title = 'No active replicators or spread on rock.'
     }
+  }
+
+  function syncSeedContextRow(): void {
+    if (!seedContextRow || !seedAssemblyBtn || !openSeedAssemblyModal) return
+    const show = selected === 'seed'
+    seedContextRow.hidden = !show
+    seedAssemblyBtn.disabled = false
   }
 
   if (onDeploySatellite) {
@@ -782,6 +876,7 @@ export function createToolsPanel(
     syncRefineryRecipeRow()
     syncReplicatorKillswitchRow()
     syncDepthLodeOpacityRow()
+    syncSeedContextRow()
   }
 
   function setSelectedTool(tool: PlayerTool, options?: { skipBeforeToolChange?: boolean }): void {
@@ -801,6 +896,7 @@ export function createToolsPanel(
       syncRefineryRecipeRow()
       syncReplicatorKillswitchRow()
       syncDepthLodeOpacityRow()
+      syncSeedContextRow()
       return
     }
     setPressed(tool)
@@ -1236,6 +1332,7 @@ export function createToolsPanel(
       setSelectedTool('pick', { skipBeforeToolChange: true })
     }
     syncSelectedToolCostLine()
+    syncToolFilterRow()
     onAfterRefreshToolCosts?.()
   }
 
@@ -1254,6 +1351,31 @@ export function createToolsPanel(
         const slot = getLaserSatelliteRow()[kind]
         openSatDecommissionModal(kind, DEPLOY_LABEL[kind], slot.satelliteCount)
       })
+    }
+  }
+
+  let activeFilter: ToolFilterId = 'all'
+
+  function toolMatchesActiveFilter(toolId: PlayerTool): boolean {
+    if (activeFilter === 'all') return true
+    const meta = buttonCategories.get(toolId)
+    if (!meta) return true
+    return meta.category === activeFilter
+  }
+
+  function syncToolFilterRow(): void {
+    for (const [toolId, btn] of buttons) {
+      if (btn.disabled && btn.hidden) continue
+      const byFilter = toolMatchesActiveFilter(toolId)
+      // Do not override hidden state that comes from unlock logic; only further hide based on filter.
+      if (!byFilter) {
+        btn.hidden = true
+      } else {
+        // Only show if not already hidden due to unlock rules.
+        if (!isToolHidden(toolId)) {
+          btn.hidden = false
+        }
+      }
     }
   }
 
@@ -1322,12 +1444,47 @@ export function createToolsPanel(
     if (def.id === initialTool) btn.classList.add('tools-tool-active')
     btn.addEventListener('click', () => setPressed(def.id))
     buttons.set(def.id, btn)
+    buttonCategories.set(def.id, {
+      button: btn,
+      category: TOOL_CATEGORY[def.id],
+    })
     row.appendChild(btn)
+  }
+
+  const filterRow = document.createElement('div')
+  filterRow.className = 'tools-filter-row'
+  filterRow.setAttribute('role', 'toolbar')
+
+  const filterButtons = new Map<ToolFilterId, HTMLButtonElement>()
+
+  function syncActiveFilterUi(): void {
+    for (const [id, btn] of filterButtons) {
+      const on = id === activeFilter
+      btn.classList.toggle('tools-filter-btn-active', on)
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false')
+    }
+    syncToolFilterRow()
+  }
+
+  for (const def of TOOL_FILTERS) {
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'tools-filter-btn'
+    btn.textContent = def.label
+    btn.setAttribute('data-filter-id', def.id)
+    btn.setAttribute('aria-pressed', def.id === activeFilter ? 'true' : 'false')
+    btn.addEventListener('click', () => {
+      if (activeFilter === def.id) return
+      activeFilter = def.id
+      syncActiveFilterUi()
+    })
+    filterButtons.set(def.id, btn)
+    filterRow.appendChild(btn)
   }
 
   const toolsBand = document.createElement('div')
   toolsBand.className = 'tools-dock-tools-band'
-  toolsBand.append(row)
+  toolsBand.append(row, filterRow)
 
   const contextCol = document.createElement('div')
   contextCol.className = 'tools-dock-context-col'
@@ -1339,6 +1496,9 @@ export function createToolsPanel(
   }
   if (replicatorContextRow) {
     contextCol.append(replicatorContextRow)
+  }
+  if (seedContextRow) {
+    contextCol.append(seedContextRow)
   }
   if (contextCol.childNodes.length > 0) {
     toolsBand.append(contextCol)
@@ -1386,6 +1546,7 @@ export function createToolsPanel(
   container.appendChild(wrap)
 
   refreshToolCosts()
+  syncActiveFilterUi()
 
   return {
     getSelectedTool: () => selected,

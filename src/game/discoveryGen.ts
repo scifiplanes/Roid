@@ -52,6 +52,13 @@ function u32ToUnit(h: number): number {
   return (h >>> 0) / 0x1_0000_0000
 }
 
+function mapDiscoverySiteDensitySliderToInternal(raw: number): number {
+  const clamped = Math.min(1, Math.max(0, raw))
+  const curved = clamped * clamped
+  const scaled = curved * 0.01
+  return scaled
+}
+
 /**
  * Deterministic: fraction of voxels that are discovery sites (scan hint + claim eligibility).
  * `densityScale` (default 1) comes from `discoveryDensityScale(profile)` — spectral/regime prior on top of balance.
@@ -62,7 +69,8 @@ export function isDiscoverySite(
   balance: GameBalance,
   densityScale = 1,
 ): boolean {
-  const d = Math.min(1, Math.max(0, balance.discoverySiteDensity * densityScale))
+  const base = mapDiscoverySiteDensitySliderToInternal(balance.discoverySiteDensity)
+  const d = Math.min(1, Math.max(0, base * densityScale))
   if (d <= 0) return false
   let h = mixU32(asteroidSeed, pos.x, pos.y, pos.z)
   h = mixU32(h, 0x53495445, 0x44495343, 0x544553)

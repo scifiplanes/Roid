@@ -384,11 +384,6 @@ export function blendBulkRockHintOntoBase(base: Color, bulkHint: Color, t: numbe
 }
 
 /**
- * HSL-first bulk hint: circular mean hue, weighted semantic saturation, dominant-root nudge,
- * then acid/gray saturation envelope (display-only jitter on fractions). Darkens slightly toward
- * higher composite bulk density (g/cm³).
- */
-/**
  * Compact key for caches (e.g. dross particles) that only depend on bulk-hint tint fields from
  * {@link compositionToBulkRockHintColor}.
  */
@@ -396,13 +391,12 @@ export function scanVisualizationBulkHintKeyForDross(debug: ScanVisualizationDeb
   return `${debug.baseRockBulkHintLerp}|${debug.baseRockBulkHintSaturation}|${debug.baseRockBulkHintLightness}|${debug.baseRockDensityShade}`
 }
 
-export function compositionToBulkRockHintColor(
-  cell: VoxelCell,
-  out: Color,
+function bulkRockHintFromJitteredComposition(
+  comp: Record<RootResourceId, number>,
+  pos: VoxelPos,
   debug: ScanVisualizationDebug,
+  out: Color,
 ): Color {
-  const comp0 = normalizeRoots(cell.bulkComposition ?? cell.processedMatterRootComposition)
-  const comp = applyBulkRockHintDisplayJitter(comp0, cell.pos)
   const n = ROOT_RESOURCE_IDS.length
   let sx = 0
   let sy = 0
@@ -434,17 +428,48 @@ export function compositionToBulkRockHintColor(
     _hslBulkRock.s += (ds - _hslBulkRock.s) * BULK_HINT_DOMINANT_LERP
     _hslBulkRock.l += (L0 - _hslBulkRock.l) * BULK_HINT_DOMINANT_LERP * 0.28
   }
-  const envelope = saturationEnvelope01(comp, cell.pos)
+  const envelope = saturationEnvelope01(comp, pos)
   _hslBulkRock.s *= envelope
   if (envelope > 1e-5) {
     _hslBulkRock.l = Math.min(1, _hslBulkRock.l + BULK_ACID_LIGHTNESS_BUMP * envelope * envelope)
   }
   out.setHSL(_hslBulkRock.h, Math.min(1, Math.max(0, _hslBulkRock.s)), _hslBulkRock.l)
-  const rho = compositeDensityMidpointGcm3(cell.bulkComposition ?? cell.processedMatterRootComposition)
+  const rho = compositeDensityMidpointGcm3(comp)
   const t = Math.min(1, Math.max(0, (rho - 1.2) / (8.0 - 1.2)))
   const shade = 1 - debug.baseRockDensityShade * t
   out.multiplyScalar(Math.max(0.75, Math.min(1.05, shade)))
   return out
+}
+
+/**
+ * HSL-first bulk hint: circular mean hue, weighted semantic saturation, dominant-root nudge,
+ * then acid/gray saturation envelope (display-only jitter on fractions). Darkens slightly toward
+ * higher composite bulk density (g/cm³).
+ */
+export function compositionToBulkRockHintColor(
+  cell: VoxelCell,
+  out: Color,
+  debug: ScanVisualizationDebug,
+): Color {
+  const bulk = cell.bulkComposition ?? cell.processedMatterRootComposition
+  const comp0 = normalizeRoots(bulk)
+  const comp = applyBulkRockHintDisplayJitter(comp0, cell.pos)
+  return bulkRockHintFromJitteredComposition(comp, cell.pos, debug, out)
+}
+
+/**
+ * Bulk-rock hint color from an already-aggregated bulk composition record. Uses the same semantics
+ * as {@link compositionToBulkRockHintColor} but does not depend on a full `VoxelCell`.
+ */
+export function bulkCompositionToRockHintColor(
+  bulk: Record<RootResourceId, number>,
+  pos: VoxelPos,
+  out: Color,
+  debug: ScanVisualizationDebug,
+): Color {
+  const comp0 = normalizeRoots(bulk)
+  const comp = applyBulkRockHintDisplayJitter(comp0, pos)
+  return bulkRockHintFromJitteredComposition(comp, pos, debug, out)
 }
 
 /**

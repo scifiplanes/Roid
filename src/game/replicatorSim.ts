@@ -3,7 +3,13 @@ import type { VoxelCell } from './voxelState'
 import { compositionToYields } from './compositionYields'
 import { gameBalance } from './gameBalance'
 import { addYieldsToCellStore } from './localStores'
-import { defaultUniformRootComposition, type ResourceId, RESOURCE_IDS_ORDERED } from './resources'
+import {
+  defaultUniformRootComposition,
+  type ResourceId,
+  RESOURCE_IDS_ORDERED,
+  addResourceYields,
+} from './resources'
+import type { SeedRuntimeState } from './voxelState'
 import { clearDepthRevealState, clearSurfaceScanTint } from './scanVisualization'
 
 /** Wall-clock ms between each HP lost while a replicator eats rock (before per-cell jitter). */
@@ -45,8 +51,10 @@ export function posKey(p: VoxelPos): string {
   return `${p.x},${p.y},${p.z}`
 }
 
-export function buildPosIndex(cells: VoxelCell[]): Map<string, VoxelCell> {
-  const m = new Map<string, VoxelCell>()
+export type ReplicatorNeighborIndex = Map<string, VoxelCell>
+
+export function buildPosIndex(cells: VoxelCell[]): ReplicatorNeighborIndex {
+  const m: ReplicatorNeighborIndex = new Map()
   for (const c of cells) {
     m.set(posKey(c.pos), c)
   }
@@ -80,6 +88,79 @@ function applyPassiveIncomePerCell(dtSec: number, cell: VoxelCell): boolean {
   return changed
 }
 
+function stepSeedRuntime(dtSec: number, cell: VoxelCell): boolean {
+  const seed: SeedRuntimeState | undefined = cell.seedRuntime
+  if (!seed) return false
+  if (seed.lifetimeRemainingSec <= 0 || dtSec <= 0) return false
+  seed.lifetimeRemainingSec = Math.max(0, seed.lifetimeRemainingSec - dtSec)
+  if (seed.lifetimeRemainingSec <= 0) return false
+  if (!cell.storedResources) cell.storedResources = {}
+  let changed = false
+
+  // New per-slot program: honor pause/die/recipe slots when present.
+  if (Array.isArray(seed.slots) && seed.slots.length > 0) {
+    if (seed.currentSlotIndex === undefined || seed.currentSlotIndex < 0) {
+      seed.currentSlotIndex = 0
+      const first = seed.slots[0]
+      seed.currentSlotRemainingSec =
+        typeof first.durationSec === 'number' && Number.isFinite(first.durationSec)
+          ? first.durationSec
+          : 0
+    }
+
+    let remainingDt = dtSec
+
+    while (remainingDt > 0 && seed.currentSlotIndex! < seed.slots.length && seed.lifetimeRemainingSec > 0) {
+      const slot = seed.slots[seed.currentSlotIndex!]!
+      const slotRemaining =
+        typeof seed.currentSlotRemainingSec === 'number' && Number.isFinite(seed.currentSlotRemainingSec)
+          ? seed.currentSlotRemainingSec
+          : Math.max(0, slot.durationSec)
+
+      if (slotRemaining > remainingDt) {
+        seed.currentSlotRemainingSec = slotRemaining - remainingDt
+        remainingDt = 0
+        break
+      }
+
+      remainingDt -= slotRemaining
+      seed.currentSlotRemainingSec = 0
+
+      if (slot.kind === 'die') {
+        seed.lifetimeRemainingSec = 0
+        break
+      }
+
+      seed.currentSlotIndex! += 1
+      if (seed.currentSlotIndex! >= seed.slots.length) {
+        break
+      }
+      const next = seed.slots[seed.currentSlotIndex!]!
+      seed.currentSlotRemainingSec =
+        typeof next.durationSec === 'number' && Number.isFinite(next.durationSec)
+          ? next.durationSec
+          : 0
+    }
+
+    if (seed.lifetimeRemainingSec > 0 && seed.currentSlotIndex !== undefined) {
+      const activeSlot = seed.slots[seed.currentSlotIndex]!
+      if (activeSlot.kind === 'recipe' && activeSlot.resourceId) {
+        addResourceYields(cell.storedResources, { [activeSlot.resourceId]: 1 })
+        changed = true
+      }
+    }
+
+    return changed
+  }
+
+  // Legacy behavior: flat recipe stack for seeds without slots.
+  for (const id of seed.activeRecipes) {
+    addResourceYields(cell.storedResources, { [id]: 1 })
+    changed = true
+  }
+  return changed
+}
+
 function canSpreadTo(cell: VoxelCell): boolean {
   if (
     cell.kind === 'replicator' ||
@@ -96,7 +177,7 @@ function canSpreadTo(cell: VoxelCell): boolean {
   return true
 }
 
-function spreadFromCell(origin: VoxelCell, index: Map<string, VoxelCell>): void {
+function spreadFromCell(origin: VoxelCell, index: ReplicatorNeighborIndex): void {
   const { x, y, z } = origin.pos
   for (const [dx, dy, dz] of NEIGHBOR_OFFSETS) {
     const key = posKey({ x: x + dx, y: y + dy, z: z + dz })
@@ -108,7 +189,7 @@ function spreadFromCell(origin: VoxelCell, index: Map<string, VoxelCell>): void 
   }
 }
 
-function finishEating(cell: VoxelCell, index: Map<string, VoxelCell>): void {
+function finishEating(cell: VoxelCell, index: ReplicatorNeighborIndex): void {
   const rockKind = cell.kind
   const bulk = cell.bulkComposition ?? defaultUniformRootComposition()
   addYieldsToCellStore(cell, compositionToYields(rockKind, bulk))
@@ -137,6 +218,11 @@ export interface StepReplicatorsOptions {
   onReplicatorRockHpConsumed?: (cell: VoxelCell) => void
   /** When true, replicator rock feeding and passive income into local stores are frozen. */
   replicatorPaused?: boolean
+  /**
+   * Optional shared neighbor index to avoid rebuilding a fresh map each call.
+   * Callers that already maintain a position→cell map can pass it here.
+   */
+  neighborIndex?: ReplicatorNeighborIndex
 }
 
 /**
@@ -154,28 +240,67 @@ export function stepReplicators(
     return { meshDirty: false, tallyChanged: false, replicatorConsumeTicks: 0 }
   }
 
-  const index = buildPosIndex(cells)
+  const dtSec = dtMs / 1000
+
+  const matureReplicators: VoxelCell[] = []
+  const eatingReplicators: VoxelCell[] = []
+
+  // First pass: identify active replicator cells once.
+  for (const cell of cells) {
+    if (cell.kind === 'replicator') {
+      matureReplicators.push(cell)
+    }
+    if (cell.replicatorEating && cell.kind !== 'replicator') {
+      eatingReplicators.push(cell)
+    }
+  }
+
+  // Fast path: no active or eating replicators → nothing to do this frame.
+  if (matureReplicators.length === 0 && eatingReplicators.length === 0) {
+    return { meshDirty: false, tallyChanged: false, replicatorConsumeTicks: 0 }
+  }
+
   let meshDirty = false
   let tallyChanged = false
   let replicatorConsumeTicks = 0
 
-  for (const cell of cells) {
-    if (applyPassiveIncomePerCell(dtMs / 1000, cell)) {
-      tallyChanged = true
+  // Passive income and seeds only depend on mature replicators.
+  if (dtSec > 0 && matureReplicators.length > 0) {
+    for (const cell of matureReplicators) {
+      if (applyPassiveIncomePerCell(dtSec, cell)) {
+        tallyChanged = true
+      }
+      if (stepSeedRuntime(dtSec, cell)) {
+        tallyChanged = true
+      }
     }
   }
 
-  for (const cell of cells) {
-    if (!cell.replicatorEating || cell.kind === 'replicator') continue
+  if (options?.replicatorPaused || eatingReplicators.length === 0) {
+    return { meshDirty, tallyChanged, replicatorConsumeTicks }
+  }
 
+  const index = options.neighborIndex ?? buildPosIndex(cells)
+
+  for (const cell of eatingReplicators) {
     ensureReplicatorFeedJitter(cell)
     const baseMs = cell.replicatorMsPerHp ?? REPLICATOR_MS_PER_HP
     const speed = gameBalance.replicatorFeedSpeedMult
     const msPerHp = baseMs / Math.max(0.01, speed)
 
     let acc = (cell.replicatorEatAccumulatorMs ?? 0) + dtMs
-    while (acc >= msPerHp && cell.hpRemaining > 0) {
-      acc -= msPerHp
+    if (acc < msPerHp || cell.hpRemaining <= 0) {
+      cell.replicatorEatAccumulatorMs = acc
+      continue
+    }
+
+    // Bulk tick math: compute how many whole HP steps fit this frame.
+    let ticks = Math.floor(acc / msPerHp)
+    if (ticks > cell.hpRemaining) ticks = cell.hpRemaining
+
+    acc -= ticks * msPerHp
+
+    for (let k = 0; k < ticks; k++) {
       cell.hpRemaining -= 1
       replicatorConsumeTicks += 1
       meshDirty = true
@@ -188,6 +313,7 @@ export function stepReplicators(
         break
       }
     }
+
     if (cell.replicatorEating) {
       cell.replicatorEatAccumulatorMs = acc
     }

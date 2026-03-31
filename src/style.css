@@ -8,6 +8,7 @@
 
 :root {
   --ui-font: PerfectDosVga, monospace;
+  /* Defaults mirror the Blue theme; concrete values are overridden by theme classes. */
   --nc-panel-bg: #0000aa;
   --nc-panel-bg-mid: #000092;
   --nc-panel-bg-deep: #000080;
@@ -29,6 +30,49 @@
   --tools-unaffordable-active-fg: #a3a3a3;
   --tools-unaffordable-active-border: #888888;
   --tools-unaffordable-active-muted: #8e8e8e;
+}
+
+/* UI color schemes (applied to the root app shell). */
+.theme-blue {
+  --nc-panel-bg: #0000aa;
+  --nc-panel-bg-mid: #000092;
+  --nc-panel-bg-deep: #000080;
+  --nc-fg: #aaaaaa;
+  --nc-fg-bright: #ffffff;
+  --nc-accent: #55ffff;
+  --nc-border: #00aaaa;
+  --nc-muted: #808080;
+  --nc-selected-bg: #5555ff;
+  --nc-selected-fg: #ffff55;
+}
+
+.theme-gray {
+  /* Neutral grayscale panels with warm/cool accents. */
+  --nc-panel-bg: #141414;
+  --nc-panel-bg-mid: #1e1e1e;
+  --nc-panel-bg-deep: #0c0c0c;
+  --nc-fg: #c0c0c0;
+  --nc-fg-bright: #ffffff;
+  /* Accents: deep blue primary, orange/yellow highlights. */
+  --nc-accent: #1f6fde; /* deep blue */
+  --nc-border: #3a3a3a;
+  --nc-muted: #8a8a8a;
+  --nc-selected-bg: #e28a1f; /* orange */
+  --nc-selected-fg: #fff6c0; /* warm yellow-ivory */
+}
+
+.theme-orange {
+  /* Martian red/orange palette with ivory text and deep blue accents. */
+  --nc-panel-bg: #3a1206;
+  --nc-panel-bg-mid: #4a1a0a;
+  --nc-panel-bg-deep: #260a04;
+  --nc-fg: #f4e6cf; /* ivory */
+  --nc-fg-bright: #fff9e8;
+  --nc-accent: #2350a6; /* deep blue accent */
+  --nc-border: #b64a24; /* burnt orange border */
+  --nc-muted: #b8997a;
+  --nc-selected-bg: #d24b1a; /* bright Martian orange-red */
+  --nc-selected-fg: #fff9e8;
 }
 
 * {
@@ -806,6 +850,39 @@ body {
   accent-color: var(--nc-accent);
 }
 
+.settings-color-schemes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.settings-color-scheme-btn {
+  min-width: 0;
+  padding: 4px 8px;
+  border-radius: 0;
+  border: 1px solid var(--nc-border);
+  background: var(--nc-panel-bg-deep);
+  color: var(--nc-fg);
+  font-family: var(--ui-font);
+  font-size: 12px;
+  cursor: pointer;
+  box-shadow:
+    inset 1px 1px 0 var(--nc-inset-light),
+    inset -1px -1px 0 var(--nc-inset-dark);
+}
+
+.settings-color-scheme-btn:hover {
+  border-color: var(--nc-accent);
+  color: var(--nc-fg-bright);
+  background: var(--nc-panel-bg-mid);
+}
+
+.settings-color-scheme-btn--active {
+  border-color: var(--nc-fg-bright);
+  background: var(--nc-selected-bg);
+  color: var(--nc-selected-fg);
+}
+
 .settings-save-status {
   flex: 1 1 100%;
   font-size: 12px;
@@ -908,6 +985,39 @@ body {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+}
+
+.tools-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.tools-filter-btn {
+  padding: 3px 8px;
+  border-radius: 0;
+  border: 1px solid var(--nc-border);
+  background: var(--nc-panel-bg-deep);
+  color: var(--nc-muted);
+  font-size: 10px;
+  font-family: var(--ui-font);
+  cursor: pointer;
+  box-shadow:
+    inset 1px 1px 0 var(--nc-inset-light),
+    inset -1px -1px 0 var(--nc-inset-dark);
+}
+
+.tools-filter-btn:hover {
+  border-color: var(--nc-accent);
+  color: var(--nc-fg-bright);
+  background: var(--nc-panel-bg-mid);
+}
+
+.tools-filter-btn-active {
+  border-color: var(--nc-fg-bright);
+  background: var(--nc-selected-bg);
+  color: var(--nc-selected-fg);
 }
 
 /* `[hidden]` alone is overridden by `.tools-tool { display: flex }` (author vs UA); force hide. */

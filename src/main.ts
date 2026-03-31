@@ -101,6 +101,7 @@ import {
 } from './game/discoveryGen'
 import { loadDiscoveryAutoResolve, saveDiscoveryAutoResolve } from './game/discoveryUiPrefs'
 import {
+  aggregateDrossBulkComposition,
   createDrossState,
   resetDrossState,
   spawnDrossFromRemovedCell,
@@ -175,6 +176,7 @@ import {
 } from './game/masterOutputChain'
 import { createOverlaysMenu } from './ui/overlaysMenu'
 import { createSettingsMenu } from './ui/settingsMenu'
+import { COLOR_SCHEME_OPTIONS, DEFAULT_COLOR_SCHEME, getColorSchemeClass, type ColorSchemeId } from './ui/colorScheme'
 import { updateDrossFog } from './scene/drossFog'
 import { createDrossParticlesGroup } from './scene/drossParticles'
 import { createSatelliteDotsGroup } from './scene/satelliteDots'
@@ -190,18 +192,25 @@ import {
   type SatelliteInspectKind,
 } from './ui/satelliteInspectModal'
 import { createRefineryRecipesModal } from './ui/refineryRecipesModal'
+import { createSeedAssemblyModal, type SeedAssemblySelection } from './ui/seedAssemblyModal'
 import { createToolsPanel, type LaserSatelliteRowSnapshot, type PlayerTool } from './ui/toolsPanel'
 import { stepDepthReveal } from './game/depthScannerSim'
 import { formatInspectHudLines } from './game/inspectVoxel'
 import {
+  bulkCompositionToRockHintColor,
   clearDepthRevealState,
   clearSurfaceScanTint,
   compositionToScanColor,
   formatScanRefinedPreviewLine,
+  getActiveScanVisualizationDebug,
   setScanVisualizationDebugGetter,
 } from './game/scanVisualization'
 import { createDefaultScanVisualizationDebug } from './game/scanVisualizationDebug'
-import { resetReplicatorSimAccumulators, stepReplicators } from './game/replicatorSim'
+import {
+  resetReplicatorSimAccumulators,
+  stepReplicators,
+  type ReplicatorNeighborIndex,
+} from './game/replicatorSim'
 import { stepHubs } from './game/hubSim'
 import { defaultRefineryRecipeSelection } from './game/refineryRecipeUnlock'
 import { stepRefineryProcessing } from './game/refineryProcessSim'
@@ -224,6 +233,19 @@ import {
   writeSunAnglesToLocalStorage,
   writeSunLightDebugToLocalStorage,
 } from './game/settingsClientPersist'
+import {
+  deleteSeedPreset,
+  getActiveSeedSelection,
+  getSeedPresetById,
+  getSeedPresets,
+  getSelectedSeedPresetId,
+  setActiveSeedSelection,
+  setSelectedSeedPresetId,
+  upsertSeedPreset,
+  type SeedSelection,
+} from './game/seedInventory'
+import { currentComputroniumTier } from './game/seedRecipes'
+import { SEED_DEFS } from './game/seedDefs'
 
 await autoLoadBundledDebugPreset()
 
@@ -416,20 +438,38 @@ let structureVoxelCountForMusic = 0
 let replicatorKillswitchEngaged = false
 
 let voxelPosToIndex: Map<string, number> | null = null
+let replicatorNeighborIndex: ReplicatorNeighborIndex | null = null
 function voxelPosKey(p: VoxelPos): string {
   return `${p.x},${p.y},${p.z}`
 }
 function invalidateVoxelPosIndexMap(): void {
   voxelPosToIndex = null
+  replicatorNeighborIndex = null
 }
 function getVoxelPosIndexMap(): Map<string, number> {
   if (!voxelPosToIndex) {
     voxelPosToIndex = new Map()
     for (let i = 0; i < voxelCells.length; i++) {
-      voxelPosToIndex.set(voxelPosKey(voxelCells[i].pos), i)
+      const cell = voxelCells[i]
+      voxelPosToIndex.set(voxelPosKey(cell.pos), i)
+      if (!replicatorNeighborIndex) {
+        replicatorNeighborIndex = new Map()
+      }
+      replicatorNeighborIndex.set(voxelPosKey(cell.pos), cell)
     }
   }
   return voxelPosToIndex
+}
+
+function getReplicatorNeighborIndex(): ReplicatorNeighborIndex {
+  if (!replicatorNeighborIndex) {
+    replicatorNeighborIndex = new Map()
+    for (let i = 0; i < voxelCells.length; i++) {
+      const cell = voxelCells[i]
+      replicatorNeighborIndex.set(voxelPosKey(cell.pos), cell)
+    }
+  }
+  return replicatorNeighborIndex
 }
 
 let asteroidBundle: AsteroidRenderBundle = buildAsteroidMesh(voxelCells, {
@@ -606,6 +646,19 @@ const overlayVizLoaded = loadOverlayVisualizationPrefs()
 let surfaceScanOverlayVisible = overlayVizLoaded.surfaceScanOverlayVisible
 let depthOverlayVisible = overlayVizLoaded.depthOverlayVisible
 
+let colorScheme: ColorSchemeId =
+  (settingsClientSnapshot as { colorScheme?: ColorSchemeId } | undefined)?.colorScheme ?? DEFAULT_COLOR_SCHEME
+
+function applyColorSchemeToApp(next: ColorSchemeId): void {
+  const classList = app.classList
+  for (const opt of COLOR_SCHEME_OPTIONS) {
+    classList.remove(getColorSchemeClass(opt.id))
+  }
+  classList.add(getColorSchemeClass(next))
+}
+
+applyColorSchemeToApp(colorScheme)
+
 function persistOverlayVisualizationPrefs(): void {
   saveOverlayVisualizationPrefs({ surfaceScanOverlayVisible, depthOverlayVisible })
   schedulePersistSettingsClient()
@@ -623,6 +676,7 @@ registerSettingsClientSnapshot(() => ({
   musicVolumeLinear,
   matterHudCollapsed,
   matterHudCompact,
+   colorScheme,
 }))
 /** Last scanner hit refined-material preview (HUD); cleared on regenerate. */
 let lastScanRefinedPreviewLine: string | null = null
@@ -815,6 +869,16 @@ function replaceAsteroidMesh(cells: VoxelCell[]): void {
 }
 
 let syncSunRotationSpeedUi: () => void = () => {}
+
+let currentSeedAssemblySelection: SeedAssemblySelection = (() => {
+  const sel: SeedSelection = getActiveSeedSelection()
+  return {
+    seedTypeId: sel.seedTypeId,
+    lifetimeSec: sel.lifetimeSec,
+    slots: sel.slots.map((s) => ({ ...s })),
+    recipeStack: sel.recipeStack.slice(),
+  }
+})()
 
 function generateNewAsteroidGeometry(): void {
   currentSeed = Math.floor(Math.random() * 0xffffffff) >>> 0
@@ -1214,6 +1278,12 @@ const { syncSunRotationSpeed, syncLightAngleSliders } = createSettingsMenu(app, 
     syncMatterHudCompactUi()
     schedulePersistSettingsClient()
   },
+  initialColorScheme: colorScheme,
+  onColorSchemeChange: (scheme) => {
+    colorScheme = scheme
+    applyColorSchemeToApp(colorScheme)
+    schedulePersistSettingsClient()
+  },
   onBalanceChange,
   asteroidMusicDebug,
   getMusicRootMidi: () => asteroidAmbientMusic.getEffectiveRootMidi(),
@@ -1289,6 +1359,28 @@ function refineryRecipeUiState(): RefineryRecipeUiState {
     activeComputronium: countActiveComputronium(voxelCells),
     debugUnlockAllRecipes: debugUnlockAllTools,
   }
+}
+
+function seedRecipeAvailabilityState(): SeedRecipeAvailabilityState {
+  return {
+    unlockPoints: computroniumUnlockPoints.current,
+    pointsPerStage: gameBalance.computroniumPointsPerStage,
+    debugUnlockAllSeedRecipes: debugUnlockAllTools,
+  }
+}
+
+function unlockedSeedIdsFromResearch(): SeedId[] {
+  if (debugUnlockAllTools) {
+    return Object.keys(SEED_DEFS) as SeedId[]
+  }
+  const pointsPerStage = gameBalance.computroniumPointsPerStage
+  const tier = currentComputroniumTier(computroniumUnlockPoints.current, pointsPerStage)
+  const out: SeedId[] = []
+  for (const id of Object.keys(SEED_DEFS) as SeedId[]) {
+    const def = SEED_DEFS[id]
+    if (def.requiredComputroniumTier <= tier) out.push(id)
+  }
+  return out.length > 0 ? out : (['basicSeed'] as SeedId[])
 }
 
 function clampRefinerySelection(): void {
@@ -1425,6 +1517,95 @@ const {
     invalidateRockTintCaches()
     reapplyAllRockColorsNoLaser()
   },
+  openSeedAssemblyModal: (() => {
+    let seedModal: ReturnType<typeof createSeedAssemblyModal> | null = null
+    return () => {
+      if (!seedModal) {
+        seedModal = createSeedAssemblyModal(app, {
+          getUnlockedSeedIds: unlockedSeedIdsFromResearch,
+          getSeedRecipeAvailabilityState: seedRecipeAvailabilityState,
+          getInitialSelection: (): SeedAssemblySelection => {
+            const sel: SeedSelection = getActiveSeedSelection()
+            currentSeedAssemblySelection = {
+              seedTypeId: sel.seedTypeId,
+              lifetimeSec: sel.lifetimeSec,
+              slots: sel.slots.map((s) => ({ ...s })),
+              recipeStack: sel.recipeStack.slice(),
+            }
+            return currentSeedAssemblySelection
+          },
+          onConfirm: (sel) => {
+            currentSeedAssemblySelection = {
+              seedTypeId: sel.seedTypeId,
+              lifetimeSec: sel.lifetimeSec,
+              slots: sel.slots.map((s) => ({ ...s })),
+              recipeStack: sel.recipeStack.slice(),
+            }
+            setActiveSeedSelection({
+              seedTypeId: sel.seedTypeId,
+              lifetimeSec: sel.lifetimeSec,
+              slots: sel.slots.map((s) => ({ ...s })),
+              recipeStack: sel.recipeStack.slice(),
+            })
+          },
+          getPresets: () =>
+            getSeedPresets().map((p) => ({
+              id: p.id,
+              name: p.name,
+              selection: {
+                seedTypeId: p.selection.seedTypeId,
+                lifetimeSec: p.selection.lifetimeSec,
+                slots: p.selection.slots.map((s) => ({ ...s })),
+                recipeStack: p.selection.recipeStack.slice(),
+              },
+            })),
+          getSelectedPresetId: () => getSelectedSeedPresetId(),
+          onSelectPreset: (id) => {
+            setSelectedSeedPresetId(id)
+            if (!id) return
+            const p = getSeedPresetById(id)
+            if (!p) return
+            const sel = p.selection
+            currentSeedAssemblySelection = {
+              seedTypeId: sel.seedTypeId,
+              lifetimeSec: sel.lifetimeSec,
+              recipeStack: sel.recipeStack.slice(),
+            }
+            setActiveSeedSelection({
+              seedTypeId: sel.seedTypeId,
+              lifetimeSec: sel.lifetimeSec,
+              recipeStack: sel.recipeStack.slice(),
+            })
+          },
+          onDeletePreset: (id) => {
+            deleteSeedPreset(id)
+          },
+          onSavePreset: ({ id, name, selection }) => {
+            const newId = upsertSeedPreset(id, name, {
+              seedTypeId: selection.seedTypeId,
+              lifetimeSec: selection.lifetimeSec,
+              slots: selection.slots.map((s) => ({ ...s })),
+              recipeStack: selection.recipeStack.slice(),
+            })
+            setSelectedSeedPresetId(newId)
+            setActiveSeedSelection({
+              seedTypeId: selection.seedTypeId,
+              lifetimeSec: selection.lifetimeSec,
+              slots: selection.slots.map((s) => ({ ...s })),
+              recipeStack: selection.recipeStack.slice(),
+            })
+            currentSeedAssemblySelection = {
+              seedTypeId: selection.seedTypeId,
+              lifetimeSec: selection.lifetimeSec,
+              slots: selection.slots.map((s) => ({ ...s })),
+              recipeStack: selection.recipeStack.slice(),
+            }
+          },
+        })
+      }
+      seedModal.show()
+    }
+  })(),
 })
 refreshToolCosts = refreshCosts
 setSelectedTool = setSelectedToolFromPanel
@@ -2145,13 +2326,78 @@ function tryPickAt(clientX: number, clientY: number): void {
   if (cell.hpRemaining > 0) return
 
   tryDiscoveryAt(cell.pos)
-
-  const bulk = cell.bulkComposition ?? defaultUniformRootComposition()
-  addResourceYields(resourceTallies, compositionToYields(cell.kind, bulk))
   spawnDrossFromRemovedCell(drossState, cell, gameBalance)
   voxelCells.splice(i, 1)
   setResourceHud()
   replaceAsteroidMesh(voxelCells)
+}
+
+function trySeedToolAt(clientX: number, clientY: number): void {
+  if (voxelCells.length === 0) return
+
+  const i = asteroidRaycastCellIndex(clientX, clientY)
+  if (i === null) return
+
+  const cell = voxelCells[i]
+
+  const activeSel: SeedSelection = getActiveSeedSelection()
+  const seedDef = SEED_DEFS[activeSel.seedTypeId]
+  const chosenLifetime = Math.min(
+    seedDef.maxLifetimeSec,
+    Math.max(seedDef.minLifetimeSec, activeSel.lifetimeSec ?? seedDef.lifetimeSec),
+  )
+
+  if (cell.kind === 'replicator') {
+    cell.seedRuntime = {
+      seedTypeId: activeSel.seedTypeId,
+      lifetimeTotalSec: chosenLifetime,
+      lifetimeRemainingSec: chosenLifetime,
+      activeRecipes: activeSel.recipeStack.slice(),
+      slots: activeSel.slots.map((s) => ({ ...s })),
+      currentSlotIndex: 0,
+      currentSlotRemainingSec:
+        activeSel.slots[0] && Number.isFinite(activeSel.slots[0]!.durationSec)
+          ? activeSel.slots[0]!.durationSec
+          : 0,
+    }
+    return
+  }
+
+  if (
+    cell.kind === 'reactor' ||
+    cell.kind === 'battery' ||
+    cell.kind === 'hub' ||
+    cell.kind === 'refinery' ||
+    cell.kind === 'depthScanner' ||
+    cell.kind === 'computronium' ||
+    cell.kind === 'processedMatter'
+  )
+    return
+
+  if (cell.replicatorActive || cell.replicatorEating) return
+
+  if (!tryPayResources(resourceTallies, getScaledReplicatorPlaceCost())) return
+
+  clearSurfaceScanTint(cell)
+  clearDepthRevealState(cell)
+  cell.replicatorActive = true
+  cell.replicatorEating = true
+  cell.replicatorEatAccumulatorMs = 0
+  cell.seedRuntime = {
+    seedTypeId: activeSel.seedTypeId,
+    lifetimeTotalSec: chosenLifetime,
+    lifetimeRemainingSec: chosenLifetime,
+    activeRecipes: activeSel.recipeStack.slice(),
+    slots: activeSel.slots.map((s) => ({ ...s })),
+    currentSlotIndex: 0,
+    currentSlotRemainingSec:
+      activeSel.slots[0] && Number.isFinite(activeSel.slots[0]!.durationSec)
+        ? activeSel.slots[0]!.durationSec
+        : 0,
+  }
+  replaceAsteroidMesh(voxelCells)
+  setResourceHud()
+  playReplicatorPlaceClick()
 }
 
 function tryPlaceReplicator(clientX: number, clientY: number): void {
@@ -2354,6 +2600,11 @@ canvas.addEventListener('pointerdown', (e) => {
   if (e.button !== 0) return
   pointerDown = { x: e.clientX, y: e.clientY }
   if (getSelectedTool() === 'hoover') {
+    // Only start hoovering when the pointer is over the asteroid; otherwise let orbit controls handle the drag.
+    const hitIdx = asteroidRaycastCellIndex(e.clientX, e.clientY)
+    if (hitIdx === null) {
+      return
+    }
     hooverPointerDown = true
     lastHooverClient = { x: e.clientX, y: e.clientY }
     controls.enabled = false
@@ -2501,6 +2752,8 @@ canvas.addEventListener('pointerup', (e) => {
     tryPickAt(e.clientX, e.clientY)
   } else if (tool === 'replicator') {
     tryPlaceReplicator(e.clientX, e.clientY)
+  } else if (tool === 'seed') {
+    trySeedToolAt(e.clientX, e.clientY)
   } else if (tool === 'reactor') {
     tryConvertStructure(e.clientX, e.clientY, 'reactor')
   } else if (tool === 'battery') {
@@ -2570,10 +2823,17 @@ function tick(): void {
 
   stepExplosiveCharges(now)
 
+  perfMark('roid-replicator-transform-start')
   const { meshDirty: transformMeshDirty, completedTransforms } = stepReplicatorTransforms(
     dtMs,
     voxelCells,
     { paused: replicatorKillswitchEngaged },
+  )
+  perfMark('roid-replicator-transform-end')
+  perfMeasure(
+    'roid-replicator-transform',
+    'roid-replicator-transform-start',
+    'roid-replicator-transform-end',
   )
   if (completedTransforms > 0) {
     playReplicatorPlaceClick()
@@ -2581,18 +2841,22 @@ function tick(): void {
     syncOverlaysDepthRow()
   }
 
-  const { meshDirty, tallyChanged: replicatorTallyChanged, replicatorConsumeTicks } = stepReplicators(
-    dtMs,
-    voxelCells,
-    {
-      replicatorPaused: replicatorKillswitchEngaged,
-      onReplicatorRockHpConsumed(cell) {
-        tryDiscoveryAt(cell.pos)
-        if (Math.random() >= gameBalance.drossReplicatorSpawnChance) return
-        spawnDrossReplicatorScrap(drossState, cell, gameBalance)
-      },
+  perfMark('roid-replicator-feed-start')
+  const {
+    meshDirty,
+    tallyChanged: replicatorTallyChanged,
+    replicatorConsumeTicks,
+  } = stepReplicators(dtMs, voxelCells, {
+    replicatorPaused: replicatorKillswitchEngaged,
+    neighborIndex: getReplicatorNeighborIndex(),
+    onReplicatorRockHpConsumed(cell) {
+      tryDiscoveryAt(cell.pos)
+      if (Math.random() >= gameBalance.drossReplicatorSpawnChance) return
+      spawnDrossReplicatorScrap(drossState, cell, gameBalance)
     },
-  )
+  })
+  perfMark('roid-replicator-feed-end')
+  perfMeasure('roid-replicator-feed', 'roid-replicator-feed-start', 'roid-replicator-feed-end')
   if (replicatorConsumeTicks > 0) {
     playReplicatorConsumeClicks(replicatorConsumeTicks)
   }
@@ -2842,7 +3106,20 @@ function tick(): void {
     orbitSpan > 0
       ? Math.min(1, Math.max(0, (orbitDist - controls.minDistance) / orbitSpan))
       : 0
-  updateDrossFog(scene, totalDrossMass(drossState), gameBalance, zoomBlacken01)
+
+  const totalDross = totalDrossMass(drossState)
+  let drossFogTint: Color | null = null
+  if (totalDross > 0) {
+    const bulk = aggregateDrossBulkComposition(drossState)
+    if (bulk) {
+      const debug = getActiveScanVisualizationDebug()
+      const pos: VoxelPos = { x: 0, y: 0, z: 0 }
+      const out = new Color()
+      drossFogTint = bulkCompositionToRockHintColor(bulk, pos, out, debug)
+    }
+  }
+
+  updateDrossFog(scene, totalDross, gameBalance, zoomBlacken01, drossFogTint)
   applyFrameShake(camera)
   updateDiscoveryPendingAnchors()
   if (discoveryModal.isOpen()) {

@@ -229,3 +229,31 @@ export function totalDrossMass(state: DrossState): number {
   for (const c of state.clusters) s += c.mass
   return s
 }
+
+/**
+ * Mass-weighted aggregate bulk composition over all current dross clusters.
+ * Returns a normalized root-fraction record, or `null` when there is no
+ * positive-mass dross.
+ */
+export function aggregateDrossBulkComposition(
+  state: DrossState,
+): Record<RootResourceId, number> | null {
+  if (state.clusters.length === 0) return null
+  const acc = defaultUniformRootComposition()
+  for (const r of ROOT_RESOURCE_IDS) acc[r] = 0
+  let totalM = 0
+  for (const c of state.clusters) {
+    const m = c.mass
+    if (m <= 0) continue
+    totalM += m
+    const bulk = c.bulk
+    for (const r of ROOT_RESOURCE_IDS) {
+      acc[r] += (bulk[r] ?? 0) * m
+    }
+  }
+  if (totalM <= 1e-9) return null
+  for (const r of ROOT_RESOURCE_IDS) {
+    acc[r] = acc[r] / totalM
+  }
+  return acc
+}

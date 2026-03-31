@@ -31,12 +31,21 @@ describe('deriveAsteroidProfile', () => {
 })
 
 describe('discoveryDensityScale', () => {
-  it('clamps to [0.85, 1.15]', () => {
+  it('clamps to widened band and varies per seed', () => {
+    let min = Number.POSITIVE_INFINITY
+    let max = 0
+    const seen = new Set<number>()
     for (let s = 0; s < 200; s++) {
-      const d = discoveryDensityScale(deriveAsteroidProfile(s))
-      expect(d).toBeGreaterThanOrEqual(0.85)
-      expect(d).toBeLessThanOrEqual(1.15)
+      const profile = deriveAsteroidProfile(s)
+      const d = discoveryDensityScale(profile)
+      expect(d).toBeGreaterThanOrEqual(0.45)
+      expect(d).toBeLessThanOrEqual(1.9)
+      min = Math.min(min, d)
+      max = Math.max(max, d)
+      seen.add(Number(d.toFixed(4)))
     }
+    expect(max / min).toBeGreaterThan(1.4)
+    expect(seen.size).toBeGreaterThan(10)
   })
 })
 

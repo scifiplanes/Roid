@@ -159,6 +159,7 @@ const SALT_DIAL3 = 4
 const SALT_DIAL4 = 5
 const SALT_DIAL5 = 6
 const SALT_DIAL6 = 7
+const SALT_DISCOVERY_DENSITY = 0x44495343
 
 function spectralRootBias(cls: SpectralClass): RootMultiplierMap {
   const o = unitRootBias()
@@ -439,7 +440,7 @@ function modulateShapeForSpectralRegime(
 
 /**
  * Scales Debug → balance discovery site density per asteroid (spectral × regime priors).
- * Clamped to [0.85, 1.15] relative to the balance slider.
+ * Includes a per-asteroid deterministic random factor; clamped to a wider band relative to the balance slider.
  */
 export function discoveryDensityScale(p: AsteroidGenProfile): number {
   let s = 1
@@ -459,7 +460,14 @@ export function discoveryDensityScale(p: AsteroidGenProfile): number {
   }
   if (p.spectralClass === 'X' || p.spectralClass === 'M') s *= 1.05
   if (p.spectralClass === 'C') s *= 0.97
-  return Math.min(1.15, Math.max(0.85, s))
+
+  const u = float01FromSeed(p.seed, SALT_DISCOVERY_DENSITY)
+  const centered = (u - 0.5) * 2
+  const spread = 0.7
+  const jitter = 1 + centered * spread
+  s *= jitter
+
+  return Math.min(1.9, Math.max(0.45, s))
 }
 
 function deriveRockVisuals(cls: SpectralClass, regime: AsteroidRegime, dials: AsteroidAnalogDials): {

@@ -229,6 +229,11 @@ export interface GameBalance {
   drossFogColorR: number
   drossFogColorG: number
   drossFogColorB: number
+  /**
+   * Blend between debug base dross fog color and composition-driven dross tint.
+   * 0 = base color only; 1 = fully composition-informed.
+   */
+  drossFogTintLerp01: number
 
   /**
    * Legacy persisted field; discovery offers no longer use a second probability roll (site density only).
@@ -321,12 +326,12 @@ export const defaultGameBalance: GameBalance = {
   computroniumEnergyDrainPerSecPerCell: 0.42,
   computroniumUnlockPointsPerSecPerCell: 0.16,
   computroniumPointsPerStage: 48,
-  drossMassPerRemoval: 0.42,
+  drossMassPerRemoval: 0.3,
   drossMassMult: 1,
   drossCollectionRatePerSatellitePerSec: 0.085,
   drossCollectionMult: 1,
-  drossHooverRadiusVox: 2,
-  drossHooverSatelliteEquiv: 6,
+  drossHooverRadiusVox: 3,
+  drossHooverSatelliteEquiv: 10,
   drossReplicatorSpawnChance: 0.1,
   drossMassPerReplicatorHp: 0.04,
   drossFogDensityPerMass: 0.0004,
@@ -335,8 +340,9 @@ export const defaultGameBalance: GameBalance = {
   drossFogColorR: 0.78,
   drossFogColorG: 0.82,
   drossFogColorB: 0.9,
+  drossFogTintLerp01: 1,
   discoveryChanceOnRockDepthScanner: 0.03,
-  discoverySiteDensity: 0.003,
+  discoverySiteDensity: 0.02,
   discoveryWeightWindfall: 1,
   discoveryWeightDrain: 0.45,
   discoveryWeightLore: 0.65,
@@ -488,6 +494,7 @@ export const GAME_BALANCE_KEYS: readonly (keyof GameBalance)[] = [
   'drossFogColorR',
   'drossFogColorG',
   'drossFogColorB',
+  'drossFogTintLerp01',
   'discoveryChanceOnRockDepthScanner',
   'discoverySiteDensity',
   'discoveryWeightWindfall',
@@ -630,6 +637,9 @@ export function clampBalanceField(key: keyof GameBalance, v: number): number {
     return Math.min(0.12, Math.max(0, v))
   }
   if (key === 'drossFogColorR' || key === 'drossFogColorG' || key === 'drossFogColorB') {
+    return Math.min(1, Math.max(0, v))
+  }
+  if (key === 'drossFogTintLerp01') {
     return Math.min(1, Math.max(0, v))
   }
   if (key === 'replicatorTransformDurationSec') {

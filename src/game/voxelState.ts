@@ -6,6 +6,8 @@ import { getKindDef } from './voxelKinds'
 import { computeBulkComposition, latticeHash } from './compositionYields'
 import { applyRareLodeEnrichment } from './rareLodeField'
 import type { ResourceId, RootResourceId } from './resources'
+import type { SeedId } from './seedDefs'
+import type { SeedRecipeSlot } from './seedInventory'
 
 /** Mature replicator → voxel conversion target (paid; completes after delay). */
 export type ReplicatorTransformTarget =
@@ -36,6 +38,29 @@ export function hpForVoxelKind(kind: VoxelKind): number {
   return initialRockHp(kind, def.maxDurability)
 }
 
+export interface SeedRuntimeState {
+  /** Seed definition id; drives max stack depth and lifetime bounds. */
+  seedTypeId: SeedId
+  /**
+   * Total chosen lifetime for this Seed stack instance (seconds of active operation),
+   * clamped to the `[minLifetimeSec, maxLifetimeSec]` range for the seed type at placement time.
+   */
+  lifetimeTotalSec: number
+  /** Remaining active lifetime in seconds; when ≤ 0, seed-driven behavior stops. */
+  lifetimeRemainingSec: number
+  /**
+   * Ordered recipe stack entries for this replicator (legacy flat view).
+   * Kept for back-compat; primary program data lives in `slots`.
+   */
+  activeRecipes: ResourceId[]
+  /** Full Seed program for this replicator, including pause/die slots and per-slot durations. */
+  slots?: SeedRecipeSlot[]
+  /** Current slot index into `slots` while running. */
+  currentSlotIndex?: number
+  /** Remaining time in seconds for the current slot before advancing. */
+  currentSlotRemainingSec?: number
+}
+
 export interface VoxelCell {
   pos: VoxelPos
   kind: VoxelKind
@@ -59,6 +84,8 @@ export interface VoxelCell {
   storedResources?: Partial<Record<ResourceId, number>>
   /** Fractional passive income accumulator for this mature replicator. */
   passiveRemainder?: Partial<Record<ResourceId, number>>
+  /** Optional Seed programming bound to this replicator voxel. */
+  seedRuntime?: SeedRuntimeState
   /** Unrefined mass units for `processedMatter` voxels (mining laser). */
   processedMatterUnits?: number
   /** Normalized root fractions for ablated rock (Hub credits roots from PM using this). */
