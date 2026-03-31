@@ -54,6 +54,15 @@ export interface GameBalance {
    * Multiplier on max refinery energy draw per second for tally processing, scaled by **active** refinery count.
    */
   refineryMaxProcessEnergySpendMult: number
+  /**
+   * Softlock guard: max additional `surfaceIces` units a single active refinery may generate per second
+   * when processing any root (independent of the main recipe yields).
+   */
+  refineryIceBackfillPerSecPerRefinery: number
+  /**
+   * Global hard cap on extra `surfaceIces` units generated per second from refinery backfill across all refineries.
+   */
+  refineryIceBackfillMaxPerSecGlobal: number
   /** Mining laser zap loudness (master gain). */
   laserZapVolumeMult: number
   /** Tremolo / amplitude-LFO rate. */
@@ -190,6 +199,16 @@ export interface GameBalance {
   drossCollectionRatePerSatellitePerSec: number
   /** Multiplier on dross collection rate. */
   drossCollectionMult: number
+  /**
+   * Manual Hoover tool: voxel-space radius around the hit voxel (Euclidean on `VoxelPos`)
+   * for dross drain while held.
+   */
+  drossHooverRadiusVox: number
+  /**
+   * Manual Hoover tool: equivalent dross-collector satellite count while held, before
+   * `drossCollectionMult` is applied (QoL baseline, no unlock gate).
+   */
+  drossHooverSatelliteEquiv: number
   /** Per HP tick while a replicator eats rock: probability [0,1] of spawning one scrap blob (independent roll). */
   drossReplicatorSpawnChance: number
   /** Voxel-equivalent dross mass when a replicator scrap roll succeeds (before `drossMassMult`). */
@@ -199,6 +218,11 @@ export interface GameBalance {
    * 0 = no dross fog.
    */
   drossFogDensityPerMass: number
+  /**
+   * Debug multiplier on dross fog density; scales `drossFogDensityPerMass` without changing
+   * the baseline balance JSON. 1 = default density.
+   */
+  drossFogDensityMult: number
   /** Cap on `FogExp2` density (Three.js uses factor ≈ 1 − exp(−density² × depth²)). 0 = no fog. */
   drossFogDensityMax: number
   /** Dross fog tint, sRGB 0–1 each. Light values read as bright haze (mix toward fog color, like lighten-style dust). */
@@ -245,6 +269,8 @@ export const defaultGameBalance: GameBalance = {
   hubMaxEnergySpendMult: 1,
   refineryProcessMult: 1,
   refineryMaxProcessEnergySpendMult: 1,
+  refineryIceBackfillPerSecPerRefinery: 0.015,
+  refineryIceBackfillMaxPerSecGlobal: 0.06,
   laserZapVolumeMult: 1,
   laserZapLfoHzMult: 1,
   laserZapLfoDepthMult: 1,
@@ -299,9 +325,12 @@ export const defaultGameBalance: GameBalance = {
   drossMassMult: 1,
   drossCollectionRatePerSatellitePerSec: 0.085,
   drossCollectionMult: 1,
+  drossHooverRadiusVox: 2,
+  drossHooverSatelliteEquiv: 6,
   drossReplicatorSpawnChance: 0.1,
   drossMassPerReplicatorHp: 0.04,
   drossFogDensityPerMass: 0.0004,
+  drossFogDensityMult: 1,
   drossFogDensityMax: 0.05,
   drossFogColorR: 0.78,
   drossFogColorG: 0.82,
@@ -394,6 +423,8 @@ export const GAME_BALANCE_KEYS: readonly (keyof GameBalance)[] = [
   'hubMaxEnergySpendMult',
   'refineryProcessMult',
   'refineryMaxProcessEnergySpendMult',
+  'refineryIceBackfillPerSecPerRefinery',
+  'refineryIceBackfillMaxPerSecGlobal',
   'laserZapVolumeMult',
   'laserZapLfoHzMult',
   'laserZapLfoDepthMult',
@@ -447,9 +478,12 @@ export const GAME_BALANCE_KEYS: readonly (keyof GameBalance)[] = [
   'drossMassMult',
   'drossCollectionRatePerSatellitePerSec',
   'drossCollectionMult',
+  'drossHooverRadiusVox',
+  'drossHooverSatelliteEquiv',
   'drossReplicatorSpawnChance',
   'drossMassPerReplicatorHp',
   'drossFogDensityPerMass',
+  'drossFogDensityMult',
   'drossFogDensityMax',
   'drossFogColorR',
   'drossFogColorG',
@@ -572,6 +606,14 @@ export function clampBalanceField(key: keyof GameBalance, v: number): number {
   if (key === 'drossMassMult' || key === 'drossCollectionMult') {
     return Math.min(MULT_MAX, Math.max(MULT_MIN, v))
   }
+  if (key === 'drossHooverRadiusVox') {
+    const ri = Math.round(v)
+    return Math.min(8, Math.max(0, ri))
+  }
+  if (key === 'drossHooverSatelliteEquiv') {
+    const ri = Math.round(v)
+    return Math.min(24, Math.max(1, ri))
+  }
   if (key === 'drossReplicatorSpawnChance') {
     return Math.min(1, Math.max(0, v))
   }
@@ -580,6 +622,9 @@ export function clampBalanceField(key: keyof GameBalance, v: number): number {
   }
   if (key === 'drossFogDensityPerMass') {
     return Math.min(0.002, Math.max(0, v))
+  }
+  if (key === 'drossFogDensityMult') {
+    return Math.min(MULT_MAX, Math.max(MULT_MIN, v))
   }
   if (key === 'drossFogDensityMax') {
     return Math.min(0.12, Math.max(0, v))

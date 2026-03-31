@@ -53,6 +53,8 @@ export interface VoxelCell {
   replicatorTransformElapsedMs?: number
   /** Snapshot at conversion start; immune to balance slider mid-flight. */
   replicatorTransformTotalMs?: number
+  /** Until this wall-clock time (ms), a tap-triggered visual pulse is applied to this replicator. */
+  replicatorTapPulseEndMs?: number
   /** Unrefined resources held at this voxel (replicator output, etc.); consolidated into global root tallies by hubs. */
   storedResources?: Partial<Record<ResourceId, number>>
   /** Fractional passive income accumulator for this mature replicator. */

@@ -91,6 +91,8 @@ const PHASE_SALT_SPEED_LFO = 0x51d40
 const PHASE_SALT_AMP_LFO2 = 0x5b02f
 const PHASE_SALT_SPEED_LFO2 = 0x62e41
 const PHASE_SALT_PAN_LFO = 0x6d053
+const PHASE_SALT_FAST_AMP_LFO = 0x7a164
+const PHASE_SALT_FAST_SPEED_LFO = 0x8b275
 /** Per-voice spread for pitch glide time constant (with `notePitchSlideJitterSec`). */
 const PHASE_SALT_PITCH_SLIDE = 0x91d00
 /** Bus lowpass LFO + speed LFO — not shared with per-voice tremolo salts. */
@@ -101,6 +103,10 @@ const PHASE_SALT_PRE_DLY_JIT1_SPEED = 0xa0497
 const PHASE_SALT_PRE_DLY_JIT2_LFO = 0xb15a8
 const PHASE_SALT_PRE_DLY_JIT2_SPEED = 0xc26b9
 const PHASE_SALT_PRE_DLY_JIT2_RATE_MUL = 0xd37ca
+/** Macro jitter on pre-reverb stereo delay feedback amount. */
+const PHASE_SALT_PRE_FB_JIT = 0xe48ad
+/** Rate wobble for pre-reverb stereo delay feedback jitter. */
+const PHASE_SALT_PRE_FB_JIT_RATE = 0xf59be
 const PHASE_SALT_SCALE_CYCLE = 0xe48ec
 const PHASE_SALT_VOICE_LIFETIME = 0xf1a7d
 
@@ -142,9 +148,13 @@ function busNum(d: AsteroidMusicDebug, key: keyof AsteroidMusicDebug, fallback: 
 
 type VoiceNodes = {
   carrier: OscillatorNode
+  carrierDetuned: OscillatorNode
   pitchBandpass: BiquadFilterNode
   bpDryGain: GainNode
   bpWetGain: GainNode
+  toneLowpass: BiquadFilterNode
+  reeseDriveGain: GainNode
+  reeseShaper: WaveShaperNode
   vca: GainNode
   ampLfo: OscillatorNode
   speedLfo: OscillatorNode
@@ -154,6 +164,10 @@ type VoiceNodes = {
   speedLfo2: OscillatorNode
   speedDepth2: GainNode
   lfoDepth2: GainNode
+  fastAmpLfo: OscillatorNode
+  fastAmpSpeedLfo: OscillatorNode
+  fastAmpSpeedDepth: GainNode
+  fastAmpDepth: GainNode
   stereoPanner: StereoPannerNode
   panLfo: OscillatorNode
   panLfoDepth: GainNode
@@ -280,6 +294,8 @@ export function createAsteroidAmbientMusic(options: {
     pitchBpQ: new Float32Array(ASTEROID_MUSIC_VOICE_COUNT),
     ampLfoHz: new Float32Array(ASTEROID_MUSIC_VOICE_COUNT),
     ampLfo2Hz: new Float32Array(ASTEROID_MUSIC_VOICE_COUNT),
+    fastAmpLfoHz: new Float32Array(ASTEROID_MUSIC_VOICE_COUNT),
+    fastAmpSpeedLfoHz: new Float32Array(ASTEROID_MUSIC_VOICE_COUNT),
     panLfoHz: new Float32Array(ASTEROID_MUSIC_VOICE_COUNT),
     speedLfoHz: new Float32Array(ASTEROID_MUSIC_VOICE_COUNT),
     speedLfo2Hz: new Float32Array(ASTEROID_MUSIC_VOICE_COUNT),
@@ -290,6 +306,8 @@ export function createAsteroidAmbientMusic(options: {
     lastSentAtVoice.pitchBpQ.fill(Number.NaN)
     lastSentAtVoice.ampLfoHz.fill(Number.NaN)
     lastSentAtVoice.ampLfo2Hz.fill(Number.NaN)
+    lastSentAtVoice.fastAmpLfoHz.fill(Number.NaN)
+    lastSentAtVoice.fastAmpSpeedLfoHz.fill(Number.NaN)
     lastSentAtVoice.panLfoHz.fill(Number.NaN)
     lastSentAtVoice.speedLfoHz.fill(Number.NaN)
     lastSentAtVoice.speedLfo2Hz.fill(Number.NaN)
@@ -350,6 +368,18 @@ export function createAsteroidAmbientMusic(options: {
     const eps = 1e-6
     const denom = Math.max(eps, ASTEROID_MUSIC_VOICE_COUNT - k)
     const lambdaPerInactive = k / (denom * tau)
+    const reeseEnabled = d.reeseEnabled === true
+    const reeseIndex = reeseEnabled
+      ? Math.min(
+          ASTEROID_MUSIC_VOICE_COUNT - 1,
+          Math.max(0, Math.round(typeof d.reeseVoiceIndex === 'number' ? d.reeseVoiceIndex : 0)),
+        )
+      : -1
+    const reeseGate =
+      reeseEnabled && Number.isFinite(d.reeseOrderAfterVoice)
+        ? Math.max(0, Math.round(d.reeseOrderAfterVoice))
+        : null
+
     for (let i = 0; i < ASTEROID_MUSIC_VOICE_COUNT; i++) {
       if (voiceSlotActive[i]) {
         const u = phase01(seed, PHASE_SALT_VOICE_LIFETIME ^ (i * 0x10001))
@@ -360,6 +390,17 @@ export function createAsteroidAmbientMusic(options: {
         const pDie = 1 - Math.exp(-dt / tauI)
         if (Math.random() < pDie) voiceSlotActive[i] = false
       } else {
+        // Gate reese voice so it only becomes eligible after the configured order threshold,
+        // unless solo mode is on (solo ignores order).
+        if (
+          reeseGate !== null &&
+          reeseIndex === i &&
+          d.reeseSolo !== true &&
+          displayedVoices <= reeseGate + 0.5
+        ) {
+          voiceSlotActive[i] = false
+          continue
+        }
         const pBirth = 1 - Math.exp(-dt * lambdaPerInactive)
         if (Math.random() < pBirth) voiceSlotActive[i] = true
       }
@@ -370,6 +411,7 @@ export function createAsteroidAmbientMusic(options: {
     for (const v of voices) {
       try {
         v.carrier.stop()
+        v.carrierDetuned.stop()
         v.ampLfo.stop()
         v.speedLfo.stop()
         v.ampLfo2.stop()
@@ -515,7 +557,10 @@ export function createAsteroidAmbientMusic(options: {
 
     busFx.preDriveGain.gain.setValueAtTime(Math.min(6, Math.max(0.2, busNum(d, 'busPreDrive', 1))), t)
 
-    const hz = Math.min(nyquist, Math.max(40, busNum(d, 'busLowPassHz', 20000)))
+    let hz = Math.min(nyquist, Math.max(40, busNum(d, 'busLowPassHz', 20000)))
+    if (d.reeseSolo === true) {
+      hz = Math.max(hz, 3000)
+    }
     busFx.lpFreqBase.offset.setValueAtTime(hz, t)
 
     const minBusLpLfoHz = 0.0001
@@ -573,9 +618,36 @@ export function createAsteroidAmbientMusic(options: {
     busFx.preDlyJit1Depth.gain.setValueAtTime(peakJit1Sec, t)
     busFx.preReverbDelayL.delayTime.setValueAtTime(preStereoSec, t)
     busFx.preReverbDelayR.delayTime.setValueAtTime(preStereoSec, t)
-    const preStereoFb = Math.min(0.92, Math.max(0, busNum(d, 'preReverbStereoDelayFeedback', 0.25)))
-    busFx.preReverbFbGainL.gain.setValueAtTime(preStereoFb, t)
-    busFx.preReverbFbGainR.gain.setValueAtTime(preStereoFb, t)
+    const basePreStereoFb = Math.min(0.92, Math.max(0, busNum(d, 'preReverbStereoDelayFeedback', 0.25)))
+    let preStereoFbEff = basePreStereoFb
+    const fbJitDepthRaw = busNum(d, 'preReverbStereoDelayFeedbackJitterDepth', 0)
+    const fbJitRateRaw = busNum(d, 'preReverbStereoDelayFeedbackJitterHz', 0)
+    const fbJitRand = clamp01(busNum(d, 'preReverbStereoDelayFeedbackJitterRandomness', 0))
+    const fbTime = Number.isFinite(d.voiceMacroJitterTimeSec) ? d.voiceMacroJitterTimeSec : 0
+    const minFbJitHz = 1e-5
+    const maxFbJitHz = 0.1
+    if (basePreStereoFb > 0 && fbJitDepthRaw > 0 && fbJitRateRaw > 0 && fbTime > 0) {
+      const depth = clamp01(fbJitDepthRaw)
+      let fEff = Math.min(maxFbJitHz, Math.max(minFbJitHz, fbJitRateRaw))
+      if (fbJitRand > 0) {
+        const fMod = 0.25 * fEff
+        const phaseMod =
+          2 * Math.PI * fMod * fbTime +
+          2 * Math.PI * phase01(seed, PHASE_SALT_PRE_FB_JIT_RATE)
+        const wRate = Math.sin(phaseMod)
+        fEff = Math.min(
+          maxFbJitHz,
+          Math.max(minFbJitHz, fEff * (1 + fbJitRand * wRate)),
+        )
+      }
+      const phase0 =
+        2 * Math.PI * phase01(seed, PHASE_SALT_PRE_FB_JIT)
+      const w = Math.sin(2 * Math.PI * fEff * fbTime + phase0)
+      const mul = 1 + depth * w
+      preStereoFbEff = Math.min(0.92, Math.max(0, basePreStereoFb * mul))
+    }
+    busFx.preReverbFbGainL.gain.setValueAtTime(preStereoFbEff, t)
+    busFx.preReverbFbGainR.gain.setValueAtTime(preStereoFbEff, t)
     let preStereoHpf = Math.min(8000, Math.max(20, busNum(d, 'preReverbStereoDelayHighpassHz', 220)))
     preStereoHpf = Math.min(preStereoHpf, nyquist * 0.45)
     busFx.preReverbFbHpfL.frequency.setValueAtTime(preStereoHpf, t)
@@ -599,8 +671,8 @@ export function createAsteroidAmbientMusic(options: {
     busFx.preDlyJit2Depth.gain.setValueAtTime(peakJit2Sec, t)
     busFx.preReverbDelayL2.delayTime.setValueAtTime(preStereo2Sec, t)
     busFx.preReverbDelayR2.delayTime.setValueAtTime(preStereo2Sec, t)
-    busFx.preReverbFbGainL2.gain.setValueAtTime(preStereoFb, t)
-    busFx.preReverbFbGainR2.gain.setValueAtTime(preStereoFb, t)
+    busFx.preReverbFbGainL2.gain.setValueAtTime(preStereoFbEff, t)
+    busFx.preReverbFbGainR2.gain.setValueAtTime(preStereoFbEff, t)
     busFx.preReverbFbHpfL2.frequency.setValueAtTime(preStereoHpf, t)
     busFx.preReverbFbHpfR2.frequency.setValueAtTime(preStereoHpf, t)
     busFx.preReverbFbLpfL2.frequency.setValueAtTime(preStereoLpf, t)
@@ -612,7 +684,26 @@ export function createAsteroidAmbientMusic(options: {
     busFx.preReverbDirectL.gain.setValueAtTime(1, t)
     busFx.preReverbDirectR.gain.setValueAtTime(1, t)
 
-    const rm = clamp01(busNum(d, 'reverbMix', 0))
+    let rm = clamp01(busNum(d, 'reverbMix', 0))
+    const mixLfoDepth = clamp01(busNum(d as unknown as AsteroidMusicDebug, 'reverbMixLfoDepth', 0))
+    const mixLfoHz = Math.max(
+      0,
+      busNum(d as unknown as AsteroidMusicDebug, 'reverbMixLfoHz', 0.001),
+    )
+    const macroT =
+      typeof (d as AsteroidMusicDebug).voiceMacroJitterTimeSec === 'number' &&
+      Number.isFinite((d as AsteroidMusicDebug).voiceMacroJitterTimeSec)
+        ? (d as AsteroidMusicDebug).voiceMacroJitterTimeSec
+        : 0
+    if (mixLfoDepth > 0 && mixLfoHz > 0 && Number.isFinite(macroT)) {
+      const phase =
+        2 * Math.PI * mixLfoHz * macroT +
+        2 * Math.PI * phase01(seed, PHASE_SALT_PRE_FB_JIT_RATE)
+      const w = Math.sin(phase)
+      const k = 0.5 * mixLfoDepth
+      const mul = 1 + k * w
+      rm = clamp01(rm * mul)
+    }
     const wetTrim = clamp01(busNum(d, 'reverbWetTrim', 0.55))
     /** Linear wet/dry: dry `1 − reverbMix`, wet `reverbMix` × `reverbWetTrim` (full wet = no dry). */
     busFx.dryBus.gain.setValueAtTime(clamp01(1 - rm), t)
@@ -683,6 +774,7 @@ export function createAsteroidAmbientMusic(options: {
     applyVoiceMacrosToVoices(d, root)
     const scaleSteps = scaleStepsForMode(d.scaleClampMode)
     const t = c.currentTime
+    const nyquist = c.sampleRate * 0.48
     const vol = getMusicVolume()
     masterGain.gain.setValueAtTime(vol, t)
 
@@ -695,49 +787,173 @@ export function createAsteroidAmbientMusic(options: {
 
     const slideBase = busNum(d, 'notePitchSlideBaseSec', 3)
     const slideJit = busNum(d, 'notePitchSlideJitterSec', 2)
-    const instantPitch = slideBase <= 0 && slideJit <= 0
 
     const minAmpLfoHz = 0.002
     const maxAmpLfoHz = 0.28
     const minPanHz = 0.0008
     const maxPanHz = 0.03
+
+    const reeseEnabled = d.reeseEnabled === true
+    const reeseIndex = reeseEnabled
+      ? Math.min(
+          ASTEROID_MUSIC_VOICE_COUNT - 1,
+          Math.max(0, Math.round(typeof d.reeseVoiceIndex === 'number' ? d.reeseVoiceIndex : 0)),
+        )
+      : -1
     for (let i = 0; i < ASTEROID_MUSIC_VOICE_COUNT; i++) {
       const v = voices[i]
       const vd = d.voices[i]
+      const isReese = reeseEnabled && i === reeseIndex
       const roughMidi = root + defaultSemitonesFromRootForVoice(i) + audioFinite(vd.note, 0)
       const midi = snapMidiToScale(roughMidi, root, scaleSteps)
       const targetHz = midiToHz(midi)
       let hzOut = targetHz
-      if (carrierPitchSmoothPrimed || instantPitch) {
+      if (carrierPitchSmoothPrimed) {
         hzOut = targetHz
         smoothedCarrierHz[i] = targetHz
       } else {
-        const u = phase01(seed, PHASE_SALT_PITCH_SLIDE ^ (i * 0x10001))
-        const tauSec = Math.max(1e-6, slideBase + u * slideJit)
-        const prev = smoothedCarrierHz[i]
-        hzOut = prev + (targetHz - prev) * (1 - Math.exp(-dtSec / tauSec))
-        smoothedCarrierHz[i] = hzOut
+        if (isReese) {
+          const reeseSlide = busNum(d as unknown as AsteroidMusicDebug, 'reesePitchSlideSec', 3)
+          if (reeseSlide <= 0) {
+            hzOut = targetHz
+            smoothedCarrierHz[i] = targetHz
+          } else {
+            const tauSec = Math.max(1e-6, reeseSlide)
+            const prev = smoothedCarrierHz[i]
+            hzOut = prev + (targetHz - prev) * (1 - Math.exp(-dtSec / tauSec))
+            smoothedCarrierHz[i] = hzOut
+          }
+        } else {
+          const instantPitch = slideBase <= 0 && slideJit <= 0
+          if (instantPitch) {
+            hzOut = targetHz
+            smoothedCarrierHz[i] = targetHz
+          } else {
+            const u = phase01(seed, PHASE_SALT_PITCH_SLIDE ^ (i * 0x10001))
+            const tauSec = Math.max(1e-6, slideBase + u * slideJit)
+            const prev = smoothedCarrierHz[i]
+            hzOut = prev + (targetHz - prev) * (1 - Math.exp(-dtSec / tauSec))
+            smoothedCarrierHz[i] = hzOut
+          }
+        }
       }
-      setVoiceParamIfChanged(
-        lastSentAtVoice.carrierHz,
-        i,
-        audioFinite(hzOut, targetHz),
-        v.carrier.frequency,
-        t,
-        1e-3,
-      )
+      const baseHz = audioFinite(hzOut, targetHz)
+      if (isReese) {
+        const detSemi = Math.max(
+          0,
+          busNum(d as unknown as AsteroidMusicDebug, 'reeseDetuneSemitones', 0),
+        )
+        if (detSemi > 0) {
+          const up = 2 ** (detSemi / 24)
+          const dn = 1 / up
+          setVoiceParamIfChanged(
+            lastSentAtVoice.carrierHz,
+            i,
+            baseHz * up,
+            v.carrier.frequency,
+            t,
+            1e-3,
+          )
+          v.carrierDetuned.frequency.setValueAtTime(baseHz * dn, t)
+        } else {
+          setVoiceParamIfChanged(lastSentAtVoice.carrierHz, i, baseHz, v.carrier.frequency, t, 1e-3)
+          v.carrierDetuned.frequency.setValueAtTime(baseHz, t)
+        }
+      } else {
+        setVoiceParamIfChanged(lastSentAtVoice.carrierHz, i, baseHz, v.carrier.frequency, t, 1e-3)
+      }
 
-      const bpOn = d.voicePitchBandpassEnabled === true
-      const semi = Math.min(
-        36,
-        Math.max(-36, busNum(d, 'voicePitchBandpassCenterSemitones', 0)),
-      )
-      const centerHz = audioFinite(hzOut * 2 ** (semi / 12), hzOut)
-      setVoiceParamIfChanged(lastSentAtVoice.pitchBpHz, i, centerHz, v.pitchBandpass.frequency, t, 1e-3)
-      const bpQ = Math.min(30, Math.max(0.25, busNum(d, 'voicePitchBandpassQ', 5)))
-      setVoiceParamIfChanged(lastSentAtVoice.pitchBpQ, i, bpQ, v.pitchBandpass.Q, t, 1e-5)
-      v.bpDryGain.gain.setValueAtTime(bpOn ? 0 : 1, t)
-      v.bpWetGain.gain.setValueAtTime(bpOn ? 1 : 0, t)
+      if (isReese) {
+        // Reese voice: use pitchBandpass as a fixed highpass and drive cutoff from reeseHighpassHz.
+        if (v.pitchBandpass.type !== 'highpass') {
+          v.pitchBandpass.type = 'highpass'
+        }
+        const hpHz = Math.min(
+          nyquist,
+          Math.max(20, busNum(d as unknown as AsteroidMusicDebug, 'reeseHighpassHz', 200)),
+        )
+        setVoiceParamIfChanged(lastSentAtVoice.pitchBpHz, i, hpHz, v.pitchBandpass.frequency, t, 1e-3)
+        const bpQ = 0.707
+        setVoiceParamIfChanged(lastSentAtVoice.pitchBpQ, i, bpQ, v.pitchBandpass.Q, t, 1e-5)
+        v.bpDryGain.gain.setValueAtTime(0, t)
+        v.bpWetGain.gain.setValueAtTime(1, t)
+
+        // Reese lowpass: base cutoff plus simple attack/decay envelope depth.
+        const baseLp = Math.min(
+          nyquist,
+          Math.max(
+            0,
+            busNum(d as unknown as AsteroidMusicDebug, 'reeseLowpassBaseHz', 2500),
+          ),
+        )
+        const depthHz = Math.max(
+          0,
+          busNum(d as unknown as AsteroidMusicDebug, 'reeseLowpassEnvDepthHz', 3500),
+        )
+        let env01 = 0
+        const attack = Math.max(
+          0.01,
+          busNum(d as unknown as AsteroidMusicDebug, 'reeseLowpassEnvAttackSec', 0.12),
+        )
+        const decay = Math.max(
+          0.05,
+          busNum(d as unknown as AsteroidMusicDebug, 'reeseLowpassEnvDecaySec', 1.6),
+        )
+        const envSpan = attack + decay
+        const macroT =
+          typeof (d as AsteroidMusicDebug).voiceMacroJitterTimeSec === 'number' &&
+          Number.isFinite((d as AsteroidMusicDebug).voiceMacroJitterTimeSec)
+            ? (d as AsteroidMusicDebug).voiceMacroJitterTimeSec
+            : 0
+        const rateHz = Math.max(
+          0.0001,
+          busNum(d as unknown as AsteroidMusicDebug, 'reeseSwellsRateHz', 0.003),
+        )
+        if (envSpan > 0 && rateHz > 0 && Number.isFinite(macroT)) {
+          const cyc = macroT * rateHz
+          const u = cyc - Math.floor(cyc)
+          const aFrac = attack / envSpan
+          if (u <= aFrac && aFrac > 1e-6) {
+            env01 = u / aFrac
+          } else if (u > aFrac && envSpan > attack && 1 - aFrac > 1e-6) {
+            const dFrac = (u - aFrac) / (1 - aFrac)
+            env01 = 1 - dFrac
+          } else {
+            env01 = 0
+          }
+        }
+        const depthMul = clamp01(
+          busNum(d as unknown as AsteroidMusicDebug, 'reeseSwellsDepth', 1),
+        )
+        let lpHz = baseLp + env01 * depthHz * depthMul
+        lpHz = Math.min(nyquist, Math.max(0, lpHz))
+        v.toneLowpass.frequency.setValueAtTime(lpHz, t)
+        // Reese overdrive: extra pre-filter gain into a dedicated waveshaper.
+        const drive = Math.max(
+          0,
+          busNum(d as unknown as AsteroidMusicDebug, 'reeseDrive', 0),
+        )
+        const driveGain = 1 + drive * 4
+        v.reeseDriveGain.gain.setValueAtTime(driveGain, t)
+      } else {
+        const bpOn = d.voicePitchBandpassEnabled === true
+        if (v.pitchBandpass.type !== 'bandpass') {
+          v.pitchBandpass.type = 'bandpass'
+        }
+        const semi = Math.min(
+          36,
+          Math.max(-36, busNum(d as AsteroidMusicDebug, 'voicePitchBandpassCenterSemitones', 0)),
+        )
+        const centerHz = audioFinite(hzOut * 2 ** (semi / 12), hzOut)
+        setVoiceParamIfChanged(lastSentAtVoice.pitchBpHz, i, centerHz, v.pitchBandpass.frequency, t, 1e-3)
+        const bpQ = Math.min(30, Math.max(0.25, busNum(d as AsteroidMusicDebug, 'voicePitchBandpassQ', 5)))
+        setVoiceParamIfChanged(lastSentAtVoice.pitchBpQ, i, bpQ, v.pitchBandpass.Q, t, 1e-5)
+        v.bpDryGain.gain.setValueAtTime(bpOn ? 0 : 1, t)
+        v.bpWetGain.gain.setValueAtTime(bpOn ? 1 : 0, t)
+
+        // Non-reese voices: keep tone lowpass effectively open.
+        v.toneLowpass.frequency.setValueAtTime(nyquist, t)
+      }
 
       let ampHz = Math.min(
         maxAmpLfoHz,
@@ -784,6 +1000,39 @@ export function createAsteroidAmbientMusic(options: {
       // Inverted vs layer 1: subtractive tremolo at vca.gain (additive slow + subtractive fast).
       v.lfoDepth2.gain.setValueAtTime(-0.5 * tremoloAmount2, t)
 
+      // Fast tremolo: higher-rate layer with macro-driven depth swells and desynchronised rate.
+      const fastHz = Math.min(
+        12,
+        Math.max(0.8, audioFinite(vd.fastAmpLfoHz, 3)),
+      )
+      setVoiceParamIfChanged(
+        lastSentAtVoice.fastAmpLfoHz,
+        i,
+        fastHz,
+        v.fastAmpLfo.frequency,
+        t,
+        1e-4,
+      )
+      const fastSpeedHz = Math.min(
+        0.5,
+        Math.max(0.0005, audioFinite(vd.fastAmpLfoSpeedModHz, 0.02)),
+      )
+      setVoiceParamIfChanged(
+        lastSentAtVoice.fastAmpSpeedLfoHz,
+        i,
+        fastSpeedHz,
+        v.fastAmpSpeedLfo.frequency,
+        t,
+        1e-5,
+      )
+      v.fastAmpSpeedDepth.gain.setValueAtTime(
+        Math.max(0, audioFinite(vd.fastAmpLfoSpeedModDepthHz, 0)),
+        t,
+      )
+      const fastDepth = Math.min(1.6, Math.max(0, audioFinite(vd.fastAmpLfoDepth, 0)))
+      // Map depth to a 0…~0.6 amplitude swing around current level.
+      v.fastAmpDepth.gain.setValueAtTime(0.4 * (fastDepth / 1.6), t)
+
       const panHz = Math.min(
         maxPanHz,
         Math.max(minPanHz, audioFinite(vd.panLfoHz, minPanHz)),
@@ -822,10 +1071,22 @@ export function createAsteroidAmbientMusic(options: {
     const fadeInMs = Math.max(0.05, d.voiceFadeInSec) * 1000
     const fadeOutMs = Math.max(0.05, d.voiceFadeOutSec) * 1000
 
+    const reeseEnabled = d.reeseEnabled === true
+    const reeseIndex = reeseEnabled
+      ? Math.min(
+          ASTEROID_MUSIC_VOICE_COUNT - 1,
+          Math.max(0, Math.round(typeof d.reeseVoiceIndex === 'number' ? d.reeseVoiceIndex : 0)),
+        )
+      : -1
+
     for (let i = 0; i < ASTEROID_MUSIC_VOICE_COUNT; i++) {
       const v = voices[i]
       const vd = d.voices[i]
-      const active = voiceSlotActive[i]
+      const activeRaw = voiceSlotActive[i]
+      const active =
+        d.reeseSolo === true
+          ? reeseEnabled && i === reeseIndex
+          : activeRaw
       const targetPeak = active
         ? Math.min(0.95, Math.max(0, audioFinite(vd.amp, 0))) * vol * gainScale
         : 0
@@ -1133,9 +1394,26 @@ export function createAsteroidAmbientMusic(options: {
     lastWetSatAmount = -1
     lastChorusBaseMs = Number.NaN
 
+    const debugNow = getDebug()
+    const reeseEnabledAtBuild = debugNow.reeseEnabled === true
+    const reeseIndexAtBuild = reeseEnabledAtBuild
+      ? Math.min(
+          ASTEROID_MUSIC_VOICE_COUNT - 1,
+          Math.max(
+            0,
+            Math.round(
+              typeof debugNow.reeseVoiceIndex === 'number' ? debugNow.reeseVoiceIndex : 0,
+            ),
+          ),
+        )
+      : -1
+
     for (let i = 0; i < ASTEROID_MUSIC_VOICE_COUNT; i++) {
+      const isReeseAtBuild = i === reeseIndexAtBuild
       const carrier = c.createOscillator()
-      carrier.type = 'sine'
+      carrier.type = isReeseAtBuild ? 'sawtooth' : 'sine'
+      const carrierDetuned = c.createOscillator()
+      carrierDetuned.type = isReeseAtBuild ? 'sawtooth' : 'sine'
 
       const vca = c.createGain()
       vca.gain.value = 0.5
@@ -1154,6 +1432,12 @@ export function createAsteroidAmbientMusic(options: {
       speedLfo2.type = 'sine'
       const speedDepth2 = c.createGain()
       const lfoDepth2 = c.createGain()
+      const fastAmpLfo = c.createOscillator()
+      fastAmpLfo.type = 'sine'
+      const fastAmpSpeedLfo = c.createOscillator()
+      fastAmpSpeedLfo.type = 'sine'
+      const fastAmpSpeedDepth = c.createGain()
+      const fastAmpDepth = c.createGain()
       const stereoPanner = c.createStereoPanner()
       stereoPanner.pan.value = 0
       const panLfo = c.createOscillator()
@@ -1168,16 +1452,37 @@ export function createAsteroidAmbientMusic(options: {
         30,
         Math.max(0.25, busNum(getDebug(), 'voicePitchBandpassQ', 5)),
       )
+      const toneLowpass = c.createBiquadFilter()
+      toneLowpass.type = 'lowpass'
+      toneLowpass.frequency.value = c.sampleRate * 0.48
+      const reeseDriveGain = c.createGain()
+      reeseDriveGain.gain.value = 1
+      const reeseShaper = c.createWaveShaper()
+      reeseShaper.curve = PRE_SHAPER_CURVE
+      reeseShaper.oversample = '2x'
       const bpDryGain = c.createGain()
       const bpWetGain = c.createGain()
       bpDryGain.gain.value = 1
       bpWetGain.gain.value = 0
 
       carrier.connect(bpDryGain)
+      if (i === reeseIndexAtBuild) {
+        carrierDetuned.connect(bpDryGain)
+      }
       bpDryGain.connect(vca)
       carrier.connect(pitchBandpass)
-      pitchBandpass.connect(bpWetGain)
-      bpWetGain.connect(vca)
+      if (i === reeseIndexAtBuild) {
+        carrierDetuned.connect(pitchBandpass)
+      }
+      pitchBandpass.connect(toneLowpass)
+      toneLowpass.connect(bpWetGain)
+      if (isReeseAtBuild) {
+        bpWetGain.connect(reeseDriveGain)
+        reeseDriveGain.connect(reeseShaper)
+        reeseShaper.connect(vca)
+      } else {
+        bpWetGain.connect(vca)
+      }
       vca.connect(levelGain)
       levelGain.connect(stereoPanner)
       stereoPanner.connect(masterGain)
@@ -1194,14 +1499,23 @@ export function createAsteroidAmbientMusic(options: {
       speedLfo2.connect(speedDepth2)
       speedDepth2.connect(ampLfo2.frequency)
 
+      fastAmpLfo.connect(fastAmpDepth)
+      fastAmpDepth.connect(vca.gain)
+      fastAmpSpeedLfo.connect(fastAmpSpeedDepth)
+      fastAmpSpeedDepth.connect(fastAmpLfo.frequency)
+
       panLfo.connect(panLfoDepth)
       panLfoDepth.connect(stereoPanner.pan)
 
       voices.push({
         carrier,
+        carrierDetuned,
         pitchBandpass,
         bpDryGain,
         bpWetGain,
+        toneLowpass,
+        reeseDriveGain,
+        reeseShaper,
         vca,
         ampLfo,
         speedLfo,
@@ -1211,6 +1525,10 @@ export function createAsteroidAmbientMusic(options: {
         speedLfo2,
         speedDepth2,
         lfoDepth2,
+        fastAmpLfo,
+        fastAmpSpeedLfo,
+        fastAmpSpeedDepth,
+        fastAmpDepth,
         stereoPanner,
         panLfo,
         panLfoDepth,
@@ -1234,7 +1552,17 @@ export function createAsteroidAmbientMusic(options: {
       startOscillatorAtPhase(v.ampLfo2, c, phase01(seed, vi ^ PHASE_SALT_AMP_LFO2))
       startOscillatorAtPhase(v.speedLfo2, c, phase01(seed, vi ^ PHASE_SALT_SPEED_LFO2))
       startOscillatorAtPhase(v.panLfo, c, phase01(seed, vi ^ PHASE_SALT_PAN_LFO))
-      startOscillatorAtPhase(v.carrier, c, phase01(seed, vi ^ PHASE_SALT_CARRIER))
+      startOscillatorAtPhase(v.fastAmpLfo, c, phase01(seed, vi ^ PHASE_SALT_FAST_AMP_LFO))
+      startOscillatorAtPhase(
+        v.fastAmpSpeedLfo,
+        c,
+        phase01(seed, vi ^ PHASE_SALT_FAST_SPEED_LFO),
+      )
+      const carrierPhase = phase01(seed, vi ^ PHASE_SALT_CARRIER)
+      startOscillatorAtPhase(v.carrier, c, carrierPhase)
+      if (i === reeseIndexAtBuild) {
+        startOscillatorAtPhase(v.carrierDetuned, c, carrierPhase + 0.25)
+      }
     }
 
     resetCarrierPitchSmoothState()

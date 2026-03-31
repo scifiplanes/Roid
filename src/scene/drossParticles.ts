@@ -1,10 +1,12 @@
 import {
-  BoxGeometry,
+  BufferGeometry,
   Color,
+  Float32BufferAttribute,
   Group,
   InstancedMesh,
   Matrix4,
   MeshStandardMaterial,
+  Uint16BufferAttribute,
   Vector3,
 } from 'three'
 import { latticeHash } from '../game/compositionYields'
@@ -21,8 +23,8 @@ const _p = new Vector3()
 const _bulkTint = new Color()
 const _tmp = new Color()
 
-/** Small cube edge (world units); smaller than voxels. */
-const PARTICLE_CUBE = 0.11
+/** Small tetrahedron edge (world units); smaller than voxels. */
+const PARTICLE_EDGE = 0.11
 const MAX_INSTANCES = 768
 /** Max particles per cluster; scales with mass. */
 const PARTICLES_PER_MASS_UNIT = 4
@@ -58,7 +60,32 @@ export function createDrossParticlesGroup(): DrossParticlesHandle {
   const group = new Group()
   group.name = 'dross-particles'
 
-  const geo = new BoxGeometry(PARTICLE_CUBE, PARTICLE_CUBE, PARTICLE_CUBE)
+  const geo = new BufferGeometry()
+  const v = PARTICLE_EDGE
+  // Simple 4‑vertex tetrahedron (very low poly).
+  const positions = new Float32Array([
+    0,
+    0,
+    0,
+    v,
+    0,
+    0,
+    0,
+    v,
+    0,
+    0,
+    0,
+    v,
+  ])
+  const indices = new Uint16Array([
+    0, 1, 2,
+    0, 3, 1,
+    0, 2, 3,
+    1, 3, 2,
+  ])
+  geo.setAttribute('position', new Float32BufferAttribute(positions, 3))
+  geo.setIndex(new Uint16BufferAttribute(indices, 1))
+  geo.computeVertexNormals()
   const mat = new MeshStandardMaterial({
     color: new Color(1, 1, 1),
     vertexColors: true,

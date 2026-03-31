@@ -41,6 +41,9 @@ function childIdsForRecipe(root: RootResourceId): ResourceId[] {
 function shortSelectedRecipeTooltip(root: RootResourceId): string {
   const def = RESOURCE_DEFS[root]
   const yields = formatYieldSummary(root)
+  if (root === 'ices') {
+    return `One ${def.displayName.toLowerCase()} per step when in stock. Yields: ${yields}. Refineries also provide a tiny safety-valve trickle of surface ice over time so you cannot fully softlock on ice.`
+  }
   return `One ${def.displayName.toLowerCase()} per step when in stock. Yields: ${yields}.`
 }
 
@@ -109,7 +112,7 @@ export function createRefineryRecipesModal(
   const intro = document.createElement('div')
   intro.className = 'refinery-recipes-modal-intro'
   intro.textContent =
-    'Active refineries consume one unit of the selected root per tick (when available). Additional roots unlock via computronium research.'
+    'Active refineries consume one unit of the selected root per tick (when available). Switch roots to steer which refined materials you accumulate.'
 
   const list = document.createElement('div')
   list.className = 'refinery-recipes-modal-list'

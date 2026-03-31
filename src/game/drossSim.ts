@@ -121,34 +121,37 @@ function flushRemainders(
 }
 
 /**
- * Pulls dross into resources when ≥1 collector satellite. Returns whether tallies changed.
+ * Core drain path for dross mass → resource tallies. `maxDrain` is the total voxel-equivalent
+ * mass to remove this step. When `filter` is provided, only clusters passing it contribute and
+ * receive proportional drain; otherwise all clusters drain.
+ *
+ * Returns whether tallies changed.
  */
-export function stepDrossCollection(
-  dtSec: number,
+function drainDrossMass(
   state: DrossState,
   tallies: Record<ResourceId, number>,
-  collectorCount: number,
-  balance: GameBalance,
+  maxDrain: number,
+  filter?: (cluster: DrossCluster) => boolean,
 ): boolean {
-  if (dtSec <= 0 || collectorCount <= 0 || state.clusters.length === 0) return false
+  if (maxDrain <= 0 || state.clusters.length === 0) return false
 
   let totalM = 0
-  for (const c of state.clusters) totalM += c.mass
-  if (totalM <= 1e-9) return false
+  const eligible: DrossCluster[] = []
+  for (const c of state.clusters) {
+    if (c.mass <= 0) continue
+    if (filter && !filter(c)) continue
+    eligible.push(c)
+    totalM += c.mass
+  }
+  if (totalM <= 1e-9 || eligible.length === 0) return false
 
-  const maxDrain =
-    balance.drossCollectionRatePerSatellitePerSec *
-    balance.drossCollectionMult *
-    collectorCount *
-    dtSec
   const drain = Math.min(totalM, maxDrain)
   if (drain <= 0) return false
 
   const rem = state.yieldRemainder
   let didYield = false
 
-  for (const c of state.clusters) {
-    if (c.mass <= 0) continue
+  for (const c of eligible) {
     const take = drain * (c.mass / totalM)
     if (take <= 0) continue
     c.mass -= take
@@ -168,6 +171,57 @@ export function stepDrossCollection(
   }
 
   return didYield
+}
+
+/**
+ * Pulls dross into resources when ≥1 collector satellite. Returns whether tallies changed.
+ */
+export function stepDrossCollection(
+  dtSec: number,
+  state: DrossState,
+  tallies: Record<ResourceId, number>,
+  collectorCount: number,
+  balance: GameBalance,
+): boolean {
+  if (dtSec <= 0 || collectorCount <= 0 || state.clusters.length === 0) return false
+
+  const maxDrain =
+    balance.drossCollectionRatePerSatellitePerSec *
+    balance.drossCollectionMult *
+    collectorCount *
+    dtSec
+  return drainDrossMass(state, tallies, maxDrain)
+}
+
+/**
+ * Manual Hoover: drains dross within a voxel-space radius of `center`. Returns whether tallies
+ * changed. Uses the same rate math as satellites, scaled by `drossHooverSatelliteEquiv`.
+ */
+export function stepDrossHoover(
+  dtSec: number,
+  state: DrossState,
+  tallies: Record<ResourceId, number>,
+  center: VoxelPos,
+  radiusVox: number,
+  balance: GameBalance,
+): boolean {
+  if (dtSec <= 0 || radiusVox <= 0 || state.clusters.length === 0) return false
+
+  const maxDrain =
+    balance.drossCollectionRatePerSatellitePerSec *
+    balance.drossCollectionMult *
+    Math.max(0, balance.drossHooverSatelliteEquiv) *
+    dtSec
+
+  if (maxDrain <= 0) return false
+
+  const r2 = radiusVox * radiusVox
+  return drainDrossMass(state, tallies, maxDrain, (c) => {
+    const dx = c.pos.x - center.x
+    const dy = c.pos.y - center.y
+    const dz = c.pos.z - center.z
+    return dx * dx + dy * dy + dz * dz <= r2
+  })
 }
 
 export function totalDrossMass(state: DrossState): number {

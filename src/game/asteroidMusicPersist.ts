@@ -86,6 +86,22 @@ function mergeVoice(base: AsteroidMusicVoiceDebug, p: unknown): AsteroidMusicVoi
       typeof o.ampLfo2SpeedModHz === 'number' && Number.isFinite(o.ampLfo2SpeedModHz)
         ? clamp(o.ampLfo2SpeedModHz, 0.02, 0.35)
         : base.ampLfo2SpeedModHz,
+    fastAmpLfoHz:
+      typeof o.fastAmpLfoHz === 'number' && Number.isFinite(o.fastAmpLfoHz)
+        ? clamp(o.fastAmpLfoHz, 0.8, 12)
+        : base.fastAmpLfoHz,
+    fastAmpLfoDepth:
+      typeof o.fastAmpLfoDepth === 'number' && Number.isFinite(o.fastAmpLfoDepth)
+        ? clamp(o.fastAmpLfoDepth, 0, 1.6)
+        : base.fastAmpLfoDepth,
+    fastAmpLfoSpeedModDepthHz:
+      typeof o.fastAmpLfoSpeedModDepthHz === 'number' && Number.isFinite(o.fastAmpLfoSpeedModDepthHz)
+        ? clamp(o.fastAmpLfoSpeedModDepthHz, 0, 5)
+        : base.fastAmpLfoSpeedModDepthHz,
+    fastAmpLfoSpeedModHz:
+      typeof o.fastAmpLfoSpeedModHz === 'number' && Number.isFinite(o.fastAmpLfoSpeedModHz)
+        ? clamp(o.fastAmpLfoSpeedModHz, 0.0005, 0.5)
+        : base.fastAmpLfoSpeedModHz,
     panLfoHz:
       typeof o.panLfoHz === 'number' && Number.isFinite(o.panLfoHz)
         ? clamp(o.panLfoHz, 0.0005, 0.05)
@@ -143,6 +159,50 @@ function mergeVoiceMacros(
       typeof o.ampLfo2SpeedModHz === 'number' && Number.isFinite(o.ampLfo2SpeedModHz)
         ? clamp(o.ampLfo2SpeedModHz, 0.02, 0.35)
         : base.ampLfo2SpeedModHz,
+    tremoloDepth:
+      typeof o.tremoloDepth === 'number' && Number.isFinite(o.tremoloDepth)
+        ? clamp(o.tremoloDepth, 0, 1.6)
+        : base.tremoloDepth,
+    tremoloBaseHz:
+      typeof o.tremoloBaseHz === 'number' && Number.isFinite(o.tremoloBaseHz)
+        ? clamp(o.tremoloBaseHz, 0.8, 12)
+        : base.tremoloBaseHz,
+    tremoloDesyncWidth:
+      typeof o.tremoloDesyncWidth === 'number' && Number.isFinite(o.tremoloDesyncWidth)
+        ? clamp(o.tremoloDesyncWidth, 0, 1)
+        : base.tremoloDesyncWidth,
+    tremoloDepthJitterHz:
+      typeof o.tremoloDepthJitterHz === 'number' && Number.isFinite(o.tremoloDepthJitterHz)
+        ? clamp(o.tremoloDepthJitterHz, 0.0001, 0.1)
+        : base.tremoloDepthJitterHz,
+    tremoloDepthJitterRateJitterDepth:
+      typeof o.tremoloDepthJitterRateJitterDepth === 'number' &&
+      Number.isFinite(o.tremoloDepthJitterRateJitterDepth)
+        ? clamp(o.tremoloDepthJitterRateJitterDepth, 0, 0.5)
+        : base.tremoloDepthJitterRateJitterDepth,
+    tremoloDepthJitterRateJitterHz:
+      typeof o.tremoloDepthJitterRateJitterHz === 'number' &&
+      Number.isFinite(o.tremoloDepthJitterRateJitterHz)
+        ? clamp(o.tremoloDepthJitterRateJitterHz, 0.0001, 0.5)
+        : base.tremoloDepthJitterRateJitterHz,
+    tremoloRateJitterDepth:
+      typeof o.tremoloRateJitterDepth === 'number' && Number.isFinite(o.tremoloRateJitterDepth)
+        ? clamp(o.tremoloRateJitterDepth, 0, 0.5)
+        : base.tremoloRateJitterDepth,
+    tremoloRateJitterHz:
+      typeof o.tremoloRateJitterHz === 'number' && Number.isFinite(o.tremoloRateJitterHz)
+        ? clamp(o.tremoloRateJitterHz, 0.0005, 0.35)
+        : base.tremoloRateJitterHz,
+    tremoloRateJitterMorphDepth:
+      typeof o.tremoloRateJitterMorphDepth === 'number' &&
+      Number.isFinite(o.tremoloRateJitterMorphDepth)
+        ? clamp(o.tremoloRateJitterMorphDepth, 0, 0.5)
+        : base.tremoloRateJitterMorphDepth,
+    tremoloRateJitterMorphHz:
+      typeof o.tremoloRateJitterMorphHz === 'number' &&
+      Number.isFinite(o.tremoloRateJitterMorphHz)
+        ? clamp(o.tremoloRateJitterMorphHz, 0.0001, 0.5)
+        : base.tremoloRateJitterMorphHz,
     panLfoHz:
       typeof o.panLfoHz === 'number' && Number.isFinite(o.panLfoHz)
         ? clamp(o.panLfoHz, 0.0005, 0.05)
@@ -275,6 +335,8 @@ function mergeTop(p: unknown): Partial<AsteroidMusicDebug> {
   num('reverbWetFeedbackMs', 4, 120)
   num('reverbWetFeedback', 0, 0.92)
   num('busWetSaturatorAmount', 0, 1)
+  num('reverbMixLfoDepth', 0, 1)
+  num('reverbMixLfoHz', 1e-5, 0.05)
   {
     const v = o.reverbConvolverNormalize
     if (typeof v === 'boolean') {
@@ -291,6 +353,42 @@ function mergeTop(p: unknown): Partial<AsteroidMusicDebug> {
       out.voicePitchBandpassEnabled = v !== 0
     }
   }
+  {
+    const v = o.reeseEnabled
+    if (typeof v === 'boolean') {
+      out.reeseEnabled = v
+    } else if (typeof v === 'number' && Number.isFinite(v)) {
+      out.reeseEnabled = v !== 0
+    }
+  }
+  {
+    const v = o.reeseSolo
+    if (typeof v === 'boolean') {
+      out.reeseSolo = v
+    } else if (typeof v === 'number' && Number.isFinite(v)) {
+      out.reeseSolo = v !== 0
+    }
+  }
+  num('reeseVoiceIndex', 0, ASTEROID_MUSIC_VOICE_COUNT - 1)
+  num('reeseOrderAfterVoice', 0, ASTEROID_MUSIC_VOICE_COUNT - 1)
+  num('reesePitchSemitones', -36, 24)
+  num('reesePitchVariationSemitones', 0, 6)
+  num('reesePitchJitterHz', NOTE_JITTER_HZ_MIN, NOTE_JITTER_HZ_MAX)
+  num('reesePitchJitterRandomness', 0, 1)
+  num('reeseSwellsRateHz', 0.0001, 2)
+  num('reeseSwellsRandomness', 0, 1)
+  num('reeseVolume', 0, 1.5)
+  num('reeseWidth', 0, 0.95)
+  num('reeseDetuneSemitones', 0, 4)
+  num('reeseHighpassHz', 60, 2000)
+  num('reeseLowpassBaseHz', 400, 20000)
+  num('reeseLowpassEnvAttackSec', 0.01, 4)
+  num('reeseLowpassEnvDecaySec', 0.05, 12)
+  num('reeseLowpassEnvDepthHz', 0, 20000)
+  num('reesePitchSlideSec', 0, 30)
+  num('reeseSwellsDepth', 0, 1)
+  num('reeseDrive', 0, 3)
+  num('reeseLargeSwellRateHz', 0, 0.05)
   if (
     (typeof o.reverbIrDurationSec !== 'number' || typeof o.reverbIrDecayPerSec !== 'number') &&
     typeof o.reverbDecaySec === 'number' &&

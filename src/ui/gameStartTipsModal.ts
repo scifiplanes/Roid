@@ -5,6 +5,7 @@ const TIP_LINES: string[] = [
   'Build Clean Up to get rid of Dross (Debris and Fog).',
   'Build Computronium to gradually unlock more tools.',
   'Try the digging laser.',
+  'Cheat in debug menu if stuck',
 ]
 
 export interface GameStartTipsModalApi {
@@ -38,12 +39,14 @@ export function createGameStartTipsModal(
 
   const body = document.createElement('div')
   body.className = 'discovery-modal-body'
+  const list = document.createElement('ul')
+  list.className = 'discovery-modal-tips-list'
   for (const line of TIP_LINES) {
-    const p = document.createElement('p')
-    p.className = 'discovery-modal-p'
-    p.textContent = line
-    body.appendChild(p)
+    const li = document.createElement('li')
+    li.textContent = line
+    list.appendChild(li)
   }
+  body.appendChild(list)
 
   const buttons = document.createElement('div')
   buttons.className = 'discovery-modal-buttons'

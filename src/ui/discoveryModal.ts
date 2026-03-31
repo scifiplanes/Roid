@@ -158,6 +158,12 @@ export function createDiscoveryModal(
         p.textContent = line
         body.appendChild(p)
       }
+      if (offer.resourceSummaryLine) {
+        const p = document.createElement('p')
+        p.className = 'discovery-modal-p discovery-modal-p--resources'
+        p.textContent = `Resources: ${offer.resourceSummaryLine}`
+        body.appendChild(p)
+      }
       root.hidden = false
       requestAnimationFrame(() => {
         syncAnchor()

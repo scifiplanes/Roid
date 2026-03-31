@@ -28,6 +28,7 @@ export type PlayerTool =
   | 'battery'
   | 'hub'
   | 'refinery'
+  | 'hoover'
   | 'orbitalLaser'
   | 'excavatingLaser'
   | 'scanner'
@@ -151,9 +152,9 @@ const TOOLS: ReadonlyArray<{
   {
     id: 'pick',
     fKey: 'F1',
-    label: 'Pick',
-    title: 'Pick rocks.',
-    short: 'Pick rocks.',
+    label: 'Poke',
+    title: 'Poke rocks.',
+    short: 'Poke rocks.',
   },
   {
     id: 'inspect',
@@ -204,6 +205,13 @@ const TOOLS: ReadonlyArray<{
       'Process resources. Convert a mature replicator into a refinery, or click an existing refinery to toggle it on/off. Processes global root resources into second-order resources.',
     short: 'Replicator → refinery; process resources; toggles',
     costTool: 'refinery',
+  },
+  {
+    id: 'hoover',
+    fKey: 'HV',
+    label: 'Hoover',
+    title: 'Hold on debris to vacuum dross into resources (no energy cost).',
+    short: 'Vacuum local debris into resources',
   },
   {
     id: 'orbitalLaser',

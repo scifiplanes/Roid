@@ -60,6 +60,11 @@ export function stepRefineryProcessing(
     active.length
   let energySpent = 0
   let tallyChanged = false
+  let backfillIceThisTick = 0
+  const perRefineryIceCap =
+    gameBalance.refineryIceBackfillPerSecPerRefinery * dtSec
+  const globalIceCap =
+    gameBalance.refineryIceBackfillMaxPerSecGlobal * dtSec
 
   for (const _ref of active) {
     for (let a = 0; a < attemptsPerRefinery; a++) {
@@ -77,6 +82,16 @@ export function stepRefineryProcessing(
       tallies[selectedRoot] -= 1
       energySpent += spent
       addResourceYields(tallies, refinementYieldForParent(selectedRoot))
+      // Anti-softlock: allow a capped trickle of extra surface ice from any active refinery,
+      // so running completely dry on ices recovers over time even if no fresh ice voxels remain.
+      if (perRefineryIceCap > 0 && globalIceCap > 0 && backfillIceThisTick < globalIceCap) {
+        const remainingGlobal = globalIceCap - backfillIceThisTick
+        const add = Math.min(perRefineryIceCap, remainingGlobal)
+        if (add > 0) {
+          tallies.surfaceIces = (tallies.surfaceIces ?? 0) + add
+          backfillIceThisTick += add
+        }
+      }
       tallyChanged = true
     }
   }

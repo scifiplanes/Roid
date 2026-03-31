@@ -323,6 +323,74 @@ export function startExcavatingLaserSustain(): void {
   }
 }
 
+type HooverSustainNodes = {
+  ctx: AudioContext
+  master: GainNode
+  src: AudioBufferSourceNode
+}
+
+let hooverSustainRef: HooverSustainNodes | null = null
+
+export function stopHooverSustain(): void {
+  const ref = hooverSustainRef
+  if (!ref) return
+  hooverSustainRef = null
+  const { ctx, master, src } = ref
+  const t0 = ctx.currentTime
+  const rel = 0.08
+  try {
+    master.gain.cancelScheduledValues(t0)
+    const gv = Math.max(0.0002, master.gain.value)
+    master.gain.setValueAtTime(gv, t0)
+    master.gain.exponentialRampToValueAtTime(0.0001, t0 + rel)
+    src.stop(t0 + rel + 0.03)
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Hoover tool sustain: soft band-limited noise while active. Tuned quieter than dig laser.
+ */
+export function startHooverSustain(): void {
+  try {
+    stopHooverSustain()
+    const c = getAudioContext()
+    if (!c || c.state !== 'running') return
+    const t0 = c.currentTime
+
+    const bufSec = 0.25
+    const n = Math.min(60000, Math.floor(c.sampleRate * bufSec))
+    const buf = c.createBuffer(1, n, c.sampleRate)
+    const data = buf.getChannelData(0)
+    for (let i = 0; i < n; i++) {
+      data[i] = Math.random() * 2 - 1
+    }
+
+    const src = c.createBufferSource()
+    src.buffer = buf
+    src.loop = true
+
+    const bp = c.createBiquadFilter()
+    bp.type = 'bandpass'
+    bp.frequency.value = 420
+    bp.Q.value = 1.2
+
+    const master = c.createGain()
+    const peak = 0.14
+    const atk = 0.045
+    master.gain.setValueAtTime(0.0001, t0)
+    master.gain.exponentialRampToValueAtTime(peak, t0 + atk)
+
+    src.connect(bp).connect(master).connect(getSfxBusInput(c))
+    src.start(t0)
+
+    hooverSustainRef = { ctx: c, master, src }
+  } catch {
+    hooverSustainRef = null
+  }
+}
+
 /** Discovery site claimed but no offer (e.g. all archetype weights zero). Short down-chirp pair. */
 export function playDiscoveryFalseSignal(): void {
   try {

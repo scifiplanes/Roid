@@ -3,7 +3,7 @@ import { ROOT_RESOURCE_IDS, type RootResourceId } from './resources'
 
 /**
  * Roots that can refine from game start (covers replicator/reactor/hub/refinery/battery/depth costs
- * before halide-line computronium).
+ * across the whole progression).
  */
 export const INITIALLY_UNLOCKED_REFINERY_ROOTS: ReadonlySet<RootResourceId> = new Set([
   'regolithMass',
@@ -17,10 +17,15 @@ export const INITIALLY_UNLOCKED_REFINERY_ROOTS: ReadonlySet<RootResourceId> = ne
   'ices',
   'refractories',
   'phosphates',
+  'halides',
 ])
 
-/** Roots that require computronium research (tier index 6..12 → one root each). Order matters. */
-export const REFINERY_ROOT_COMPUTRONIUM_TIER_ORDER: readonly RootResourceId[] = ['halides']
+/**
+ * Roots that require computronium research (tier index 6..12 → one root each). Order matters.
+ * Currently empty; all refinery roots are available without additional computronium tiers so that
+ * halide-line refinement (NaCl / Fl) does not form a cycle with computronium progression.
+ */
+export const REFINERY_ROOT_COMPUTRONIUM_TIER_ORDER: readonly RootResourceId[] = []
 
 export function isRefineryRootUnlockedByDefault(root: RootResourceId): boolean {
   return INITIALLY_UNLOCKED_REFINERY_ROOTS.has(root)

@@ -117,6 +117,33 @@ function kindUsesBulkRockHint(kind: VoxelKind): boolean {
   )
 }
 
+function replicatorPulseMul(cell: VoxelCell, nowMs: number): number {
+  let mul = 1
+
+  const totalMs = cell.replicatorTransformTotalMs ?? 0
+  const elapsedMs = cell.replicatorTransformElapsedMs ?? 0
+  if (totalMs > 1 && elapsedMs >= 0 && elapsedMs < totalMs) {
+    const prog = Math.min(1, Math.max(0, elapsedMs / totalMs))
+    const base = 1 + 0.18 * prog
+    const phase = nowMs * 0.008 + prog * Math.PI * 2
+    const wobble = 0.7 + 0.3 * (0.5 + 0.5 * Math.sin(phase))
+    mul *= base * wobble
+  }
+
+  const tapEnd = cell.replicatorTapPulseEndMs
+  if (tapEnd !== undefined) {
+    const remaining = tapEnd - nowMs
+    const TAP_MS = 260
+    if (remaining > 0 && remaining <= TAP_MS) {
+      const t = 1 - remaining / TAP_MS
+      const ease = t * t * (3 - 2 * t)
+      mul *= 1 + 0.6 * (1 - ease)
+    }
+  }
+
+  return mul
+}
+
 function setCellMatrixAt(
   mesh: InstancedMesh,
   j: number,
@@ -525,6 +552,9 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
         compositionToBulkRockHintColor(cell, _bulkRockHint, scanVizForBuild)
         blendBulkRockHintOntoBase(_c, _bulkRockHint, scanVizForBuild.baseRockBulkHintLerp, _c)
       }
+      if (kind === 'replicator') {
+        _c.multiplyScalar(replicatorPulseMul(cell, performance.now()))
+      }
       solid.setColorAt(j, _c)
     }
     solid.count = solidIndices.length
@@ -876,6 +906,7 @@ export function reapplyRockInstanceColors(
     refineryStandby,
   } = bundle
   const matureReplicatorTint = getKindDef('replicator').colorTint
+  const nowMs = performance.now()
 
   function applyDepthOverlayRock(cell: VoxelCell, out: Color, cellIndex: number): void {
     if (!depthOverlayActive) return
@@ -1029,6 +1060,9 @@ export function reapplyRockInstanceColors(
         compositionToBulkRockHintColor(cell, _bulkRockHint, scanDebug)
         blendBulkRockHintOntoBase(_c, _bulkRockHint, scanDebug.baseRockBulkHintLerp, _c)
       }
+      if (kind === 'replicator') {
+        _c.multiplyScalar(replicatorPulseMul(cell, nowMs))
+      }
       applyDepthOverlayRock(cell, _c, i)
       applyScannerTint(i, _c)
       applyDiscoveryScanHint(i, _c)
@@ -1068,6 +1102,9 @@ export function reapplyRockInstanceColors(
         if (kindUsesBulkRockHint(kind)) {
           compositionToBulkRockHintColor(cell, _bulkRockHint, scanDebug)
           blendBulkRockHintOntoBase(_c, _bulkRockHint, scanDebug.baseRockBulkHintLerp * 0.72, _c)
+        }
+        if (kind === 'replicator') {
+          _c.multiplyScalar(replicatorPulseMul(cell, nowMs))
         }
         applyDepthOverlayRock(cell, _c, i)
         applyScannerTint(i, _c)

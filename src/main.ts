@@ -106,6 +106,7 @@ import {
   spawnDrossFromRemovedCell,
   spawnDrossReplicatorScrap,
   stepDrossCollection,
+  stepDrossHoover,
   totalDrossMass,
 } from './game/drossSim'
 import {
@@ -123,8 +124,10 @@ import {
   onMiningHitFeedbackVisualOnly,
   playReplicatorConsumeClicks,
   startExcavatingLaserSustain,
+  startHooverSustain,
   startOrbitalLaserSustain,
   stopExcavatingLaserSustain,
+  stopHooverSustain,
   stopOrbitalLaserSustain,
   playHubToggle,
   playRefineryToggle,
@@ -938,6 +941,9 @@ let emCatapultUnlocked = false
 /** Debug cheat: bypass structure gates, explosive research gate (Settings → Unlock all tools). Reset on Regenerate. */
 let debugUnlockAllTools = false
 
+/** Milestone: at least one refinery has been built on this asteroid. */
+let hasBuiltRefinery = false
+
 /** Cumulative unlock points from active computronium (reset on Regenerate). */
 const computroniumUnlockPoints = { current: 0 }
 
@@ -1324,7 +1330,9 @@ const {
         activeComputronium: countActiveComputronium(voxelCells),
         orbitalLaserUnlocked,
         excavatingLaserUnlocked,
-        scannerLaserUnlocked,
+        scannerLaserUnlocked:
+          scannerLaserUnlocked ||
+          (!debugUnlockAllTools && hasBuiltRefinery ? true : scannerLaserUnlocked),
       },
       gameBalance,
     ),
@@ -1635,6 +1643,8 @@ const CLICK_MAX_PX = 6
 let pointerDown: { x: number; y: number } | null = null
 let laserPointerDown = false
 let excavatingLaserPointerDown = false
+let hooverPointerDown = false
+let lastHooverClient: { x: number; y: number } | null = null
 /** Cursor position during laser drag (for voxel highlight). */
 let lastLaserDragClient: { x: number; y: number } | null = null
 let lastLaserDragTool: 'orbitalLaser' | 'excavatingLaser' | null = null
@@ -2151,7 +2161,12 @@ function tryPlaceReplicator(clientX: number, clientY: number): void {
   if (i === null) return
 
   const cell = voxelCells[i]
-  if (cell.kind === 'replicator') return
+  if (cell.kind === 'replicator') {
+    const now = performance.now()
+    cell.replicatorTapPulseEndMs = now + 260
+    markRockInstanceColorsDirty()
+    return
+  }
   if (cell.kind === 'processedMatter') return
   if (cell.replicatorActive || cell.replicatorEating) return
 
@@ -2179,6 +2194,10 @@ function tryConvertStructure(clientX: number, clientY: number, targetKind: Struc
 
   const cell = voxelCells[i]
   if (!tryStartReplicatorTransform(cell, targetKind, resourceTallies)) return
+
+  if (targetKind === 'refinery') {
+    hasBuiltRefinery = true
+  }
 
   setResourceHud()
 }
@@ -2334,6 +2353,13 @@ const canvas = renderer.domElement
 canvas.addEventListener('pointerdown', (e) => {
   if (e.button !== 0) return
   pointerDown = { x: e.clientX, y: e.clientY }
+  if (getSelectedTool() === 'hoover') {
+    hooverPointerDown = true
+    lastHooverClient = { x: e.clientX, y: e.clientY }
+    controls.enabled = false
+    startHooverSustain()
+    return
+  }
   if (getSelectedTool() === 'orbitalLaser') {
     if (!orbitalLaserUnlocked || !isLaserLithologyAt(e.clientX, e.clientY)) {
       return
@@ -2370,6 +2396,16 @@ canvas.addEventListener('pointerdown', (e) => {
 })
 
 canvas.addEventListener('pointermove', (e) => {
+  if (hooverPointerDown) {
+    if (getSelectedTool() !== 'hoover') {
+      hooverPointerDown = false
+      lastHooverClient = null
+      controls.enabled = true
+      stopHooverSustain()
+      return
+    }
+    lastHooverClient = { x: e.clientX, y: e.clientY }
+  }
   if (laserPointerDown) {
     if (getSelectedTool() !== 'orbitalLaser') {
       laserPointerDown = false
@@ -2401,6 +2437,14 @@ canvas.addEventListener('pointermove', (e) => {
 
 canvas.addEventListener('pointerup', (e) => {
   if (e.button !== 0) return
+  if (hooverPointerDown) {
+    hooverPointerDown = false
+    lastHooverClient = null
+    controls.enabled = true
+    stopHooverSustain()
+    pointerDown = null
+    return
+  }
   if (explosiveChargeAwaitingUp) {
     explosiveChargeAwaitingUp = false
     controls.enabled = true
@@ -2474,6 +2518,12 @@ canvas.addEventListener('pointerup', (e) => {
 
 canvas.addEventListener('pointercancel', () => {
   pointerDown = null
+  if (hooverPointerDown) {
+    hooverPointerDown = false
+    lastHooverClient = null
+    controls.enabled = true
+    stopHooverSustain()
+  }
   if (explosiveChargeAwaitingUp) {
     explosiveChargeAwaitingUp = false
     controls.enabled = true
@@ -2549,6 +2599,19 @@ function tick(): void {
   if (replicatorTallyChanged) {
     markRockInstanceColorsDirty()
   }
+  if (!transformMeshDirty) {
+    const nowMs = now
+    for (const c of voxelCells) {
+      if (c.replicatorTransformTarget !== undefined) {
+        markRockInstanceColorsDirty()
+        break
+      }
+      if (c.replicatorTapPulseEndMs !== undefined && c.replicatorTapPulseEndMs > nowMs) {
+        markRockInstanceColorsDirty()
+        break
+      }
+    }
+  }
   if (meshDirty || transformMeshDirty) {
     replaceAsteroidMesh(voxelCells)
   }
@@ -2588,6 +2651,19 @@ function tick(): void {
     drossCollectorSatelliteCount = laserUnlockApply.drossCollectorSatelliteCount
     refreshToolCosts()
     syncOverlaysDepthRow()
+    satelliteDots.setCounts(
+      orbitalSatelliteCount,
+      excavatingSatelliteCount,
+      scannerSatelliteCount,
+      drossCollectorSatelliteCount,
+      orbitVisualRadius,
+    )
+  }
+
+  if (hasBuiltRefinery && !scannerLaserUnlocked && !debugUnlockAllTools) {
+    scannerLaserUnlocked = true
+    scannerSatelliteCount = Math.max(1, scannerSatelliteCount)
+    refreshToolCosts()
     satelliteDots.setCounts(
       orbitalSatelliteCount,
       excavatingSatelliteCount,
@@ -2638,6 +2714,25 @@ function tick(): void {
     )
   ) {
     markMatterHudDirty()
+  }
+
+  if (hooverPointerDown && lastHooverClient && voxelCells.length > 0 && drossState.clusters.length > 0) {
+    const idx = asteroidRaycastCellIndex(lastHooverClient.x, lastHooverClient.y)
+    if (idx !== null) {
+      const centerPos = voxelCells[idx]!.pos
+      if (
+        stepDrossHoover(
+          dtMs / 1000,
+          drossState,
+          resourceTallies,
+          centerPos,
+          gameBalance.drossHooverRadiusVox,
+          gameBalance,
+        )
+      ) {
+        markMatterHudDirty()
+      }
+    }
   }
 
   const capHud = computeEnergyCap(voxelCells, debugEnergyCapBonus)

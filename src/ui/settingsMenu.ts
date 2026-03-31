@@ -275,6 +275,13 @@ const GAMEPLAY_BALANCE_SLIDERS: SliderRow[] = [
     valueDecimals: 5,
   },
   {
+    key: 'drossFogDensityMult',
+    label: 'Cleanup fog density multiplier (debug; scales per-mass fog)',
+    min: 0.1,
+    max: 4,
+    step: 0.05,
+  },
+  {
     key: 'drossFogDensityMax',
     label: 'Cleanup fog density cap (FogExp2 max)',
     min: 0,
@@ -1639,7 +1646,7 @@ export function createSettingsMenu(
   const JITTER_HZ_HI = 0.25
 
   /** Log Hz range for macro note offset jitter only (wider max for fast vibrato). */
-  const NOTE_JITTER_HZ_LO = 0.002
+  const NOTE_JITTER_HZ_LO = 0.00002
   const NOTE_JITTER_HZ_HI = 4
 
   const PAN_LFO_HZ_LO = 0.0005
@@ -2594,6 +2601,319 @@ export function createSettingsMenu(
       applyVoiceMacros()
     },
   )
+
+  const reeseHeading = document.createElement('h4')
+  reeseHeading.className = 'settings-debug-subheading'
+  reeseHeading.style.marginTop = '18px'
+  reeseHeading.textContent = 'Mid reese voice'
+  sectionAsteroidMusic.appendChild(reeseHeading)
+  const reeseHint = document.createElement('p')
+  reeseHint.className = 'settings-debug-hint'
+  reeseHint.textContent =
+    'Dedicated mid-range reese bass voice with its own ordering, pitch jitter, swells, filters, and width. Debug-only; changes take effect immediately in ambient music.'
+  sectionAsteroidMusic.appendChild(reeseHint)
+
+  const reeseToggleRow = document.createElement('div')
+  reeseToggleRow.className = 'settings-row settings-debug-row'
+  const reeseToggleLabel = document.createElement('label')
+  reeseToggleLabel.className = 'settings-checkbox-label'
+  const reeseToggleInput = document.createElement('input')
+  reeseToggleInput.type = 'checkbox'
+  reeseToggleInput.id = 'settings-music-reese-enabled'
+  reeseToggleInput.checked = asteroidMusicDebug.reeseEnabled
+  const reeseToggleText = document.createElement('span')
+  reeseToggleText.textContent = 'Enable mid reese voice'
+  reeseToggleLabel.append(reeseToggleInput, reeseToggleText)
+  reeseToggleRow.appendChild(reeseToggleLabel)
+  reeseToggleInput.addEventListener('change', () => {
+    asteroidMusicDebug.reeseEnabled = reeseToggleInput.checked
+    onAsteroidMusicDebugChange?.()
+  })
+  sectionAsteroidMusic.appendChild(reeseToggleRow)
+
+  const reeseSoloRow = document.createElement('div')
+  reeseSoloRow.className = 'settings-row settings-debug-row'
+  const reeseSoloLabel = document.createElement('label')
+  reeseSoloLabel.className = 'settings-checkbox-label'
+  const reeseSoloInput = document.createElement('input')
+  reeseSoloInput.type = 'checkbox'
+  reeseSoloInput.id = 'settings-music-reese-solo'
+  reeseSoloInput.checked = asteroidMusicDebug.reeseSolo === true
+  const reeseSoloText = document.createElement('span')
+  reeseSoloText.textContent = 'Solo mid reese (mute all other voices)'
+  reeseSoloLabel.append(reeseSoloInput, reeseSoloText)
+  reeseSoloRow.appendChild(reeseSoloLabel)
+  reeseSoloInput.addEventListener('change', () => {
+    asteroidMusicDebug.reeseSolo = reeseSoloInput.checked
+    onAsteroidMusicDebugChange?.()
+  })
+  sectionAsteroidMusic.appendChild(reeseSoloRow)
+
+  const reeseSpecs: MusicSliderSpec[] = [
+    {
+      id: 'settings-music-reese-order-after',
+      label: 'Mid reese — order (voice index after which it may appear)',
+      min: 0,
+      max: 11,
+      step: 1,
+      decimals: 0,
+      read: () => asteroidMusicDebug.reeseOrderAfterVoice,
+      write: (n) => {
+        asteroidMusicDebug.reeseOrderAfterVoice = Math.round(n)
+        onAsteroidMusicDebugChange?.()
+      },
+    },
+    {
+      id: 'settings-music-reese-voice-index',
+      label: 'Mid reese — voice slot index (0–11)',
+      min: 0,
+      max: 11,
+      step: 1,
+      decimals: 0,
+      read: () => asteroidMusicDebug.reeseVoiceIndex,
+      write: (n) => {
+        asteroidMusicDebug.reeseVoiceIndex = Math.round(n)
+        onAsteroidMusicDebugChange?.()
+      },
+    },
+    {
+      id: 'settings-music-reese-pitch',
+      label: 'Mid reese — overall pitch offset (semitones)',
+      min: -36,
+      max: 24,
+      step: 1,
+      decimals: 0,
+      read: () => asteroidMusicDebug.reesePitchSemitones,
+      write: (n) => {
+        asteroidMusicDebug.reesePitchSemitones = Math.round(n)
+        onAsteroidMusicDebugChange?.()
+      },
+    },
+    {
+      id: 'settings-music-reese-pitch-var',
+      label: 'Mid reese — slow pitch variation range (semitones)',
+      min: 0,
+      max: 6,
+      step: 0.5,
+      decimals: 1,
+      read: () => asteroidMusicDebug.reesePitchVariationSemitones,
+      write: (n) => {
+        asteroidMusicDebug.reesePitchVariationSemitones = n
+        onAsteroidMusicDebugChange?.()
+      },
+    },
+    {
+      id: 'settings-music-reese-pitch-jitter-hz',
+      label: 'Mid reese — slow pitch jitter speed (Hz)',
+      min: 0.0001,
+      max: 0.05,
+      step: 0.0001,
+      decimals: 4,
+      read: () => asteroidMusicDebug.reesePitchJitterHz,
+      write: (n) => {
+        asteroidMusicDebug.reesePitchJitterHz = n
+        onAsteroidMusicDebugChange?.()
+      },
+    },
+    {
+      id: 'settings-music-reese-pitch-jitter-rand',
+      label: 'Mid reese — pitch jitter speed randomness',
+      min: 0,
+      max: 1,
+      step: 0.05,
+      decimals: 2,
+      read: () => asteroidMusicDebug.reesePitchJitterRandomness,
+      write: (n) => {
+        asteroidMusicDebug.reesePitchJitterRandomness = n
+        onAsteroidMusicDebugChange?.()
+      },
+    },
+    {
+      id: 'settings-music-reese-slide-sec',
+      label: 'Mid reese — pitch slide time (s)',
+      min: 0,
+      max: 30,
+      step: 0.1,
+      decimals: 1,
+      read: () => asteroidMusicDebug.reesePitchSlideSec ?? 3,
+      write: (n) => {
+        asteroidMusicDebug.reesePitchSlideSec = n
+        onAsteroidMusicDebugChange?.()
+      },
+    },
+    {
+      id: 'settings-music-reese-swells-rate',
+      label: 'Mid reese — swell rate (Hz, very slow)',
+      min: 0.0001,
+      max: 2,
+      step: 0.0001,
+      decimals: 4,
+      read: () => asteroidMusicDebug.reeseSwellsRateHz,
+      write: (n) => {
+        asteroidMusicDebug.reeseSwellsRateHz = n
+        onAsteroidMusicDebugChange?.()
+      },
+    },
+    {
+      id: 'settings-music-reese-swells-depth',
+      label: 'Mid reese — swell depth',
+      min: 0,
+      max: 1,
+      step: 0.05,
+      decimals: 2,
+      read: () => asteroidMusicDebug.reeseSwellsDepth ?? 1,
+      write: (n) => {
+        asteroidMusicDebug.reeseSwellsDepth = n
+        onAsteroidMusicDebugChange?.()
+      },
+    },
+    {
+      id: 'settings-music-reese-swells-rand',
+      label: 'Mid reese — swell randomness',
+      min: 0,
+      max: 1,
+      step: 0.05,
+      decimals: 2,
+      read: () => asteroidMusicDebug.reeseSwellsRandomness,
+      write: (n) => {
+        asteroidMusicDebug.reeseSwellsRandomness = n
+        onAsteroidMusicDebugChange?.()
+      },
+    },
+    {
+      id: 'settings-music-reese-large-swell-rate',
+      label: 'Mid reese — large swell rate (Hz)',
+      min: 0,
+      max: 0.05,
+      step: 0.0001,
+      decimals: 4,
+      read: () => asteroidMusicDebug.reeseLargeSwellRateHz ?? 0,
+      write: (n) => {
+        asteroidMusicDebug.reeseLargeSwellRateHz = n
+        onAsteroidMusicDebugChange?.()
+      },
+    },
+    {
+      id: 'settings-music-reese-drive',
+      label: 'Mid reese — overdrive',
+      min: 0,
+      max: 3,
+      step: 0.05,
+      decimals: 2,
+      read: () => asteroidMusicDebug.reeseDrive ?? 0,
+      write: (n) => {
+        asteroidMusicDebug.reeseDrive = n
+        onAsteroidMusicDebugChange?.()
+      },
+    },
+    {
+      id: 'settings-music-reese-volume',
+      label: 'Mid reese — volume macro',
+      min: 0,
+      max: 1.5,
+      step: 0.05,
+      decimals: 2,
+      read: () => asteroidMusicDebug.reeseVolume,
+      write: (n) => {
+        asteroidMusicDebug.reeseVolume = n
+        onAsteroidMusicDebugChange?.()
+      },
+    },
+    {
+      id: 'settings-music-reese-width',
+      label: 'Mid reese — stereo width',
+      min: 0,
+      max: 0.95,
+      step: 0.02,
+      decimals: 2,
+      read: () => asteroidMusicDebug.reeseWidth,
+      write: (n) => {
+        asteroidMusicDebug.reeseWidth = n
+        onAsteroidMusicDebugChange?.()
+      },
+    },
+    {
+      id: 'settings-music-reese-detune',
+      label: 'Mid reese — detune between carriers (semitones)',
+      min: 0,
+      max: 4,
+      step: 0.05,
+      decimals: 2,
+      read: () => asteroidMusicDebug.reeseDetuneSemitones,
+      write: (n) => {
+        asteroidMusicDebug.reeseDetuneSemitones = n
+        onAsteroidMusicDebugChange?.()
+      },
+    },
+    {
+      id: 'settings-music-reese-hp',
+      label: 'Mid reese — highpass cutoff (Hz)',
+      min: 60,
+      max: 2000,
+      step: 1,
+      decimals: 0,
+      read: () => asteroidMusicDebug.reeseHighpassHz,
+      write: (n) => {
+        asteroidMusicDebug.reeseHighpassHz = n
+        onAsteroidMusicDebugChange?.()
+      },
+    },
+    {
+      id: 'settings-music-reese-lp-base',
+      label: 'Mid reese — lowpass base cutoff (Hz)',
+      min: 0,
+      max: 20000,
+      step: 10,
+      decimals: 0,
+      read: () => asteroidMusicDebug.reeseLowpassBaseHz,
+      write: (n) => {
+        asteroidMusicDebug.reeseLowpassBaseHz = n
+        onAsteroidMusicDebugChange?.()
+      },
+    },
+    {
+      id: 'settings-music-reese-lp-attack',
+      label: 'Mid reese — lowpass envelope attack (s)',
+      min: 0.01,
+      max: 4,
+      step: 0.01,
+      decimals: 2,
+      read: () => asteroidMusicDebug.reeseLowpassEnvAttackSec,
+      write: (n) => {
+        asteroidMusicDebug.reeseLowpassEnvAttackSec = n
+        onAsteroidMusicDebugChange?.()
+      },
+    },
+    {
+      id: 'settings-music-reese-lp-decay',
+      label: 'Mid reese — lowpass envelope decay (s)',
+      min: 0.05,
+      max: 12,
+      step: 0.05,
+      decimals: 2,
+      read: () => asteroidMusicDebug.reeseLowpassEnvDecaySec,
+      write: (n) => {
+        asteroidMusicDebug.reeseLowpassEnvDecaySec = n
+        onAsteroidMusicDebugChange?.()
+      },
+    },
+    {
+      id: 'settings-music-reese-lp-depth',
+      label: 'Mid reese — lowpass envelope depth (Hz)',
+      min: 0,
+      max: 20000,
+      step: 10,
+      decimals: 0,
+      read: () => asteroidMusicDebug.reeseLowpassEnvDepthHz,
+      write: (n) => {
+        asteroidMusicDebug.reeseLowpassEnvDepthHz = n
+        onAsteroidMusicDebugChange?.()
+      },
+    },
+  ]
+  for (const spec of reeseSpecs) {
+    appendMusicSliderRow(sectionAsteroidMusic, spec)
+  }
   appendVoiceLogHzSliderRow(
     sectionAsteroidMusic,
     'Macro — pan LFO speed (Hz, log slider)',
@@ -2770,6 +3090,150 @@ export function createSettingsMenu(
     sectionAsteroidMusic.appendChild(h)
   }
 
+  // Macros — fast tremolo swells and desync.
+  const musicMacroHeading = document.createElement('h4')
+  musicMacroHeading.className = 'settings-debug-subheading'
+  musicMacroHeading.style.marginTop = '14px'
+  musicMacroHeading.textContent = 'Asteroid music — tremolo macros'
+  sectionAsteroidMusic.appendChild(musicMacroHeading)
+
+  const tremoloMacroSpecs: MusicSliderSpec[] = [
+    {
+      id: 'settings-music-tremolo-depth',
+      label: 'Tremolo depth (fast layer)',
+      min: 0,
+      max: 1.6,
+      step: 0.02,
+      decimals: 2,
+      read: () => vm().tremoloDepth,
+      write: (n) => {
+        vm().tremoloDepth = n
+        applyVoiceMacros()
+      },
+    },
+    {
+      id: 'settings-music-tremolo-base-hz',
+      label: 'Tremolo base rate (Hz, fast layer)',
+      min: 0.8,
+      max: 12,
+      step: 0.05,
+      decimals: 2,
+      read: () => vm().tremoloBaseHz,
+      write: (n) => {
+        vm().tremoloBaseHz = n
+        applyVoiceMacros()
+      },
+    },
+    {
+      id: 'settings-music-tremolo-desync-width',
+      label: 'Tremolo desync width (0–1)',
+      min: 0,
+      max: 1,
+      step: 0.02,
+      decimals: 2,
+      read: () => vm().tremoloDesyncWidth,
+      write: (n) => {
+        vm().tremoloDesyncWidth = n
+        applyVoiceMacros()
+      },
+    },
+    {
+      id: 'settings-music-tremolo-swells-rate',
+      label: 'Tremolo swells rate (depth jitter Hz)',
+      min: 0.0001,
+      max: 0.1,
+      step: 0.0001,
+      decimals: 4,
+      read: () => vm().tremoloDepthJitterHz,
+      write: (n) => {
+        vm().tremoloDepthJitterHz = n
+        applyVoiceMacros()
+      },
+    },
+    {
+      id: 'settings-music-tremolo-swells-rate-jitter',
+      label: 'Tremolo swells rate jitter depth',
+      min: 0,
+      max: 0.5,
+      step: 0.01,
+      decimals: 2,
+      read: () => vm().tremoloDepthJitterRateJitterDepth,
+      write: (n) => {
+        vm().tremoloDepthJitterRateJitterDepth = n
+        applyVoiceMacros()
+      },
+    },
+    {
+      id: 'settings-music-tremolo-swells-rate-jitter-hz',
+      label: 'Tremolo swells rate jitter Hz',
+      min: 0.0001,
+      max: 0.5,
+      step: 0.0005,
+      decimals: 4,
+      read: () => vm().tremoloDepthJitterRateJitterHz,
+      write: (n) => {
+        vm().tremoloDepthJitterRateJitterHz = n
+        applyVoiceMacros()
+      },
+    },
+    {
+      id: 'settings-music-tremolo-rate-jitter-depth',
+      label: 'Tremolo rate jitter depth (fast layer)',
+      min: 0,
+      max: 0.5,
+      step: 0.01,
+      decimals: 2,
+      read: () => vm().tremoloRateJitterDepth,
+      write: (n) => {
+        vm().tremoloRateJitterDepth = n
+        applyVoiceMacros()
+      },
+    },
+    {
+      id: 'settings-music-tremolo-rate-jitter-hz',
+      label: 'Tremolo rate jitter base Hz',
+      min: 0.0005,
+      max: 0.35,
+      step: 0.0005,
+      decimals: 4,
+      read: () => vm().tremoloRateJitterHz,
+      write: (n) => {
+        vm().tremoloRateJitterHz = n
+        applyVoiceMacros()
+      },
+    },
+    {
+      id: 'settings-music-tremolo-rate-jitter-morph-depth',
+      label: 'Tremolo rate jitter morph depth',
+      min: 0,
+      max: 0.5,
+      step: 0.01,
+      decimals: 2,
+      read: () => vm().tremoloRateJitterMorphDepth,
+      write: (n) => {
+        vm().tremoloRateJitterMorphDepth = n
+        applyVoiceMacros()
+      },
+    },
+    {
+      id: 'settings-music-tremolo-rate-jitter-morph-hz',
+      label: 'Tremolo rate jitter morph Hz',
+      min: 0.0001,
+      max: 0.5,
+      step: 0.0005,
+      decimals: 4,
+      read: () => vm().tremoloRateJitterMorphHz,
+      write: (n) => {
+        vm().tremoloRateJitterMorphHz = n
+        applyVoiceMacros()
+      },
+    },
+  ]
+
+  for (const spec of tremoloMacroSpecs) {
+    appendMusicSliderRow(sectionAsteroidMusic, spec)
+  }
+
   const musicBusChorusSpecs: MusicSliderSpec[] = [
     {
       id: 'settings-music-chorus-mix',
@@ -2925,6 +3389,42 @@ export function createSettingsMenu(
       },
     },
     {
+      id: 'settings-music-pre-reverb-stereo-delay-feedback-jitter-depth',
+      label: 'Bus — pre-reverb stereo delay feedback jitter depth (0 = static)',
+      min: 0,
+      max: 1,
+      step: 0.02,
+      decimals: 2,
+      read: () => asteroidMusicDebug.preReverbStereoDelayFeedbackJitterDepth,
+      write: (n) => {
+        asteroidMusicDebug.preReverbStereoDelayFeedbackJitterDepth = n
+      },
+    },
+    {
+      id: 'settings-music-pre-reverb-stereo-delay-feedback-jitter-rate',
+      label: 'Bus — pre-reverb stereo delay feedback jitter rate (Hz; very slow)',
+      min: 0.00001,
+      max: 0.1,
+      step: 0.00001,
+      decimals: 5,
+      read: () => asteroidMusicDebug.preReverbStereoDelayFeedbackJitterHz,
+      write: (n) => {
+        asteroidMusicDebug.preReverbStereoDelayFeedbackJitterHz = n
+      },
+    },
+    {
+      id: 'settings-music-pre-reverb-stereo-delay-feedback-jitter-rand',
+      label: 'Bus — pre-reverb stereo delay feedback jitter randomness (0 = fixed rate, 1 = drifting)',
+      min: 0,
+      max: 1,
+      step: 0.02,
+      decimals: 2,
+      read: () => asteroidMusicDebug.preReverbStereoDelayFeedbackJitterRandomness,
+      write: (n) => {
+        asteroidMusicDebug.preReverbStereoDelayFeedbackJitterRandomness = n
+      },
+    },
+    {
       id: 'settings-music-pre-reverb-stereo-delay-hpf',
       label: 'Bus — pre-reverb stereo delay feedback highpass (Hz)',
       min: 20,
@@ -3021,6 +3521,30 @@ export function createSettingsMenu(
       read: () => asteroidMusicDebug.reverbMix,
       write: (n) => {
         asteroidMusicDebug.reverbMix = n
+      },
+    },
+    {
+      id: 'settings-music-reverb-mix-lfo-depth',
+      label: 'Bus — reverb mix LFO depth (0 = static, 1 ≈ wide wet/dry wobble)',
+      min: 0,
+      max: 1,
+      step: 0.02,
+      decimals: 2,
+      read: () => asteroidMusicDebug.reverbMixLfoDepth ?? 0,
+      write: (n) => {
+        asteroidMusicDebug.reverbMixLfoDepth = n
+      },
+    },
+    {
+      id: 'settings-music-reverb-mix-lfo-hz',
+      label: 'Bus — reverb mix LFO rate (Hz, very slow)',
+      min: 0.00001,
+      max: 0.05,
+      step: 0.00001,
+      decimals: 5,
+      read: () => asteroidMusicDebug.reverbMixLfoHz ?? 0.001,
+      write: (n) => {
+        asteroidMusicDebug.reverbMixLfoHz = n
       },
     },
     {

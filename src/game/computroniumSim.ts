@@ -16,7 +16,7 @@ export interface LaserUnlockApply {
   depthScanUnlocked: boolean
   /** Fifth stage: cleanup collector satellite deploy. */
   drossCollectorUnlocked: boolean
-  /** Tier 6: EM Catapult tool (new asteroid while keeping research); same threshold as halides refinery. */
+  /** Tier 6: EM Catapult tool (new asteroid while keeping research). */
   emCatapultUnlocked: boolean
   orbitalSatelliteCount: number
   excavatingSatelliteCount: number
@@ -142,7 +142,7 @@ export function getDrossCollectorDeployUiPhase(
 }
 
 /**
- * EM Catapult tool UI: tier 6 (t6 = 6 × points-per-stage), after cleanup collector tier; same threshold as halides refinery.
+ * EM Catapult tool UI: tier 6 (t6 = 6 × points-per-stage), after cleanup collector tier.
  */
 export function getEmCatapultToolUiPhase(
   state: {

@@ -1,7 +1,7 @@
 import type { GameBalance } from './gameBalance'
 import type { LaserUnlockApply } from './computroniumSim'
 import { applyResearchTierGrant } from './computroniumSim'
-import { RESOURCE_IDS_ORDERED, ROOT_RESOURCE_IDS, type ResourceId } from './resources'
+import { RESOURCE_DEFS, RESOURCE_IDS_ORDERED, ROOT_RESOURCE_IDS, type ResourceId } from './resources'
 import type { VoxelKind } from './voxelKinds'
 import type { VoxelPos } from '../scene/asteroid/generateAsteroidVoxels'
 
@@ -23,6 +23,8 @@ export interface DiscoveryOffer {
   /** Small ASCII illustration (modal only; not stored in lore log). */
   asciiArtLines: string[]
   bodyLines: string[]
+  /** Optional explicit resource delta summary (e.g. "+3 Reg, -1 Fe"). */
+  resourceSummaryLine: string | null
   archetype: DiscoveryArchetype
   resourceDelta: Partial<Record<ResourceId, number>>
   researchTierGrant: 1 | 2 | 3 | 4 | null
@@ -228,6 +230,18 @@ function pickRootResource(h: number): { id: ResourceId; next: number } {
   return { id: ROOT_RESOURCE_IDS[idx]!, next }
 }
 
+function formatResourceDeltaSummary(delta: Partial<Record<ResourceId, number>>): string | null {
+  const parts: string[] = []
+  for (const id of RESOURCE_IDS_ORDERED) {
+    const n = delta[id]
+    if (n === undefined || n === 0) continue
+    const sign = n > 0 ? '+' : ''
+    parts.push(`${sign}${n} ${RESOURCE_DEFS[id].hudAbbrev}`)
+  }
+  if (parts.length === 0) return null
+  return parts.join(', ')
+}
+
 /**
  * Deterministic discovery from asteroid seed, voxel position, and per-run counter.
  * Returns null only if all archetype weights are zero (cannot pick an archetype).
@@ -312,6 +326,7 @@ export function rollDiscoveryOffer(
   }
 
   const asciiArtLines = pickDiscoveryAsciiLines(archetype, h, band)
+  const resourceSummaryLine = formatResourceDeltaSummary(resourceDelta)
 
   return {
     id,
@@ -319,6 +334,7 @@ export function rollDiscoveryOffer(
     titleLine,
     asciiArtLines,
     bodyLines,
+    resourceSummaryLine,
     archetype,
     resourceDelta,
     researchTierGrant,

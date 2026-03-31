@@ -30,6 +30,7 @@ function setSceneBackgroundVoid(scene: Scene): void {
 
 export interface DrossFogBalance {
   drossFogDensityPerMass: number
+  drossFogDensityMult: number
   drossFogDensityMax: number
   drossFogColorR: number
   drossFogColorG: number
@@ -42,13 +43,19 @@ export function updateDrossFog(
   balance: DrossFogBalance,
   zoomBlacken01 = 0,
 ): void {
-  const perMass = balance.drossFogDensityPerMass
+  const perMassBase = balance.drossFogDensityPerMass
+  const mult = Number.isFinite(balance.drossFogDensityMult) ? balance.drossFogDensityMult : 1
+  const perMass = perMassBase * mult
   const cap = balance.drossFogDensityMax
   if (
     !Number.isFinite(totalMass) ||
     totalMass <= MASS_EPS ||
+    !Number.isFinite(perMassBase) ||
+    !Number.isFinite(mult) ||
     !Number.isFinite(perMass) ||
     !Number.isFinite(cap) ||
+    perMassBase <= 0 ||
+    mult <= 0 ||
     perMass <= 0 ||
     cap <= 0
   ) {

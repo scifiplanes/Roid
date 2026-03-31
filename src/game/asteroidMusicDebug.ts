@@ -14,7 +14,7 @@ export const VOICE_PITCH_SPREAD_MIN = 0
 export const VOICE_PITCH_SPREAD_MAX = 3
 
 /** Absolute bounds for macro `noteJitterHz` (Settings log slider + persist). */
-export const NOTE_JITTER_HZ_MIN = 0.0005
+export const NOTE_JITTER_HZ_MIN = 0.00002
 export const NOTE_JITTER_HZ_MAX = 4
 
 /** Bounds for `noteJitterRateJitterHz` (slow wobble of note jitter rate; same as LFO `rateJitterHz`). */
@@ -47,6 +47,14 @@ export interface AsteroidMusicVoiceDebug {
   ampLfo2Depth: number
   ampLfo2SpeedModDepthHz: number
   ampLfo2SpeedModHz: number
+  /** Fast tremolo layer: base rate (Hz). */
+  fastAmpLfoHz: number
+  /** Fast tremolo layer: effective depth into VCA (already includes macro swells). */
+  fastAmpLfoDepth: number
+  /** Fast tremolo layer: depth (Hz) for rate LFO modulation. */
+  fastAmpLfoSpeedModDepthHz: number
+  /** Fast tremolo layer: slow LFO that modulates fast tremolo rate (Hz). */
+  fastAmpLfoSpeedModHz: number
   /** Very slow pan sweep (Hz); multi-minute periods typical. */
   panLfoHz: number
   /** Max stereo pan excursion (0 = center, ~1 = full L/R from sine). */
@@ -66,6 +74,26 @@ export interface AsteroidMusicVoiceMacroDebug {
   ampLfo2Depth: number
   ampLfo2SpeedModDepthHz: number
   ampLfo2SpeedModHz: number
+  /** Fast tremolo global depth (0–1.6; macro before per-voice spread + swells). */
+  tremoloDepth: number
+  /** Base rate (Hz) for fast tremolo LFO per voice (before desync/jitter). */
+  tremoloBaseHz: number
+  /** 0–1: width of deterministic inter-voice spread for fast tremolo rate. */
+  tremoloDesyncWidth: number
+  /** Base Hz of slow depth jitter (swells) applied to fast tremolo depth. */
+  tremoloDepthJitterHz: number
+  /** 0–0.5: multiplicative wobble on depth jitter rate. */
+  tremoloDepthJitterRateJitterDepth: number
+  /** Hz of the depth jitter-rate wobble. */
+  tremoloDepthJitterRateJitterHz: number
+  /** 0–0.5: multiplicative wobble on fast tremolo rate itself. */
+  tremoloRateJitterDepth: number
+  /** Base Hz of rate jitter applied to fast tremolo rate. */
+  tremoloRateJitterHz: number
+  /** 0–0.5: how strongly `tremoloRateJitterHz` itself is modulated over time. */
+  tremoloRateJitterMorphDepth: number
+  /** Hz of the morph LFO on `tremoloRateJitterHz`. */
+  tremoloRateJitterMorphHz: number
   panLfoHz: number
   panLfoDepth: number
   /** Added to each voice’s note (with small per-voice jitter) after spread. */
@@ -182,6 +210,12 @@ export interface AsteroidMusicDebug {
   preReverbStereoDelayTimeMs: number
   /** Feedback in each delay loop (0–1). */
   preReverbStereoDelayFeedback: number
+  /** Macro jitter depth for stereo delay feedback (0–1; engine clamps). */
+  preReverbStereoDelayFeedbackJitterDepth: number
+  /** Base Hz for slow jitter of stereo delay feedback amount. */
+  preReverbStereoDelayFeedbackJitterHz: number
+  /** 0–1: how strongly the jitter rate itself drifts over time. */
+  preReverbStereoDelayFeedbackJitterRandomness: number
   /** Highpass in feedback loop (Hz). */
   preReverbStereoDelayHighpassHz: number
   /** Lowpass in feedback loop (Hz); darkens repeats. */
@@ -229,6 +263,57 @@ export interface AsteroidMusicDebug {
 
   /** Wet-only post-reverb saturation: 0 = linear, 1 = strong clip. */
   busWetSaturatorAmount: number
+  /** Very slow random-ish wobble of reverb mix (0–1 depth, separate Hz). */
+  reverbMixLfoDepth: number
+  reverbMixLfoHz: number
+
+  /** Enable the dedicated mid-range reese bass voice. */
+  reeseEnabled: boolean
+  /** When true, only the reese voice is audible; all others are forced off. */
+  reeseSolo: boolean
+  /** Which voice index (0–11) is treated as the reese voice. */
+  reeseVoiceIndex: number
+  /**
+   * Order gate: reese voice only becomes eligible when the smoothed target voice count
+   * exceeds this index (0–11). Interpreted vs `displayedVoices` in the engine.
+   */
+  reeseOrderAfterVoice: number
+  /** Overall pitch offset in semitones vs the voice’s default triad position. */
+  reesePitchSemitones: number
+  /** Extra slow pitch wander depth in semitones (0…~4). */
+  reesePitchVariationSemitones: number
+  /** Slow pitch jitter rate (Hz); very low values (minutes-scale). */
+  reesePitchJitterHz: number
+  /** 0–1: randomness on reese pitch jitter rate (speed, not depth). */
+  reesePitchJitterRandomness: number
+  /** Base rate (Hz) of very slow macro swells on the reese voice level. */
+  reeseSwellsRateHz: number
+  /** 0–1: how irregular reese swell timing is. */
+  reeseSwellsRandomness: number
+  /** Macro gain multiplier for the reese voice (0–1+). */
+  reeseVolume: number
+  /** 0–1: stereo / detune width macro for the reese voice. */
+  reeseWidth: number
+  /** Extra mutual detune between the reese’s internal oscillators (semitones). */
+  reeseDetuneSemitones: number
+  /** Highpass cutoff (Hz) for the reese voice (replaces bandpass). */
+  reeseHighpassHz: number
+  /** Base lowpass cutoff (Hz) for the reese voice before envelope. */
+  reeseLowpassBaseHz: number
+  /** Attack time (s) for the reese lowpass envelope. */
+  reeseLowpassEnvAttackSec: number
+  /** Decay time (s) for the reese lowpass envelope. */
+  reeseLowpassEnvDecaySec: number
+  /** Depth (Hz) the lowpass cutoff is pushed above base at envelope peak. */
+  reeseLowpassEnvDepthHz: number
+  /** Base time constant (s) for reese-only pitch glide toward its snapped note; 0 = instant. */
+  reesePitchSlideSec: number
+  /** 0–1: depth multiplier for the reese lowpass envelope (0 = flat at base, 1 = full depth). */
+  reeseSwellsDepth: number
+  /** 0–3: extra pre-filter gain into the reese overdrive shaper (0 = clean). */
+  reeseDrive: number
+  /** Very slow gate rate (Hz) for large reese amplitude swells; 0 = always eligible. */
+  reeseLargeSwellRateHz: number
 }
 
 /** Deterministic [0, 1) — varies per voice index for subtle randomisation. */
@@ -256,12 +341,18 @@ const SALT_RATE_SPD1 = 0x222b2
 const SALT_RATE_AMP2 = 0x333c3
 const SALT_RATE_SPD2 = 0x444d4
 const SALT_RATE_PAN = 0x555e5
+const SALT_TREMOLO_FAST_RATE = 0x5c5f6
+const SALT_TREMOLO_FAST_RATE_JIT = 0x6d606
+const SALT_TREMOLO_FAST_RATE_MORPH = 0x7e717
+const SALT_TREMOLO_DEPTH_JIT_RATE = 0x8f828
+const SALT_TREMOLO_DEPTH_JIT_SINE = 0x9f939
 const SALT_NOTE_RJ_STEP = 0x666f6
 const SALT_NOTE_RJ_SINE = 0x77707
 const SALT_PHRASE_START = 0x88818
 const SALT_PHRASE_LEN = 0x99929
 const SALT_PHRASE_RJ_STEP = 0xaa04b
 const SALT_PHRASE_RJ_SINE = 0xbb05c
+const SALT_REESE_PITCH = 0xcc06d
 
 /**
  * Deterministic [0, 1] envelope: occasional boosted note-jitter “phrases” shared by all voices.
@@ -413,6 +504,10 @@ function defaultVoice(i: number): AsteroidMusicVoiceDebug {
     ampLfo2Hz: 0.048 + u01(i, 0xb73a) * 0.11,
     ampLfo2SpeedModDepthHz: 0.018 + u01(i, 0xc84b) * 0.045,
     ampLfo2SpeedModHz: 0.022 + u01(i, 0xd95c) * 0.088,
+    fastAmpLfoHz: 3,
+    fastAmpLfoDepth: 0,
+    fastAmpLfoSpeedModDepthHz: 0,
+    fastAmpLfoSpeedModHz: 0.02,
     panLfoHz: 0.0015 + u01(i, 0xea6d) * 0.0185,
     panLfoDepth: 0.15 + u01(i, 0xfb7e) * 0.3,
     note: 0,
@@ -438,7 +533,7 @@ const DEFAULT_JITTER_MACROS: Pick<
   | 'phraseDepth'
 > = {
   noteJitterDepthSemitones: 0,
-  noteJitterHz: 0.02,
+  noteJitterHz: 0.0002,
   noteJitterMode: 'sine',
   noteJitterRateJitterDepth: 0,
   noteJitterRateJitterHz: 0.02,
@@ -609,10 +704,202 @@ export function ensureVoiceMacroJitterFields(debug: AsteroidMusicDebug): void {
   } else {
     m.phraseDepth = clamp(m.phraseDepth, 0, PHRASE_DEPTH_MAX)
   }
+  if (typeof m.tremoloDepth !== 'number' || !Number.isFinite(m.tremoloDepth)) {
+    m.tremoloDepth = 0.4
+  } else {
+    m.tremoloDepth = clamp(m.tremoloDepth, 0, 1.6)
+  }
+  if (typeof m.tremoloBaseHz !== 'number' || !Number.isFinite(m.tremoloBaseHz)) {
+    m.tremoloBaseHz = 3
+  } else {
+    m.tremoloBaseHz = clamp(m.tremoloBaseHz, 0.8, 12)
+  }
+  if (typeof m.tremoloDesyncWidth !== 'number' || !Number.isFinite(m.tremoloDesyncWidth)) {
+    m.tremoloDesyncWidth = 0.6
+  } else {
+    m.tremoloDesyncWidth = clamp(m.tremoloDesyncWidth, 0, 1)
+  }
+  if (typeof m.tremoloDepthJitterHz !== 'number' || !Number.isFinite(m.tremoloDepthJitterHz)) {
+    m.tremoloDepthJitterHz = 0.006
+  } else {
+    m.tremoloDepthJitterHz = clamp(m.tremoloDepthJitterHz, 0.0001, 0.1)
+  }
+  if (
+    typeof m.tremoloDepthJitterRateJitterDepth !== 'number' ||
+    !Number.isFinite(m.tremoloDepthJitterRateJitterDepth)
+  ) {
+    m.tremoloDepthJitterRateJitterDepth = 0.15
+  } else {
+    m.tremoloDepthJitterRateJitterDepth = clamp(m.tremoloDepthJitterRateJitterDepth, 0, 0.5)
+  }
+  if (
+    typeof m.tremoloDepthJitterRateJitterHz !== 'number' ||
+    !Number.isFinite(m.tremoloDepthJitterRateJitterHz)
+  ) {
+    m.tremoloDepthJitterRateJitterHz = 0.02
+  } else {
+    m.tremoloDepthJitterRateJitterHz = clamp(m.tremoloDepthJitterRateJitterHz, 0.0001, 0.5)
+  }
+  if (typeof m.tremoloRateJitterDepth !== 'number' || !Number.isFinite(m.tremoloRateJitterDepth)) {
+    m.tremoloRateJitterDepth = 0.18
+  } else {
+    m.tremoloRateJitterDepth = clamp(m.tremoloRateJitterDepth, 0, 0.5)
+  }
+  if (typeof m.tremoloRateJitterHz !== 'number' || !Number.isFinite(m.tremoloRateJitterHz)) {
+    m.tremoloRateJitterHz = 0.02
+  } else {
+    m.tremoloRateJitterHz = clamp(m.tremoloRateJitterHz, 0.0005, 0.35)
+  }
+  if (
+    typeof m.tremoloRateJitterMorphDepth !== 'number' ||
+    !Number.isFinite(m.tremoloRateJitterMorphDepth)
+  ) {
+    m.tremoloRateJitterMorphDepth = 0.1
+  } else {
+    m.tremoloRateJitterMorphDepth = clamp(m.tremoloRateJitterMorphDepth, 0, 0.5)
+  }
+  if (
+    typeof m.tremoloRateJitterMorphHz !== 'number' ||
+    !Number.isFinite(m.tremoloRateJitterMorphHz)
+  ) {
+    m.tremoloRateJitterMorphHz = 0.005
+  } else {
+    m.tremoloRateJitterMorphHz = clamp(m.tremoloRateJitterMorphHz, 0.0001, 0.5)
+  }
   if (typeof debug.voiceMacroJitterTimeSec !== 'number' || !Number.isFinite(debug.voiceMacroJitterTimeSec)) {
     debug.voiceMacroJitterTimeSec = 0
   } else {
     debug.voiceMacroJitterTimeSec = Math.max(0, debug.voiceMacroJitterTimeSec)
+  }
+
+  // Reese-specific clamps
+  const nyquistGuess = 20000
+  const busHzRaw = debug.busLowPassHz
+  const busHz = clamp(
+    typeof busHzRaw === 'number' && Number.isFinite(busHzRaw) ? busHzRaw : 20000,
+    80,
+    nyquistGuess,
+  )
+  if (typeof debug.reeseEnabled !== 'boolean') {
+    debug.reeseEnabled = true
+  }
+  if (typeof debug.reeseSolo !== 'boolean') {
+    debug.reeseSolo = false
+  }
+  if (typeof debug.reeseVoiceIndex !== 'number' || !Number.isFinite(debug.reeseVoiceIndex)) {
+    debug.reeseVoiceIndex = 0
+  } else {
+    debug.reeseVoiceIndex = Math.min(ASTEROID_MUSIC_VOICE_COUNT - 1, Math.max(0, Math.round(debug.reeseVoiceIndex)))
+  }
+  if (typeof debug.reeseOrderAfterVoice !== 'number' || !Number.isFinite(debug.reeseOrderAfterVoice)) {
+    debug.reeseOrderAfterVoice = 3
+  } else {
+    debug.reeseOrderAfterVoice = Math.min(
+      ASTEROID_MUSIC_VOICE_COUNT - 1,
+      Math.max(0, Math.round(debug.reeseOrderAfterVoice)),
+    )
+  }
+  if (typeof debug.reesePitchSemitones !== 'number' || !Number.isFinite(debug.reesePitchSemitones)) {
+    debug.reesePitchSemitones = -12
+  } else {
+    debug.reesePitchSemitones = clamp(Math.round(debug.reesePitchSemitones), -36, 24)
+  }
+  if (
+    typeof debug.reesePitchVariationSemitones !== 'number' ||
+    !Number.isFinite(debug.reesePitchVariationSemitones)
+  ) {
+    debug.reesePitchVariationSemitones = 2
+  } else {
+    debug.reesePitchVariationSemitones = clamp(debug.reesePitchVariationSemitones, 0, 6)
+  }
+  if (typeof debug.reesePitchJitterHz !== 'number' || !Number.isFinite(debug.reesePitchJitterHz)) {
+    debug.reesePitchJitterHz = 0.003
+  } else {
+    debug.reesePitchJitterHz = clamp(debug.reesePitchJitterHz, 0.0001, 0.05)
+  }
+  if (
+    typeof debug.reesePitchJitterRandomness !== 'number' ||
+    !Number.isFinite(debug.reesePitchJitterRandomness)
+  ) {
+    debug.reesePitchJitterRandomness = 0.35
+  } else {
+    debug.reesePitchJitterRandomness = clamp(debug.reesePitchJitterRandomness, 0, 1)
+  }
+  if (typeof debug.reeseSwellsRateHz !== 'number' || !Number.isFinite(debug.reeseSwellsRateHz)) {
+    debug.reeseSwellsRateHz = 0.003
+  } else {
+    debug.reeseSwellsRateHz = clamp(debug.reeseSwellsRateHz, 0.0001, 2)
+  }
+  if (typeof debug.reeseSwellsRandomness !== 'number' || !Number.isFinite(debug.reeseSwellsRandomness)) {
+    debug.reeseSwellsRandomness = 0.4
+  } else {
+    debug.reeseSwellsRandomness = clamp(debug.reeseSwellsRandomness, 0, 1)
+  }
+  if (typeof debug.reeseVolume !== 'number' || !Number.isFinite(debug.reeseVolume)) {
+    debug.reeseVolume = 0.7
+  } else {
+    debug.reeseVolume = clamp(debug.reeseVolume, 0, 1.5)
+  }
+  if (typeof debug.reeseWidth !== 'number' || !Number.isFinite(debug.reeseWidth)) {
+    debug.reeseWidth = 0.85
+  } else {
+    debug.reeseWidth = clamp(debug.reeseWidth, 0, 1)
+  }
+  if (typeof debug.reeseDetuneSemitones !== 'number' || !Number.isFinite(debug.reeseDetuneSemitones)) {
+    debug.reeseDetuneSemitones = 0.1
+  } else {
+    debug.reeseDetuneSemitones = clamp(debug.reeseDetuneSemitones, 0, 4)
+  }
+  if (typeof debug.reeseHighpassHz !== 'number' || !Number.isFinite(debug.reeseHighpassHz)) {
+    debug.reeseHighpassHz = 200
+  } else {
+    debug.reeseHighpassHz = clamp(debug.reeseHighpassHz, 40, 0.8 * busHz)
+  }
+  if (typeof debug.reeseLowpassBaseHz !== 'number' || !Number.isFinite(debug.reeseLowpassBaseHz)) {
+    debug.reeseLowpassBaseHz = 2500
+  } else {
+    const lpMin = 0
+    const lpMax = busHz
+    debug.reeseLowpassBaseHz = clamp(debug.reeseLowpassBaseHz, lpMin, lpMax)
+  }
+  if (typeof debug.reeseLowpassEnvAttackSec !== 'number' || !Number.isFinite(debug.reeseLowpassEnvAttackSec)) {
+    debug.reeseLowpassEnvAttackSec = 0.12
+  } else {
+    debug.reeseLowpassEnvAttackSec = clamp(debug.reeseLowpassEnvAttackSec, 0.01, 4)
+  }
+  if (typeof debug.reeseLowpassEnvDecaySec !== 'number' || !Number.isFinite(debug.reeseLowpassEnvDecaySec)) {
+    debug.reeseLowpassEnvDecaySec = 1.6
+  } else {
+    debug.reeseLowpassEnvDecaySec = clamp(debug.reeseLowpassEnvDecaySec, 0.05, 12)
+  }
+  if (typeof debug.reeseLowpassEnvDepthHz !== 'number' || !Number.isFinite(debug.reeseLowpassEnvDepthHz)) {
+    debug.reeseLowpassEnvDepthHz = 3500
+  } else {
+    const maxDepth = Math.max(0, busHz - debug.reeseLowpassBaseHz - 10)
+    debug.reeseLowpassEnvDepthHz = clamp(debug.reeseLowpassEnvDepthHz, 0, maxDepth)
+  }
+  if (typeof debug.reesePitchSlideSec !== 'number' || !Number.isFinite(debug.reesePitchSlideSec)) {
+    debug.reesePitchSlideSec = 3
+  } else {
+    debug.reesePitchSlideSec = clamp(debug.reesePitchSlideSec, 0, 30)
+  }
+  if (typeof debug.reeseSwellsDepth !== 'number' || !Number.isFinite(debug.reeseSwellsDepth)) {
+    debug.reeseSwellsDepth = 1
+  } else {
+    debug.reeseSwellsDepth = clamp(debug.reeseSwellsDepth, 0, 1)
+  }
+  if (typeof debug.reeseDrive !== 'number' || !Number.isFinite(debug.reeseDrive)) {
+    debug.reeseDrive = 0
+  } else {
+    debug.reeseDrive = clamp(debug.reeseDrive, 0, 3)
+  }
+  if (
+    typeof debug.reeseLargeSwellRateHz !== 'number' ||
+    !Number.isFinite(debug.reeseLargeSwellRateHz)
+  ) {
+    debug.reeseLargeSwellRateHz = 0
+  } else {
+    debug.reeseLargeSwellRateHz = clamp(debug.reeseLargeSwellRateHz, 0, 0.05)
   }
 }
 
@@ -627,6 +914,16 @@ export function voiceMacrosFromVoice(v: AsteroidMusicVoiceDebug): AsteroidMusicV
     ampLfo2Depth: v.ampLfo2Depth,
     ampLfo2SpeedModDepthHz: v.ampLfo2SpeedModDepthHz,
     ampLfo2SpeedModHz: v.ampLfo2SpeedModHz,
+    tremoloDepth: 0.4,
+    tremoloBaseHz: 3,
+    tremoloDesyncWidth: 0.6,
+    tremoloDepthJitterHz: 0.006,
+    tremoloDepthJitterRateJitterDepth: 0.15,
+    tremoloDepthJitterRateJitterHz: 0.02,
+    tremoloRateJitterDepth: 0.18,
+    tremoloRateJitterHz: 0.02,
+    tremoloRateJitterMorphDepth: 0.1,
+    tremoloRateJitterMorphHz: 0.005,
     panLfoHz: v.panLfoHz,
     panLfoDepth: v.panLfoDepth,
     noteOffset: v.note,
@@ -653,6 +950,14 @@ export function applyVoiceMacrosToVoices(debug: AsteroidMusicDebug, rootMidi: nu
     VOICE_PITCH_SPREAD_MIN,
     VOICE_PITCH_SPREAD_MAX,
   )
+  const reeseEnabled = debug.reeseEnabled === true
+  const reeseIndex = reeseEnabled
+    ? Math.min(
+        ASTEROID_MUSIC_VOICE_COUNT - 1,
+        Math.max(0, Math.round(typeof debug.reeseVoiceIndex === 'number' ? debug.reeseVoiceIndex : 0)),
+      )
+    : -1
+
   for (let i = 0; i < ASTEROID_MUSIC_VOICE_COUNT; i++) {
     const v = debug.voices[i]
     v.amp = clamp(spreadMul(m.amp, i, 0x101d4, 0.055), 0, 0.95)
@@ -694,7 +999,145 @@ export function applyVoiceMacrosToVoices(debug: AsteroidMusicDebug, rootMidi: nu
     panLfoHz = applyRateJitter(panLfoHz, i, t, m, 0.0005, 0.05, SALT_RATE_PAN ^ 0x10000, SALT_RATE_PAN)
     v.panLfoHz = panLfoHz
     v.panLfoDepth = clamp(spreadMul(m.panLfoDepth, i, 0xb0b7e, 0.05), 0, 0.95)
-    v.note = computeVoiceNoteSemitones(m, i, t, rootMidi, scaleSteps, pitchSpreadMul)
+    if (reeseEnabled && i === reeseIndex) {
+      // Reese note: base triad position plus reesePitchSemitones offset only; no global note jitter/spread.
+      const base = rootMidi + defaultSemitonesFromRootForVoice(i)
+      const offset = clamp(Math.round(debug.reesePitchSemitones ?? 0), -36, 24)
+      const rough = base + offset
+      const snapped = snapMidiToScale(rough, rootMidi, scaleSteps)
+      v.note = snapped - base
+    } else {
+      v.note = computeVoiceNoteSemitones(m, i, t, rootMidi, scaleSteps, pitchSpreadMul)
+    }
+
+    // Fast tremolo layer — macro-driven, per-voice desynchronised rate and depth swells.
+    const baseFastHz = clamp(m.tremoloBaseHz, 0.8, 12)
+    const spreadK = 0.25 * clamp(m.tremoloDesyncWidth, 0, 1)
+    let fastHz = clamp(spreadMul(baseFastHz, i, SALT_TREMOLO_FAST_RATE, spreadK), 0.8, 12)
+    // Optional rate jitter morph on the jitter frequency itself.
+    let rateJitHz = clamp(m.tremoloRateJitterHz, 0.0005, 0.35)
+    if (m.tremoloRateJitterMorphDepth > 0 && rateJitHz > 0 && Number.isFinite(t)) {
+      const wMorph = macroJitterWobble(
+        m.rateJitterMode,
+        i,
+        t,
+        clamp(m.tremoloRateJitterMorphHz, 0.0001, 0.5),
+        SALT_TREMOLO_FAST_RATE_MORPH,
+        SALT_TREMOLO_FAST_RATE_MORPH ^ 0x10000,
+      )
+      rateJitHz = clamp(
+        rateJitHz * (1 + clamp(m.tremoloRateJitterMorphDepth, 0, 0.5) * wMorph),
+        0.0005,
+        0.35,
+      )
+    }
+    if (m.tremoloRateJitterDepth > 0 && Number.isFinite(t)) {
+      const wRate = macroJitterWobble(
+        m.rateJitterMode,
+        i,
+        t,
+        rateJitHz,
+        SALT_TREMOLO_FAST_RATE_JIT,
+        SALT_TREMOLO_FAST_RATE_JIT ^ 0x10000,
+      )
+      fastHz = clamp(
+        fastHz * (1 + clamp(m.tremoloRateJitterDepth, 0, 0.5) * wRate),
+        0.8,
+        12,
+      )
+    }
+    v.fastAmpLfoHz = fastHz
+
+    // Depth macro + very slow sine swells with rate jitter.
+    let depthMacro = clamp(m.tremoloDepth, 0, 1.6)
+    const baseDepthJitHz = clamp(m.tremoloDepthJitterHz, 0.0001, 0.1)
+    let depthJitHz = baseDepthJitHz
+    if (m.tremoloDepthJitterRateJitterDepth > 0 && Number.isFinite(t)) {
+      const w = macroJitterWobble(
+        m.noteJitterRateJitterMode,
+        i,
+        t,
+        clamp(m.tremoloDepthJitterRateJitterHz, 0.0001, 0.5),
+        SALT_TREMOLO_DEPTH_JIT_RATE,
+        SALT_TREMOLO_DEPTH_JIT_SINE,
+      )
+      depthJitHz = clamp(
+        baseDepthJitHz * (1 + clamp(m.tremoloDepthJitterRateJitterDepth, 0, 0.5) * w),
+        0.0001,
+        0.1,
+      )
+    }
+    let swell = 1
+    if (Number.isFinite(t) && depthJitHz > 0) {
+      const phase = 2 * Math.PI * depthJitHz * t + 2 * Math.PI * u01(i, SALT_TREMOLO_DEPTH_JIT_SINE)
+      swell = 0.5 + 0.5 * Math.sin(phase)
+    }
+    const depthEff = clamp(depthMacro * swell, 0, 1.6)
+    v.fastAmpLfoDepth = depthEff
+    // Fast tremolo rate LFO (speed LFO) — keep subtle; reuses macro rate jitter Hz band.
+    v.fastAmpLfoSpeedModDepthHz = clamp(m.tremoloRateJitterDepth * 2, 0, 5)
+    v.fastAmpLfoSpeedModHz = clamp(rateJitHz, 0.0005, 0.5)
+
+    // Reese voice overrides: pitch offset, extra slow pitch jitter, swells, width, and macro volume.
+    if (reeseEnabled && i === reeseIndex) {
+      // Pitch: apply overall offset and additional very-slow jitter, independent of phrase spikes.
+      const baseOffset = clamp(Math.round(debug.reesePitchSemitones ?? 0), -36, 24)
+      let extraSemis = 0
+      const depthSemi = clamp(debug.reesePitchVariationSemitones ?? 0, 0, 6)
+      let hz = clamp(debug.reesePitchJitterHz ?? 0.003, 0.0001, 0.05)
+      if (depthSemi > 0 && hz > 0 && Number.isFinite(t)) {
+        if (debug.reesePitchJitterRandomness && Number.isFinite(debug.reesePitchJitterRandomness)) {
+          const rDepth = clamp(debug.reesePitchJitterRandomness, 0, 1)
+          const wSpeed = macroJitterWobble(
+            'sine',
+            i,
+            t,
+            hz * 0.37,
+            SALT_REESE_PITCH ^ 0x10000,
+            SALT_REESE_PITCH ^ 0x20000,
+          )
+          hz = clamp(hz * (1 + rDepth * wSpeed), 0.0001, 0.05)
+        }
+        const phase =
+          2 * Math.PI * hz * t +
+          2 * Math.PI * u01(i, SALT_REESE_PITCH)
+        extraSemis = depthSemi * Math.sin(phase)
+      }
+      v.note += baseOffset + extraSemis
+
+      // Mutual detune between the reese’s two carriers: ±detune around the snapped pitch.
+      const detSemi = clamp(debug.reeseDetuneSemitones ?? 0, 0, 12)
+      const detRatio = 2 ** (detSemi / 12)
+      ;(v as unknown as { carrierDetuneRatio?: number }).carrierDetuneRatio = detRatio
+
+      const volMacro = clamp(debug.reeseVolume ?? 0.7, 0, 1.5)
+      let ampBase = clamp(v.amp * volMacro, 0, 0.95)
+
+      // Large swell gate: very slow randomised pulses that occasionally let the reese emerge.
+      let gate = 1
+      const largeHz = clamp(debug.reeseLargeSwellRateHz ?? 0, 0, 0.05)
+      if (largeHz > 0 && Number.isFinite(t)) {
+        const u = t * largeHz - Math.floor(t * largeHz)
+        const duty = 0.22
+        if (u >= duty) {
+          gate = 0
+        } else {
+          const edge = duty * 0.2
+          if (edge > 1e-6 && u < edge) {
+            gate = 0.5 - 0.5 * Math.cos((Math.PI / edge) * u)
+          } else if (edge > 1e-6 && u > duty - edge) {
+            gate = 0.5 - 0.5 * Math.cos((Math.PI / edge) * (duty - u))
+          } else {
+            gate = 1
+          }
+        }
+      }
+      v.amp = clamp(ampBase * gate, 0, 0.95)
+
+      // Width: override pan LFO depth with reeseWidth macro.
+      const width = clamp(debug.reeseWidth ?? 0.85, 0, 0.95)
+      v.panLfoDepth = width
+    }
   }
 }
 
@@ -743,6 +1186,9 @@ export function createDefaultAsteroidMusicDebug(): AsteroidMusicDebug {
     busLowPassLfoSpeedModDepthHz: 0.012,
     preReverbStereoDelayTimeMs: 520,
     preReverbStereoDelayFeedback: 0.25,
+    preReverbStereoDelayFeedbackJitterDepth: 0,
+    preReverbStereoDelayFeedbackJitterHz: 0,
+    preReverbStereoDelayFeedbackJitterRandomness: 0,
     preReverbStereoDelayHighpassHz: 220,
     preReverbStereoDelayLowpassHz: 10000,
     preReverbStereoDelayVolume: 0.3,
@@ -764,5 +1210,30 @@ export function createDefaultAsteroidMusicDebug(): AsteroidMusicDebug {
     reverbWetFeedback: 0.18,
     reverbConvolverNormalize: true,
     busWetSaturatorAmount: 0,
+
+    reeseEnabled: true,
+    reeseSolo: false,
+    reeseVoiceIndex: 0,
+    reeseOrderAfterVoice: 3,
+    reesePitchSemitones: -12,
+    reesePitchVariationSemitones: 2,
+    reesePitchJitterHz: 0.006,
+    reesePitchJitterRandomness: 0.35,
+    reeseSwellsRateHz: 0.003,
+    reeseSwellsRandomness: 0.4,
+    reeseVolume: 0.7,
+    reeseWidth: 0.85,
+    reeseDetuneSemitones: 0.1,
+    reeseHighpassHz: 200,
+    reeseLowpassBaseHz: 2500,
+    reeseLowpassEnvAttackSec: 0.12,
+    reeseLowpassEnvDecaySec: 1.6,
+    reeseLowpassEnvDepthHz: 3500,
+    reesePitchSlideSec: 3,
+    reeseSwellsDepth: 1,
+    reeseDrive: 0,
+    reeseLargeSwellRateHz: 0,
+    reverbMixLfoDepth: 0,
+    reverbMixLfoHz: 0.001,
   }
 }
