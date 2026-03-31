@@ -1,6 +1,6 @@
 {
   "v": 1,
-  "sunAzimuthDeg": 294.2232539677043,
+  "sunAzimuthDeg": 178.78418196700102,
   "sunElevationDeg": -70,
   "sunLightDebug": {
     "rotateSunAzimuth": true,
@@ -35,10 +35,10 @@
     "depthOverlayVisible": true
   },
   "discoveryAutoResolve": false,
-  "musicVolumeLinear": 0.89,
-  "toolsBarCollapsed": false,
+  "musicVolumeLinear": 0,
+  "toolsBarCollapsed": true,
   "overlayLegendCollapsed": true,
-  "matterHudCollapsed": false,
+  "matterHudCollapsed": true,
   "matterHudCompact": true,
   "colorScheme": "blue"
 }

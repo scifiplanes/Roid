@@ -57,11 +57,16 @@ const STORAGE_KEY = 'roid:seedInventory'
 let state: SeedInventoryState = loadInitialState()
 
 function loadInitialState(): SeedInventoryState {
-  const fallbackSelection: SeedSelection = {
-    seedTypeId: 'basicSeed',
-    lifetimeSec: SEED_DEFS['basicSeed'].lifetimeSec,
-    recipeStack: [],
-  }
+  const fallbackSelection: SeedSelection =
+    sanitizeState({
+      presets: [],
+      selectedPresetId: null,
+      activeSelection: {
+        seedTypeId: 'basicSeed',
+        lifetimeSec: SEED_DEFS['basicSeed'].lifetimeSec,
+        recipeStack: [],
+      } as any,
+    })!.activeSelection
 
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
