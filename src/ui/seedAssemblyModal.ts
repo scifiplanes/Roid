@@ -308,56 +308,75 @@ export function createSeedAssemblyModal(
     const selectedId = options.getSelectedPresetId?.() ?? currentPresetId
     currentPresetId = selectedId ?? null
 
-    for (const preset of presets) {
-      const btn = document.createElement('button')
-      btn.type = 'button'
-      btn.className = 'seed-assembly-presets-tile'
-      const iconSpan = document.createElement('span')
-      iconSpan.className = 'seed-assembly-presets-icon'
-      iconSpan.textContent = iconForSeed(preset.selection.seedTypeId)
-      iconSpan.style.color = cssColorForSeed(preset.selection.seedTypeId)
-      const labelSpan = document.createElement('span')
-      labelSpan.className = 'seed-assembly-presets-name'
-      labelSpan.textContent = preset.name
-      btn.append(iconSpan, labelSpan)
-      const isSelected = preset.id === currentPresetId
-      btn.classList.toggle('seed-assembly-presets-tile--active', isSelected)
-      btn.setAttribute('aria-pressed', isSelected ? 'true' : 'false')
-      presetsList.appendChild(btn)
+    const relicPresets = presets.filter((p) => p.id.startsWith('relic:'))
+    const userPresets = presets.filter((p) => !p.id.startsWith('relic:'))
 
-      btn.addEventListener('click', () => {
-        editorActive = true
-        currentPresetId = preset.id
-        current = {
-          seedTypeId: preset.selection.seedTypeId,
-          lifetimeSec: preset.selection.lifetimeSec,
-          slots: preset.selection.slots.map((s) => ({ ...s })),
-          recipeStack: preset.selection.recipeStack.slice(),
-        }
-        selectedSeedDef = getSeedDef(current.seedTypeId)
-        syncMetaFromSelection()
-        buildSeedList()
-        buildStacksUi()
-        syncPresetNameInput()
-        // Selecting a preset activates both delete affordances.
-        btnDeletePreset.disabled = false
-        btnDeletePresetInline.disabled = false
-        options.onSelectPreset?.(currentPresetId)
-        // Update visual pressed state
-        for (const child of Array.from(presetsList.children)) {
-          if (child instanceof HTMLButtonElement) {
-            const pressed = child === btn
-            child.classList.toggle('seed-assembly-presets-tile--active', pressed)
-            child.setAttribute('aria-pressed', pressed ? 'true' : 'false')
+    function appendSection(label: string, items: typeof presets): void {
+      if (items.length === 0) return
+      const header = document.createElement('div')
+      header.className = 'seed-assembly-presets-section-label'
+      header.textContent = label
+      presetsList.appendChild(header)
+
+      for (const preset of items) {
+        const btn = document.createElement('button')
+        btn.type = 'button'
+        btn.className = 'seed-assembly-presets-tile'
+        const iconSpan = document.createElement('span')
+        iconSpan.className = 'seed-assembly-presets-icon'
+        iconSpan.textContent = iconForSeed(preset.selection.seedTypeId)
+        iconSpan.style.color = cssColorForSeed(preset.selection.seedTypeId)
+        const labelSpan = document.createElement('span')
+        labelSpan.className = 'seed-assembly-presets-name'
+        labelSpan.textContent = preset.name
+        btn.append(iconSpan, labelSpan)
+        const isSelected = preset.id === currentPresetId
+        btn.classList.toggle('seed-assembly-presets-tile--active', isSelected)
+        btn.setAttribute('aria-pressed', isSelected ? 'true' : 'false')
+        presetsList.appendChild(btn)
+
+        btn.addEventListener('click', () => {
+          editorActive = true
+          currentPresetId = preset.id
+          current = {
+            seedTypeId: preset.selection.seedTypeId,
+            lifetimeSec: preset.selection.lifetimeSec,
+            slots: preset.selection.slots.map((s) => ({ ...s })),
+            recipeStack: preset.selection.recipeStack.slice(),
           }
-        }
-        syncEditorVisibility()
-      })
+          selectedSeedDef = getSeedDef(current.seedTypeId)
+          syncMetaFromSelection()
+          buildSeedList()
+          buildStacksUi()
+          syncPresetNameInput()
+          const isRelicLocal = preset.id.startsWith('relic:')
+          btnDeletePreset.disabled = isRelicLocal
+          btnDeletePresetInline.disabled = isRelicLocal
+          options.onSelectPreset?.(currentPresetId)
+          for (const child of Array.from(presetsList.children)) {
+            if (child instanceof HTMLButtonElement) {
+              const pressed = child === btn
+              child.classList.toggle('seed-assembly-presets-tile--active', pressed)
+              child.setAttribute('aria-pressed', pressed ? 'true' : 'false')
+            }
+          }
+          syncEditorVisibility()
+        })
+      }
+    }
+
+    if (relicPresets.length > 0) {
+      appendSection('Relic Seeds', relicPresets)
+    }
+    if (userPresets.length > 0) {
+      appendSection('Saved Seeds', userPresets)
     }
 
     const hasPreset = !!currentPresetId
-    btnDeletePreset.disabled = !hasPreset
-    btnDeletePresetInline.disabled = !hasPreset
+    const selectedPreset = presets.find((p) => p.id === currentPresetId) ?? null
+    const isRelic = !!selectedPreset && selectedPreset.id.startsWith('relic:')
+    btnDeletePreset.disabled = !hasPreset || isRelic
+    btnDeletePresetInline.disabled = !hasPreset || isRelic
     syncPresetNameInput()
     syncEditorVisibility()
   }

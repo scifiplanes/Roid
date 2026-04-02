@@ -1,6 +1,7 @@
 /**
- * Debug tunables for the asteroid music post chain (Settings → Debug → Music output).
- * EQ + high-pass only on the music dry/wet buses, before the global master limiter / `destination`.
+ * Debug tunables for audio output chains:
+ * - Music post chain EQ + high-pass (music-only, after asteroid music bus, before global master limiter).
+ * - Hoover tool lowpass LFO on the shared SFX bus.
  */
 export interface AudioMasterDebug {
   /** High-pass cutoff (Hz); default rolls off sub-bass. */
@@ -11,6 +12,21 @@ export interface AudioMasterDebug {
   eqMidDb: number
   /** High shelf gain (dB) at ~4 kHz. */
   eqHighDb: number
+  /**
+   * Hoover tool sustain: base lowpass cutoff (Hz) on the SFX path.
+   * 0 or less falls back to a conservative default.
+   */
+  hooverLowpassBaseHz: number
+  /**
+   * Hoover tool sustain: peak ±Hz modulation of the lowpass cutoff.
+   * 0 disables the LFO and keeps a fixed cutoff.
+   */
+  hooverLowpassLfoDepthHz: number
+  /**
+   * Hoover tool sustain: sine LFO rate (Hz) modulating the lowpass cutoff.
+   * 0 disables the LFO.
+   */
+  hooverLowpassLfoRateHz: number
 }
 
 export function createDefaultAudioMasterDebug(): AudioMasterDebug {
@@ -19,5 +35,8 @@ export function createDefaultAudioMasterDebug(): AudioMasterDebug {
     eqLowDb: 0,
     eqMidDb: 0,
     eqHighDb: 0,
+    hooverLowpassBaseHz: 120,
+    hooverLowpassLfoDepthHz: 140,
+    hooverLowpassLfoRateHz: 1.6,
   }
 }

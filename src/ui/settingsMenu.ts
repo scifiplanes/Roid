@@ -23,10 +23,8 @@ import type { SunLightDebug } from '../game/sunLightDebug'
 import type { ScanVisualizationDebug } from '../game/scanVisualizationDebug'
 import type { AudioMasterDebug } from '../game/audioMasterDebug'
 import { cancelScheduledMusicPersist, persistAsteroidMusicDebugToProjectNow } from '../game/asteroidMusicPersist'
-import {
-  getDebugProjectAutosave,
-  setDebugProjectAutosave,
-} from '../game/debugProjectAutosave'
+import { getDebugProjectAutosave, setDebugProjectAutosave } from '../game/debugProjectAutosave'
+import { getSandboxModeEnabled, notifySandboxModeListeners, setSandboxModeEnabled } from '../game/sandboxMode'
 import {
   cancelScheduledSettingsClientPersist,
   persistAllDebugSettingsToProjectNow,
@@ -37,11 +35,19 @@ import {
   parseScaleClampMode,
   parseScaleCycleDirection,
 } from '../game/asteroidMusicScale'
+import { pickThudDebug } from '../game/pickThudDebug'
+import { schedulePersistPickThudDebug } from '../game/pickThudPersist'
 import {
   applyDebugPresetFromJsonString,
   exportDebugPresetJson,
 } from '../game/debugPreset'
+import {
+  getDebugInitialToolConfig,
+  setDebugInitialToolConfig,
+  type InitialToolDebugConfig,
+} from '../game/computroniumSim'
 import { COLOR_SCHEME_OPTIONS, type ColorSchemeId } from './colorScheme'
+import { FONT_OPTIONS, type FontId } from './fontTheme'
 
 export interface SettingsMenuOptions {
   /** Optional control(s) to the left of the Settings (F10) button (e.g. overlays menu). */
@@ -79,6 +85,9 @@ export interface SettingsMenuOptions {
   /** UI color scheme for menus / HUD / tools (persisted). */
   initialColorScheme?: ColorSchemeId
   onColorSchemeChange?: (scheme: ColorSchemeId) => void
+  /** UI font for all text (persisted). */
+  initialFontId?: FontId
+  onFontChange?: (next: FontId) => void
   /** Key light azimuth/elevation while rotating (authoritative azimuth lives in main). */
   sunLightDebug: SunLightDebug
   getSunAnglesForLight: () => { az: number; el: number }
@@ -111,9 +120,18 @@ type SliderRow = {
   valueDecimals?: number
 }
 
+const DEBUG_FILTER_STORAGE_KEY = 'roid:debugFilterQuery'
+
 const GAMEPLAY_BALANCE_SLIDERS: SliderRow[] = [
   { key: 'durabilityMult', label: 'Rock durability', min: 0.1, max: 4, step: 0.05 },
   { key: 'replicatorFeedSpeedMult', label: 'Replicator feed speed', min: 0.1, max: 4, step: 0.05 },
+  {
+    key: 'replicatorCannibalFeedSpeedMult',
+    label: 'Replicator cross-strain feed speed',
+    min: 0.1,
+    max: 4,
+    step: 0.05,
+  },
   {
     key: 'replicatorTransformDurationSec',
     label: 'Replicator → structure transform time (sec)',
@@ -196,6 +214,13 @@ const GAMEPLAY_BALANCE_SLIDERS: SliderRow[] = [
     step: 1,
     valueDecimals: 0,
   },
+  {
+    key: 'wreckSpawnProbability',
+    label: 'Wreck spawn probability on new core asset (0 = asteroids only)',
+    min: 0,
+    max: 1,
+    step: 0.01,
+  },
   { key: 'hubPullMult', label: 'Hub pull throughput (local network → root tallies)', min: 0.1, max: 4, step: 0.05 },
   {
     key: 'hubMaxEnergySpendMult',
@@ -253,6 +278,48 @@ const GAMEPLAY_BALANCE_SLIDERS: SliderRow[] = [
     label: 'Replicator cleanup spawn chance (per rock HP tick; independent roll)',
     min: 0,
     max: 1,
+    step: 0.02,
+  },
+  {
+    key: 'debrisSpawnChance',
+    label: 'Clickable debris spawn chance (rock removals; mining/dig/explosions/Locust/Scourge)',
+    min: 0,
+    max: 1,
+    step: 0.02,
+  },
+  {
+    key: 'debrisLifetimeMinSec',
+    label: 'Debris shard lifetime min (s)',
+    min: 0.2,
+    max: 20,
+    step: 0.1,
+  },
+  {
+    key: 'debrisLifetimeMaxSec',
+    label: 'Debris shard lifetime max (s)',
+    min: 0.2,
+    max: 20,
+    step: 0.1,
+  },
+  {
+    key: 'debrisSpeedMin',
+    label: 'Debris shard speed min (world units/s)',
+    min: 0.05,
+    max: 3,
+    step: 0.05,
+  },
+  {
+    key: 'debrisSpeedMax',
+    label: 'Debris shard speed max (world units/s)',
+    min: 0.05,
+    max: 3,
+    step: 0.05,
+  },
+  {
+    key: 'debrisPickupCooldownSec',
+    label: 'Debris pickup cooldown (s)',
+    min: 0,
+    max: 2,
     step: 0.02,
   },
   {
@@ -325,6 +392,14 @@ const GAMEPLAY_BALANCE_SLIDERS: SliderRow[] = [
     step: 0.02,
     valueDecimals: 2,
   },
+  {
+    key: 'scourgeMaxConversionsPerTick',
+    label: 'Scourge: max rock conversions per tick',
+    min: 0,
+    max: 512,
+    step: 1,
+    valueDecimals: 0,
+  },
 ]
 
 /** Discovery sites + offer archetypes — own Debug subsection (see also `discoveryDensityScale(profile)`). */
@@ -346,6 +421,41 @@ const DISCOVERY_DEBUG_SLIDERS: SliderRow[] = [
     min: 0,
     max: 8,
     step: 0.05,
+  },
+]
+
+const SCOURGE_DEBUG_SLIDERS: SliderRow[] = [
+  {
+    key: 'scourgeEnabled',
+    label: 'Scourge: enable flood-fill cleanup seeds (experimental)',
+    min: 0,
+    max: 1,
+    step: 1,
+    valueDecimals: 0,
+  },
+  {
+    key: 'scourgeMaxConversionsPerTick',
+    label: 'Scourge cleanup — conversions per tick (average)',
+    min: 0,
+    max: 64,
+    step: 0.05,
+    valueDecimals: 2,
+  },
+  {
+    key: 'locustEnabled',
+    label: 'Locust: enable front-replicating cleanup seeds (experimental)',
+    min: 0,
+    max: 1,
+    step: 1,
+    valueDecimals: 0,
+  },
+  {
+    key: 'locustMaxConversionsPerTick',
+    label: 'Locust cleanup — conversions per tick (average)',
+    min: 0,
+    max: 64,
+    step: 0.05,
+    valueDecimals: 2,
   },
 ]
 
@@ -607,7 +717,7 @@ const REPLICATOR_FEED_AUDIO_SLIDERS: SliderRow[] = [
   {
     key: 'replicatorFeedAudioBaseHz',
     label: 'Replicator feed — base frequency (Hz)',
-    min: 400,
+    min: 20,
     max: 8000,
     step: 20,
     valueDecimals: 0,
@@ -677,6 +787,7 @@ const SFX_REVERB_SLIDERS: SliderRow[] = [
 const ALL_DEBUG_SLIDERS: SliderRow[] = [
   ...GAMEPLAY_BALANCE_SLIDERS,
   ...DISCOVERY_DEBUG_SLIDERS,
+  ...SCOURGE_DEBUG_SLIDERS,
   ...DEPTH_SCAN_DEBUG_SLIDERS,
   ...LODE_DEBUG_BALANCE_SLIDERS,
   ...LASER_AUDIO_SLIDERS,
@@ -712,6 +823,8 @@ export function createSettingsMenu(
     onMatterHudCompactChange,
     initialColorScheme = 'blue',
     onColorSchemeChange,
+    initialFontId = 'disketMono',
+    onFontChange,
     sunLightDebug,
     getSunAnglesForLight,
     onSunLightDebugChange,
@@ -848,6 +961,55 @@ export function createSettingsMenu(
     onMatterHudCompactChange?.(matterHudCompactInput.checked)
   })
 
+  const sandboxRow = document.createElement('div')
+  sandboxRow.className = 'settings-row'
+  const sandboxLabel = document.createElement('label')
+  sandboxLabel.className = 'settings-checkbox-label'
+  const sandboxInput = document.createElement('input')
+  sandboxInput.type = 'checkbox'
+  sandboxInput.id = 'settings-sandbox-mode'
+  sandboxInput.checked = getSandboxModeEnabled()
+  const sandboxText = document.createElement('span')
+  sandboxText.textContent = 'Sandbox mode (no resource/energy limits; unlocks everything)'
+  sandboxLabel.append(sandboxInput, sandboxText)
+  sandboxRow.appendChild(sandboxLabel)
+  sandboxInput.addEventListener('change', () => {
+    setSandboxModeEnabled(sandboxInput.checked)
+    notifySandboxModeListeners()
+  })
+
+  const fontRow = document.createElement('div')
+  fontRow.className = 'settings-row'
+  const fontLabel = document.createElement('div')
+  fontLabel.className = 'settings-label'
+  fontLabel.textContent = 'Font'
+  const fontChoices = document.createElement('div')
+  fontChoices.className = 'settings-color-schemes'
+
+  for (const opt of FONT_OPTIONS) {
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'settings-color-scheme-btn'
+    btn.textContent = opt.label
+    if (opt.id === initialFontId) {
+      btn.classList.add('settings-color-scheme-btn--active')
+    }
+    btn.addEventListener('click', () => {
+      onFontChange?.(opt.id)
+      for (const child of fontChoices.children) {
+        if (child instanceof HTMLButtonElement) {
+          child.classList.toggle(
+            'settings-color-scheme-btn--active',
+            child === btn,
+          )
+        }
+      }
+    })
+    fontChoices.appendChild(btn)
+  }
+
+  fontRow.append(fontLabel, fontChoices)
+
   const colorSchemeRow = document.createElement('div')
   colorSchemeRow.className = 'settings-row'
   const colorSchemeLabel = document.createElement('div')
@@ -883,6 +1045,28 @@ export function createSettingsMenu(
   const debugDetails = document.createElement('details')
   debugDetails.className = 'settings-details'
 
+  function getStoredDebugFilterQuery(): string {
+    try {
+      const raw = localStorage.getItem(DEBUG_FILTER_STORAGE_KEY)
+      return typeof raw === 'string' ? raw : ''
+    } catch {
+      return ''
+    }
+  }
+
+  function setStoredDebugFilterQuery(value: string): void {
+    try {
+      const trimmed = value.trim()
+      if (!trimmed) {
+        localStorage.removeItem(DEBUG_FILTER_STORAGE_KEY)
+      } else {
+        localStorage.setItem(DEBUG_FILTER_STORAGE_KEY, trimmed)
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
   function createDebugSection(
     title: string,
     opts?: { open?: boolean; id?: string },
@@ -905,7 +1089,7 @@ export function createSettingsMenu(
   const debugHint = document.createElement('p')
   debugHint.className = 'settings-debug-hint'
   debugHint.textContent =
-    'Rock durability applies after Regenerate. All Settings / Debug tunables mirror to localStorage on change. In dev, enable auto-save or use Save to write gameBalance.persisted.json, asteroidMusicDebug.persisted.json, and settingsClient.persisted.json (light angles, key-light debug, scan viz, music post-EQ, overlays, discovery/HUD layout, music volume). Debug preset export/import still works for moving keys between browsers.'
+    'Debug sliders write to localStorage. In dev, Auto-save / Save all also persist balance, music, and settings JSON inside the project. Use the debug preset tools to move tuned settings between browsers.'
 
   const autoSaveRow = document.createElement('div')
   autoSaveRow.className = 'settings-row settings-debug-row settings-save-row'
@@ -1159,7 +1343,9 @@ export function createSettingsMenu(
   const sectionAsteroidMusic = createDebugSection('Asteroid music', {
     id: 'debug-section-asteroid-music',
   })
-  const sectionGameBalance = createDebugSection('Game balance', { id: 'debug-section-balance' })
+  const sectionGameBalance = createDebugSection('Game balance (including Scourge / Locust)', {
+    id: 'debug-section-balance',
+  })
 
   const debugNav = document.createElement('div')
   debugNav.className = 'settings-debug-nav'
@@ -1175,22 +1361,109 @@ export function createSettingsMenu(
     { label: 'SFX', el: sectionLaserSfx },
     { label: 'Master', el: sectionMusicMaster },
     { label: 'Music', el: sectionAsteroidMusic },
-    { label: 'Balance', el: sectionGameBalance },
+    { label: 'Balance (cleanup)', el: sectionGameBalance },
   ]
-  for (const { label, el } of navTargets) {
-    const btn = document.createElement('button')
-    btn.type = 'button'
-    btn.className = 'settings-debug-nav-btn'
-    btn.textContent = label
-    btn.addEventListener('click', () => {
-      el.open = true
-      el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-    })
-    debugNav.appendChild(btn)
+
+  const debugFilterRow = document.createElement('div')
+  debugFilterRow.className = 'settings-debug-filter-row'
+
+  const debugFilterInput = document.createElement('input')
+  debugFilterInput.type = 'search'
+  debugFilterInput.id = 'settings-debug-filter'
+  debugFilterInput.placeholder = 'Filter debug…'
+  debugFilterInput.autocomplete = 'off'
+  debugFilterInput.spellcheck = false
+  debugFilterInput.setAttribute('aria-label', 'Filter debug controls')
+
+  debugFilterRow.appendChild(debugFilterInput)
+
+  const debugFilterTargets: {
+    section: HTMLDetailsElement
+    navButton: HTMLButtonElement
+    text: string
+  }[] = []
+
+  function buildDebugFilterTargets(): void {
+    debugFilterTargets.length = 0
+    for (const { label, el } of navTargets) {
+      let sectionText = label.toLowerCase()
+      const summary = el.querySelector('.settings-details-summary')
+      if (summary && summary.textContent) {
+        sectionText += ' ' + summary.textContent.toLowerCase()
+      }
+      const headings = el.querySelectorAll<HTMLElement>(
+        '.settings-debug-subheading, .settings-label, .settings-checkbox-label, .settings-secondary',
+      )
+      for (const h of headings) {
+        if (h.textContent) {
+          sectionText += ' ' + h.textContent.toLowerCase()
+        }
+      }
+      const btn = document.createElement('button')
+      btn.type = 'button'
+      btn.className = 'settings-debug-nav-btn'
+      btn.textContent = label
+      btn.addEventListener('click', () => {
+        el.open = true
+        el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+      })
+      debugNav.appendChild(btn)
+
+      debugFilterTargets.push({
+        section: el,
+        navButton: btn,
+        text: sectionText,
+      })
+    }
   }
+
+  function applyDebugFilter(raw: string): void {
+    const q = raw.trim().toLowerCase()
+    setStoredDebugFilterQuery(q)
+
+    for (const target of debugFilterTargets) {
+      const rows = Array.from(
+        target.section.querySelectorAll<HTMLElement>('.settings-row.settings-debug-row'),
+      )
+
+      let anyRowMatch = false
+
+      if (!q) {
+        for (const row of rows) {
+          row.hidden = false
+        }
+        anyRowMatch = true
+      } else {
+        debugDetails.open = true
+        for (const row of rows) {
+          const text = row.textContent ? row.textContent.toLowerCase() : ''
+          const match = text.includes(q)
+          row.hidden = !match
+          if (match) anyRowMatch = true
+        }
+      }
+
+      target.section.hidden = false
+      target.navButton.classList.toggle('settings-debug-nav-btn--filtered-out', !anyRowMatch)
+    }
+  }
+
+  buildDebugFilterTargets()
+
+  const initialDebugFilter = getStoredDebugFilterQuery()
+  if (initialDebugFilter) {
+    debugFilterInput.value = initialDebugFilter
+  }
+
+  applyDebugFilter(initialDebugFilter)
+
+  debugFilterInput.addEventListener('input', () => {
+    applyDebugFilter(debugFilterInput.value)
+  })
 
   debugDetails.append(
     debugSummary,
+    debugFilterRow,
     debugNav,
     sectionPersist,
     sectionLodeDebug,
@@ -1460,6 +1733,46 @@ export function createSettingsMenu(
     parent.appendChild(row)
   }
 
+  type PickAudioSliderSpec = {
+    label: string
+    min: number
+    max: number
+    step: number
+    decimals?: number
+    id: string
+    read: () => number
+    write: (n: number) => void
+  }
+
+  function appendPickAudioSliderRow(parent: HTMLElement, spec: PickAudioSliderSpec): void {
+    const row = document.createElement('div')
+    row.className = 'settings-row settings-debug-row'
+    const label = document.createElement('label')
+    label.className = 'settings-label'
+    label.htmlFor = spec.id
+    label.textContent = spec.label
+    const input = document.createElement('input')
+    input.id = spec.id
+    input.type = 'range'
+    input.min = String(spec.min)
+    input.max = String(spec.max)
+    input.step = String(spec.step)
+    input.value = String(spec.read())
+    const valSpan = document.createElement('span')
+    valSpan.className = 'settings-value'
+    const fmt = (v: number): string =>
+      (spec.decimals !== undefined ? v.toFixed(spec.decimals) : String(v))
+    valSpan.textContent = fmt(Number(input.value))
+    input.addEventListener('input', () => {
+      const n = Number(input.value)
+      spec.write(n)
+      valSpan.textContent = fmt(n)
+      schedulePersistPickThudDebug(pickThudDebug)
+    })
+    row.append(label, input, valSpan)
+    parent.appendChild(row)
+  }
+
   const lodeDebugHint = document.createElement('p')
   lodeDebugHint.className = 'settings-debug-hint'
   lodeDebugHint.textContent =
@@ -1473,9 +1786,216 @@ export function createSettingsMenu(
     appendBalanceSliderRow(sectionScanDepth, spec)
   }
 
-  for (const spec of GAMEPLAY_BALANCE_SLIDERS) {
-    appendBalanceSliderRow(sectionScanDepth, spec)
+  const gameBalanceHeading = document.createElement('h3')
+  gameBalanceHeading.className = 'settings-debug-subheading'
+  gameBalanceHeading.textContent = 'Core game balance'
+  sectionGameBalance.appendChild(gameBalanceHeading)
+
+  const startingToolsHeading = document.createElement('h4')
+  startingToolsHeading.className = 'settings-debug-subheading'
+  startingToolsHeading.textContent = 'Starting tools (new asteroid / Regenerate)'
+  sectionGameBalance.appendChild(startingToolsHeading)
+
+  function appendToolCheckboxRow(
+    parent: HTMLElement,
+    labelText: string,
+    id: string,
+    getChecked: (cfg: InitialToolDebugConfig) => boolean,
+    setChecked: (cfg: InitialToolDebugConfig, value: boolean) => InitialToolDebugConfig,
+  ): void {
+    const row = document.createElement('div')
+    row.className = 'settings-row settings-debug-row'
+    const label = document.createElement('label')
+    label.className = 'settings-checkbox-label'
+    const input = document.createElement('input')
+    input.type = 'checkbox'
+    input.id = id
+    const current = getDebugInitialToolConfig()
+    input.checked = getChecked(current)
+    const span = document.createElement('span')
+    span.textContent = labelText
+    label.append(input, span)
+    row.appendChild(label)
+    input.addEventListener('change', () => {
+      const cfg = getDebugInitialToolConfig()
+      const nextCfg = setChecked(cfg, input.checked)
+      setDebugInitialToolConfig(nextCfg)
+    })
+    parent.appendChild(row)
   }
+
+  appendToolCheckboxRow(
+    sectionGameBalance,
+    'Poke (F1) available',
+    'settings-initial-tool-pick',
+    (cfg) => cfg.pick,
+    (cfg, value) => ({ ...cfg, pick: value }),
+  )
+  appendToolCheckboxRow(
+    sectionGameBalance,
+    'Inspect (Ins) available',
+    'settings-initial-tool-inspect',
+    (cfg) => cfg.inspect,
+    (cfg, value) => ({ ...cfg, inspect: value }),
+  )
+  appendToolCheckboxRow(
+    sectionGameBalance,
+    'Hoover (HV) available',
+    'settings-initial-tool-hoover',
+    (cfg) => cfg.hoover,
+    (cfg, value) => ({ ...cfg, hoover: value }),
+  )
+  appendToolCheckboxRow(
+    sectionGameBalance,
+    'Replicator (F2) available',
+    'settings-initial-tool-replicator',
+    (cfg) => cfg.replicator,
+    (cfg, value) => ({ ...cfg, replicator: value }),
+  )
+  appendToolCheckboxRow(
+    sectionGameBalance,
+    'Seed (F15) available',
+    'settings-initial-tool-seed',
+    (cfg) => cfg.seed,
+    (cfg, value) => ({ ...cfg, seed: value }),
+  )
+  appendToolCheckboxRow(
+    sectionGameBalance,
+    'Reactor (F3) available',
+    'settings-initial-tool-reactor',
+    (cfg) => cfg.reactor,
+    (cfg, value) => ({ ...cfg, reactor: value }),
+  )
+  appendToolCheckboxRow(
+    sectionGameBalance,
+    'Battery (F4) available',
+    'settings-initial-tool-battery',
+    (cfg) => cfg.battery,
+    (cfg, value) => ({ ...cfg, battery: value }),
+  )
+  appendToolCheckboxRow(
+    sectionGameBalance,
+    'Hub (F5) available',
+    'settings-initial-tool-hub',
+    (cfg) => cfg.hub,
+    (cfg, value) => ({ ...cfg, hub: value }),
+  )
+  appendToolCheckboxRow(
+    sectionGameBalance,
+    'Refinery (F6) available',
+    'settings-initial-tool-refinery',
+    (cfg) => cfg.refinery,
+    (cfg, value) => ({ ...cfg, refinery: value }),
+  )
+  appendToolCheckboxRow(
+    sectionGameBalance,
+    'Computronium (F12) available',
+    'settings-initial-tool-computronium',
+    (cfg) => cfg.computronium,
+    (cfg, value) => ({ ...cfg, computronium: value }),
+  )
+  appendToolCheckboxRow(
+    sectionGameBalance,
+    'Orbital laser tier (F7 / mining laser)',
+    'settings-initial-tool-orbital',
+    (cfg) => cfg.orbitalLaser,
+    (cfg, value) => ({ ...cfg, orbitalLaser: value }),
+  )
+  appendToolCheckboxRow(
+    sectionGameBalance,
+    'Excavating laser tier (F8)',
+    'settings-initial-tool-excavating',
+    (cfg) => cfg.excavatingLaser,
+    (cfg, value) => ({ ...cfg, excavatingLaser: value }),
+  )
+  appendToolCheckboxRow(
+    sectionGameBalance,
+    'Scanner laser tier (F9 gibberish → scanner, F10 explosive)',
+    'settings-initial-tool-scanner',
+    (cfg) => cfg.scanner,
+    (cfg, value) => ({ ...cfg, scanner: value }),
+  )
+  appendToolCheckboxRow(
+    sectionGameBalance,
+    'Explosive charge (F10) available',
+    'settings-initial-tool-explosive',
+    (cfg) => cfg.explosiveCharge,
+    (cfg, value) => ({ ...cfg, explosiveCharge: value }),
+  )
+  appendToolCheckboxRow(
+    sectionGameBalance,
+    'Depth scan tool (F11) available',
+    'settings-initial-tool-depth',
+    (cfg) => cfg.depthScanner,
+    (cfg, value) => ({ ...cfg, depthScanner: value }),
+  )
+  appendToolCheckboxRow(
+    sectionGameBalance,
+    'Cleanup collector (F13 + deploy row) available',
+    'settings-initial-tool-dross',
+    (cfg) => cfg.drossCollector,
+    (cfg, value) => ({ ...cfg, drossCollector: value }),
+  )
+  appendToolCheckboxRow(
+    sectionGameBalance,
+    'Scourge (cleanup) available',
+    'settings-initial-tool-scourge',
+    (cfg) => cfg.scourge,
+    (cfg, value) => ({ ...cfg, scourge: value }),
+  )
+  appendToolCheckboxRow(
+    sectionGameBalance,
+    'Locust (cleanup) available',
+    'settings-initial-tool-locust',
+    (cfg) => cfg.locust,
+    (cfg, value) => ({ ...cfg, locust: value }),
+  )
+  appendToolCheckboxRow(
+    sectionGameBalance,
+    'Mining drone (cleanup) available',
+    'settings-initial-tool-mining-drone',
+    (cfg) => cfg.miningDrone,
+    (cfg, value) => ({ ...cfg, miningDrone: value }),
+  )
+  appendToolCheckboxRow(
+    sectionGameBalance,
+    'EM Catapult (tier 6 travel tool) available',
+    'settings-initial-tool-emcat',
+    (cfg) => cfg.emCatapult,
+    (cfg, value) => ({ ...cfg, emCatapult: value }),
+  )
+
+  for (const spec of GAMEPLAY_BALANCE_SLIDERS) {
+    appendBalanceSliderRow(sectionGameBalance, spec)
+  }
+
+  const cleanupHeading = document.createElement('h3')
+  cleanupHeading.className = 'settings-debug-subheading'
+  cleanupHeading.textContent = 'Cleanup tools (Scourge / Locust)'
+  sectionGameBalance.appendChild(cleanupHeading)
+
+  for (const spec of SCOURGE_DEBUG_SLIDERS) {
+    appendBalanceSliderRow(sectionGameBalance, spec)
+  }
+
+  // Replicator cannibalism debug toggle (cross-strain feeding enable/disable).
+  const cannibalRow = document.createElement('div')
+  cannibalRow.className = 'settings-row settings-debug-row'
+  const cannibalLabel = document.createElement('label')
+  cannibalLabel.className = 'settings-checkbox-label'
+  const cannibalInput = document.createElement('input')
+  cannibalInput.type = 'checkbox'
+  cannibalInput.id = 'settings-replicator-cannibalism-enabled'
+  cannibalInput.checked = gameBalance.replicatorCannibalismEnabled === true
+  const cannibalSpan = document.createElement('span')
+  cannibalSpan.textContent = 'Replicator cross-strain feeding (experimental)'
+  cannibalLabel.append(cannibalInput, cannibalSpan)
+  cannibalRow.appendChild(cannibalLabel)
+  cannibalInput.addEventListener('change', () => {
+    patchGameBalance({ replicatorCannibalismEnabled: cannibalInput.checked })
+    onBalanceChange?.()
+  })
+  sectionGameBalance.appendChild(cannibalRow)
 
   const discoveryHint = document.createElement('p')
   discoveryHint.className = 'settings-debug-hint'
@@ -1537,6 +2057,366 @@ export function createSettingsMenu(
     appendBalanceSliderRow(sectionLaserSfx, spec)
   }
 
+  const pickAudioHeading = document.createElement('h3')
+  pickAudioHeading.className = 'settings-debug-subheading'
+  pickAudioHeading.textContent = 'Mining tap (poke) audio'
+  sectionLaserSfx.appendChild(pickAudioHeading)
+
+  const pickAudioSpecs: PickAudioSliderSpec[] = [
+    {
+      id: 'settings-pick-regolith-tail-base',
+      label: 'Regolith — tail (s, base)',
+      min: 0.01,
+      max: 0.25,
+      step: 0.001,
+      decimals: 3,
+      read: () => pickThudDebug.regolith.tailSecBase,
+      write: (n) => {
+        pickThudDebug.regolith.tailSecBase = n
+      },
+    },
+    {
+      id: 'settings-pick-regolith-tail-popped',
+      label: 'Regolith — tail (s, popped)',
+      min: 0.01,
+      max: 0.25,
+      step: 0.001,
+      decimals: 3,
+      read: () => pickThudDebug.regolith.tailSecPopped,
+      write: (n) => {
+        pickThudDebug.regolith.tailSecPopped = n
+      },
+    },
+    {
+      id: 'settings-pick-regolith-peak-base',
+      label: 'Regolith — peak gain (base)',
+      min: 0.01,
+      max: 0.6,
+      step: 0.01,
+      decimals: 2,
+      read: () => pickThudDebug.regolith.peakBase,
+      write: (n) => {
+        pickThudDebug.regolith.peakBase = n
+      },
+    },
+    {
+      id: 'settings-pick-regolith-peak-popped',
+      label: 'Regolith — peak gain (popped)',
+      min: 0.01,
+      max: 0.6,
+      step: 0.01,
+      decimals: 2,
+      read: () => pickThudDebug.regolith.peakPopped,
+      write: (n) => {
+        pickThudDebug.regolith.peakPopped = n
+      },
+    },
+    {
+      id: 'settings-pick-regolith-bp-base',
+      label: 'Regolith — bandpass center (Hz, base)',
+      min: 200,
+      max: 6000,
+      step: 10,
+      decimals: 0,
+      read: () => pickThudDebug.regolith.bandpassHzBase,
+      write: (n) => {
+        pickThudDebug.regolith.bandpassHzBase = n
+      },
+    },
+    {
+      id: 'settings-pick-regolith-bp-popped',
+      label: 'Regolith — bandpass center (Hz, popped)',
+      min: 200,
+      max: 6000,
+      step: 10,
+      decimals: 0,
+      read: () => pickThudDebug.regolith.bandpassHzPopped,
+      write: (n) => {
+        pickThudDebug.regolith.bandpassHzPopped = n
+      },
+    },
+    {
+      id: 'settings-pick-regolith-bp-q',
+      label: 'Regolith — bandpass Q',
+      min: 0.1,
+      max: 4,
+      step: 0.05,
+      decimals: 2,
+      read: () => pickThudDebug.regolith.bandpassQ,
+      write: (n) => {
+        pickThudDebug.regolith.bandpassQ = n
+      },
+    },
+    {
+      id: 'settings-pick-regolith-decay-base',
+      label: 'Regolith — noise decay shape (base)',
+      min: 0.02,
+      max: 0.4,
+      step: 0.005,
+      decimals: 3,
+      read: () => pickThudDebug.regolith.decayShapeBase,
+      write: (n) => {
+        pickThudDebug.regolith.decayShapeBase = n
+      },
+    },
+    {
+      id: 'settings-pick-regolith-decay-popped',
+      label: 'Regolith — noise decay shape (popped)',
+      min: 0.02,
+      max: 0.4,
+      step: 0.005,
+      decimals: 3,
+      read: () => pickThudDebug.regolith.decayShapePopped,
+      write: (n) => {
+        pickThudDebug.regolith.decayShapePopped = n
+      },
+    },
+    {
+      id: 'settings-pick-silicate-tail-base',
+      label: 'Silicate — tail (s, base)',
+      min: 0.01,
+      max: 0.4,
+      step: 0.001,
+      decimals: 3,
+      read: () => pickThudDebug.silicate.tailSecBase,
+      write: (n) => {
+        pickThudDebug.silicate.tailSecBase = n
+      },
+    },
+    {
+      id: 'settings-pick-silicate-tail-popped',
+      label: 'Silicate — tail (s, popped)',
+      min: 0.01,
+      max: 0.4,
+      step: 0.001,
+      decimals: 3,
+      read: () => pickThudDebug.silicate.tailSecPopped,
+      write: (n) => {
+        pickThudDebug.silicate.tailSecPopped = n
+      },
+    },
+    {
+      id: 'settings-pick-silicate-peak-base',
+      label: 'Silicate — peak gain (base)',
+      min: 0.01,
+      max: 0.6,
+      step: 0.01,
+      decimals: 2,
+      read: () => pickThudDebug.silicate.peakBase,
+      write: (n) => {
+        pickThudDebug.silicate.peakBase = n
+      },
+    },
+    {
+      id: 'settings-pick-silicate-peak-popped',
+      label: 'Silicate — peak gain (popped)',
+      min: 0.01,
+      max: 0.6,
+      step: 0.01,
+      decimals: 2,
+      read: () => pickThudDebug.silicate.peakPopped,
+      write: (n) => {
+        pickThudDebug.silicate.peakPopped = n
+      },
+    },
+    {
+      id: 'settings-pick-silicate-osc-base',
+      label: 'Silicate — osc frequency (Hz, base)',
+      min: 40,
+      max: 600,
+      step: 1,
+      decimals: 0,
+      read: () => pickThudDebug.silicate.oscHzBase,
+      write: (n) => {
+        pickThudDebug.silicate.oscHzBase = n
+      },
+    },
+    {
+      id: 'settings-pick-silicate-osc-popped',
+      label: 'Silicate — osc frequency (Hz, popped)',
+      min: 40,
+      max: 600,
+      step: 1,
+      decimals: 0,
+      read: () => pickThudDebug.silicate.oscHzPopped,
+      write: (n) => {
+        pickThudDebug.silicate.oscHzPopped = n
+      },
+    },
+    {
+      id: 'settings-pick-silicate-lp-base',
+      label: 'Silicate — lowpass cutoff (Hz, base)',
+      min: 80,
+      max: 4000,
+      step: 10,
+      decimals: 0,
+      read: () => pickThudDebug.silicate.lowpassHzBase,
+      write: (n) => {
+        pickThudDebug.silicate.lowpassHzBase = n
+      },
+    },
+    {
+      id: 'settings-pick-silicate-lp-popped',
+      label: 'Silicate — lowpass cutoff (Hz, popped)',
+      min: 80,
+      max: 4000,
+      step: 10,
+      decimals: 0,
+      read: () => pickThudDebug.silicate.lowpassHzPopped,
+      write: (n) => {
+        pickThudDebug.silicate.lowpassHzPopped = n
+      },
+    },
+    {
+      id: 'settings-pick-silicate-lp-q',
+      label: 'Silicate — lowpass Q',
+      min: 0.1,
+      max: 4,
+      step: 0.05,
+      decimals: 2,
+      read: () => pickThudDebug.silicate.lowpassQ,
+      write: (n) => {
+        pickThudDebug.silicate.lowpassQ = n
+      },
+    },
+    {
+      id: 'settings-pick-metal-tail-base',
+      label: 'Metal — tail (s, base)',
+      min: 0.01,
+      max: 0.5,
+      step: 0.001,
+      decimals: 3,
+      read: () => pickThudDebug.metal.tailSecBase,
+      write: (n) => {
+        pickThudDebug.metal.tailSecBase = n
+      },
+    },
+    {
+      id: 'settings-pick-metal-tail-popped',
+      label: 'Metal — tail (s, popped)',
+      min: 0.01,
+      max: 0.5,
+      step: 0.001,
+      decimals: 3,
+      read: () => pickThudDebug.metal.tailSecPopped,
+      write: (n) => {
+        pickThudDebug.metal.tailSecPopped = n
+      },
+    },
+    {
+      id: 'settings-pick-metal-peak-base',
+      label: 'Metal — peak gain (base)',
+      min: 0.01,
+      max: 0.6,
+      step: 0.01,
+      decimals: 2,
+      read: () => pickThudDebug.metal.peakBase,
+      write: (n) => {
+        pickThudDebug.metal.peakBase = n
+      },
+    },
+    {
+      id: 'settings-pick-metal-peak-popped',
+      label: 'Metal — peak gain (popped)',
+      min: 0.01,
+      max: 0.6,
+      step: 0.01,
+      decimals: 2,
+      read: () => pickThudDebug.metal.peakPopped,
+      write: (n) => {
+        pickThudDebug.metal.peakPopped = n
+      },
+    },
+    {
+      id: 'settings-pick-metal-f0-base',
+      label: 'Metal — base fundamental (Hz, base)',
+      min: 20,
+      max: 400,
+      step: 1,
+      decimals: 0,
+      read: () => pickThudDebug.metal.f0Base,
+      write: (n) => {
+        pickThudDebug.metal.f0Base = n
+      },
+    },
+    {
+      id: 'settings-pick-metal-f0-popped',
+      label: 'Metal — base fundamental (Hz, popped)',
+      min: 20,
+      max: 400,
+      step: 1,
+      decimals: 0,
+      read: () => pickThudDebug.metal.f0Popped,
+      write: (n) => {
+        pickThudDebug.metal.f0Popped = n
+      },
+    },
+    {
+      id: 'settings-pick-metal-lp-base',
+      label: 'Metal — lowpass cutoff (Hz, base)',
+      min: 80,
+      max: 4000,
+      step: 10,
+      decimals: 0,
+      read: () => pickThudDebug.metal.lowpassHzBase,
+      write: (n) => {
+        pickThudDebug.metal.lowpassHzBase = n
+      },
+    },
+    {
+      id: 'settings-pick-metal-lp-popped',
+      label: 'Metal — lowpass cutoff (Hz, popped)',
+      min: 80,
+      max: 4000,
+      step: 10,
+      decimals: 0,
+      read: () => pickThudDebug.metal.lowpassHzPopped,
+      write: (n) => {
+        pickThudDebug.metal.lowpassHzPopped = n
+      },
+    },
+    {
+      id: 'settings-pick-metal-lp-q',
+      label: 'Metal — lowpass Q',
+      min: 0.1,
+      max: 4,
+      step: 0.05,
+      decimals: 2,
+      read: () => pickThudDebug.metal.lowpassQ,
+      write: (n) => {
+        pickThudDebug.metal.lowpassQ = n
+      },
+    },
+    {
+      id: 'settings-pick-metal-harm-base',
+      label: 'Metal — harmonic gain (base)',
+      min: 0,
+      max: 1,
+      step: 0.01,
+      decimals: 2,
+      read: () => pickThudDebug.metal.harmonicGainBase,
+      write: (n) => {
+        pickThudDebug.metal.harmonicGainBase = n
+      },
+    },
+    {
+      id: 'settings-pick-metal-harm-popped',
+      label: 'Metal — harmonic gain (popped)',
+      min: 0,
+      max: 1,
+      step: 0.01,
+      decimals: 2,
+      read: () => pickThudDebug.metal.harmonicGainPopped,
+      write: (n) => {
+        pickThudDebug.metal.harmonicGainPopped = n
+      },
+    },
+  ]
+
+  for (const spec of pickAudioSpecs) {
+    appendPickAudioSliderRow(sectionLaserSfx, spec)
+  }
+
   const replicatorFeedAudioHeading = document.createElement('h3')
   replicatorFeedAudioHeading.className = 'settings-debug-subheading'
   replicatorFeedAudioHeading.textContent = 'Replicator feed (audio)'
@@ -1554,6 +2434,77 @@ export function createSettingsMenu(
   for (const spec of SFX_REVERB_SLIDERS) {
     appendBalanceSliderRow(sectionLaserSfx, spec)
   }
+
+  const hooverHeading = document.createElement('h3')
+  hooverHeading.className = 'settings-debug-subheading'
+  hooverHeading.textContent = 'Hoover tone (SFX lowpass LFO)'
+  sectionLaserSfx.appendChild(hooverHeading)
+
+  const hooverBaseRow = document.createElement('div')
+  hooverBaseRow.className = 'settings-row'
+  const hooverBaseLabel = document.createElement('label')
+  hooverBaseLabel.textContent = 'Hoover lowpass base cutoff (Hz)'
+  const hooverBaseInput = document.createElement('input')
+  hooverBaseInput.type = 'range'
+  hooverBaseInput.min = '20'
+  hooverBaseInput.max = '4000'
+  hooverBaseInput.step = '5'
+  hooverBaseInput.value = String(Math.round(audioMasterDebug.hooverLowpassBaseHz))
+  const hooverBaseVal = document.createElement('span')
+  hooverBaseVal.className = 'settings-value'
+  hooverBaseVal.textContent = `${Math.round(audioMasterDebug.hooverLowpassBaseHz)} Hz`
+  hooverBaseInput.addEventListener('input', () => {
+    const hz = Number(hooverBaseInput.value)
+    audioMasterDebug.hooverLowpassBaseHz = hz
+    hooverBaseVal.textContent = `${Math.round(hz)} Hz`
+    onAudioMasterDebugChange?.()
+  })
+  hooverBaseRow.append(hooverBaseLabel, hooverBaseInput, hooverBaseVal)
+  sectionLaserSfx.appendChild(hooverBaseRow)
+
+  const hooverDepthRow = document.createElement('div')
+  hooverDepthRow.className = 'settings-row'
+  const hooverDepthLabel = document.createElement('label')
+  hooverDepthLabel.textContent = 'Hoover lowpass LFO depth (±Hz)'
+  const hooverDepthInput = document.createElement('input')
+  hooverDepthInput.type = 'range'
+  hooverDepthInput.min = '0'
+  hooverDepthInput.max = '2000'
+  hooverDepthInput.step = '5'
+  hooverDepthInput.value = String(Math.round(audioMasterDebug.hooverLowpassLfoDepthHz))
+  const hooverDepthVal = document.createElement('span')
+  hooverDepthVal.className = 'settings-value'
+  hooverDepthVal.textContent = `${Math.round(audioMasterDebug.hooverLowpassLfoDepthHz)} Hz`
+  hooverDepthInput.addEventListener('input', () => {
+    const depth = Number(hooverDepthInput.value)
+    audioMasterDebug.hooverLowpassLfoDepthHz = depth
+    hooverDepthVal.textContent = `${Math.round(depth)} Hz`
+    onAudioMasterDebugChange?.()
+  })
+  hooverDepthRow.append(hooverDepthLabel, hooverDepthInput, hooverDepthVal)
+  sectionLaserSfx.appendChild(hooverDepthRow)
+
+  const hooverRateRow = document.createElement('div')
+  hooverRateRow.className = 'settings-row'
+  const hooverRateLabel = document.createElement('label')
+  hooverRateLabel.textContent = 'Hoover lowpass LFO rate (Hz)'
+  const hooverRateInput = document.createElement('input')
+  hooverRateInput.type = 'range'
+  hooverRateInput.min = '0.1'
+  hooverRateInput.max = '8'
+  hooverRateInput.step = '0.05'
+  hooverRateInput.value = String(audioMasterDebug.hooverLowpassLfoRateHz.toFixed(2))
+  const hooverRateVal = document.createElement('span')
+  hooverRateVal.className = 'settings-value'
+  hooverRateVal.textContent = `${audioMasterDebug.hooverLowpassLfoRateHz.toFixed(2)} Hz`
+  hooverRateInput.addEventListener('input', () => {
+    const rate = Number(hooverRateInput.value)
+    audioMasterDebug.hooverLowpassLfoRateHz = rate
+    hooverRateVal.textContent = `${rate.toFixed(2)} Hz`
+    onAudioMasterDebugChange?.()
+  })
+  hooverRateRow.append(hooverRateLabel, hooverRateInput, hooverRateVal)
+  sectionLaserSfx.appendChild(hooverRateRow)
 
   const asteroidMusicHeading = document.createElement('h3')
   asteroidMusicHeading.className = 'settings-debug-subheading'
@@ -3799,6 +4750,8 @@ export function createSettingsMenu(
     musicVolRow,
     discoveryAutoResolveRow,
     matterHudCompactRow,
+    sandboxRow,
+    fontRow,
     colorSchemeRow,
     debugDetails,
   )

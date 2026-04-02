@@ -22,11 +22,94 @@ export interface LaserUnlockApply {
   excavatingSatelliteCount: number
   scannerSatelliteCount: number
   drossCollectorSatelliteCount: number
+  /** Cargo drone orbit fleet: automatic PM → roots (persists with other satellite counts). */
+  cargoDroneSatelliteCount: number
 }
 
 export type LaserToolId = 'orbitalLaser' | 'excavatingLaser' | 'scanner'
 
 export type LaserToolUiPhase = 'hidden' | 'researching' | 'unlocked'
+
+export interface InitialToolDebugConfig {
+  pick: boolean
+  inspect: boolean
+  hoover: boolean
+  replicator: boolean
+  seed: boolean
+  reactor: boolean
+  battery: boolean
+  hub: boolean
+  refinery: boolean
+  computronium: boolean
+  orbitalLaser: boolean
+  excavatingLaser: boolean
+  scanner: boolean
+  explosiveCharge: boolean
+  depthScanner: boolean
+  drossCollector: boolean
+  scourge: boolean
+  locust: boolean
+  miningDrone: boolean
+  emCatapult: boolean
+}
+
+let debugInitialToolConfig: InitialToolDebugConfig = {
+  pick: false,
+  inspect: false,
+  hoover: false,
+  replicator: false,
+  seed: false,
+  reactor: false,
+  battery: false,
+  hub: false,
+  refinery: false,
+  computronium: false,
+  orbitalLaser: false,
+  excavatingLaser: false,
+  scanner: false,
+  explosiveCharge: false,
+  depthScanner: false,
+  drossCollector: false,
+  scourge: false,
+  locust: false,
+  miningDrone: false,
+  emCatapult: false,
+}
+
+export function getDebugInitialToolConfig(): InitialToolDebugConfig {
+  return { ...debugInitialToolConfig }
+}
+
+export function setDebugInitialToolConfig(next: InitialToolDebugConfig): void {
+  debugInitialToolConfig = { ...next }
+}
+
+export function applyInitialToolDebugConfigToResearch(
+  unlockPoints: { current: number },
+  flags: LaserUnlockApply,
+  balance: GameBalance,
+): void {
+  const cfg = debugInitialToolConfig
+
+  // Map requested unlocks on the research ladder to a minimum tier.
+  // Earlier tiers are implied; eg, EM Catapult implies all prior tiers.
+  let tier: 1 | 2 | 3 | 4 | 5 | 6 | null = null
+  if (cfg.orbitalLaser || cfg.explosiveCharge) tier = Math.max(tier ?? 1, 1) as 1 | 2 | 3 | 4 | 5 | 6
+  if (cfg.excavatingLaser) tier = Math.max(tier ?? 2, 2) as 1 | 2 | 3 | 4 | 5 | 6
+  if (cfg.scanner) tier = Math.max(tier ?? 3, 3) as 1 | 2 | 3 | 4 | 5 | 6
+  if (cfg.depthScanner) tier = Math.max(tier ?? 4, 4) as 1 | 2 | 3 | 4 | 5 | 6
+  if (cfg.drossCollector || cfg.scourge || cfg.locust || cfg.miningDrone) {
+    tier = Math.max(tier ?? 5, 5) as 1 | 2 | 3 | 4 | 5 | 6
+  }
+  if (cfg.emCatapult) tier = Math.max(tier ?? 6, 6) as 1 | 2 | 3 | 4 | 5 | 6
+
+  if (tier === null) {
+    return
+  }
+
+  unlockPoints.current = balance.computroniumPointsPerStage * tier * 1.01
+  applyResearchTierGrant(tier, flags)
+}
 
 export function countActiveComputronium(cells: VoxelCell[]): number {
   let n = 0

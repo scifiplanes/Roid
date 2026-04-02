@@ -1,4 +1,5 @@
 import type { VoxelPos } from '../scene/asteroid/generateAsteroidVoxels'
+import type { ResourceSource } from './resources'
 import { float01FromSeed, type AsteroidGenProfile } from './asteroidGenProfile'
 import type { VoxelKind } from './voxelKinds'
 import { gameBalance } from './gameBalance'
@@ -25,7 +26,8 @@ function initialRockHp(kind: VoxelKind, maxDurability: number): number {
     kind === 'hub' ||
     kind === 'refinery' ||
     kind === 'depthScanner' ||
-    kind === 'computronium'
+    kind === 'computronium' ||
+    kind === 'miningDrone'
   )
     return maxDurability
   if (maxDurability <= 0) return 0
@@ -65,6 +67,12 @@ export interface VoxelCell {
   pos: VoxelPos
   kind: VoxelKind
   hpRemaining: number
+  /**
+   * High-level origin for this voxel's matter (asteroid vs wreck).
+   * Assigned when a core asset is generated; propagated to processed-matter
+   * units converted from this cell.
+   */
+  originSource?: ResourceSource
   /** Set when a replicator is placed on this cell (eating or mature). */
   replicatorActive?: boolean
   /** While true and the cell is still rock, the sim consumes HP over time. */
@@ -73,6 +81,25 @@ export interface VoxelCell {
   replicatorEatAccumulatorMs?: number
   /** Per-cell feed cadence while eating (ms per HP); set when eating starts, slight jitter. */
   replicatorMsPerHp?: number
+  /**
+   * Optional strain identity for replicators; used for interactions between different
+   * lineages (e.g. cross-strain feeding). Undefined means “no strain assigned”.
+   */
+  replicatorStrainId?: string
+  /** True when this mature replicator is actively draining a neighboring replicator. */
+  replicatorFeedingOther?: boolean
+  /** True when this replicator is currently being drained by at least one neighbor. */
+  replicatorBeingFed?: boolean
+  /**
+   * Milliseconds accumulated toward the next HP tick while feeding on another
+   * replicator (cross-strain only).
+   */
+  replicatorFeedOtherAccumulatorMs?: number
+  /**
+   * Per-cell cadence (ms per HP) while feeding on other replicators; set lazily with
+   * slight jitter the first time this cell participates in cross-strain feeding.
+   */
+  replicatorFeedOtherMsPerHp?: number
   /** Mature replicator → structure/computronium conversion in progress (kind stays `replicator` until done). */
   replicatorTransformTarget?: ReplicatorTransformTarget
   replicatorTransformElapsedMs?: number
@@ -82,10 +109,17 @@ export interface VoxelCell {
   replicatorTapPulseEndMs?: number
   /** Unrefined resources held at this voxel (replicator output, etc.); consolidated into global root tallies by hubs. */
   storedResources?: Partial<Record<ResourceId, number>>
+  /**
+   * Loose dross resources at this voxel, typically spilled from a poked replicator.
+   * Treated as local debris separate from the replicator's internal `storedResources`.
+   */
+  drossResources?: Partial<Record<ResourceId, number>>
   /** Fractional passive income accumulator for this mature replicator. */
   passiveRemainder?: Partial<Record<ResourceId, number>>
   /** Optional Seed programming bound to this replicator voxel. */
   seedRuntime?: SeedRuntimeState
+  /** Last recipe resource this replicator actively ran (for visuals). */
+  replicatorRecipeResourceId?: ResourceId
   /** Unrefined mass units for `processedMatter` voxels (mining laser). */
   processedMatterUnits?: number
   /** Normalized root fractions for ablated rock (Hub credits roots from PM using this). */
@@ -108,6 +142,22 @@ export interface VoxelCell {
   depthTintRgb?: { r: number; g: number; b: number }
   /** When set, explosive charge tool will detonate this cell at `performance.now()` >= this value (ms). */
   explosiveFuseEndMs?: number
+  /** Lifter tool: charge started at this `performance.now()` (ms); cleared on launch or cancel. */
+  lifterChargeStartMs?: number
+  /** When true, this voxel is currently part of an active Scourge front. */
+  scourgeActive?: boolean
+  /**
+   * When true, this voxel was newly claimed by Scourge on the latest sim step.
+   * Used to build the next frontier without re-scanning all cells.
+   */
+  scourgeJustClaimed?: boolean
+  /** When true, this voxel is currently part of an active Locust front. */
+  locustActive?: boolean
+  /**
+   * When true, this voxel was newly claimed by Locust on the latest sim step.
+   * Used to build the next frontier without re-scanning all cells.
+   */
+  locustJustClaimed?: boolean
 }
 
 const LITHO_AXIS_U = 0x4f1bbcdc

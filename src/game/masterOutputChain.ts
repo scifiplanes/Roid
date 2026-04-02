@@ -25,6 +25,11 @@ export function setAudioMasterDebugGetter(get: () => AudioMasterDebug): void {
   getAudioMasterDebug = get
 }
 
+/** Current `AudioMasterDebug` snapshot (music post EQ + hoover lowpass LFO). */
+export function getAudioMasterDebugSnapshot(): AudioMasterDebug {
+  return getAudioMasterDebug()
+}
+
 function clampHz(hz: number): number {
   return Math.min(200, Math.max(20, hz))
 }

@@ -27,12 +27,22 @@ export interface SeedSelection {
    * Kept so older code and saves that expect a flat recipe stack still work.
    */
   recipeStack: ResourceId[]
+  /**
+   * Optional strain identity for replicators placed with this selection.
+   * When derived from a preset, this should match the preset id so all
+   * voxels from that preset share a strain.
+   */
+  strainId?: string
 }
 
 export interface SeedPreset {
   id: string
   name: string
   selection: SeedSelection
+  /** When true, this preset is built-in and may be treated specially in UI. */
+  builtin?: boolean
+  /** Optional tag for grouping/system presets (e.g. 'relic'). */
+  tag?: string
 }
 
 interface SeedInventoryState {
@@ -64,8 +74,9 @@ function loadInitialState(): SeedInventoryState {
       activeSelection: {
         seedTypeId: 'basicSeed',
         lifetimeSec: SEED_DEFS['basicSeed'].lifetimeSec,
+        slots: [],
         recipeStack: [],
-      } as any,
+      },
     })!.activeSelection
 
   try {
@@ -121,6 +132,63 @@ function sanitizeState(
   const validSeedIds = new Set<SeedId>(Object.keys(SEED_DEFS) as SeedId[])
   const validResourceIds = new Set<ResourceId>(RESOURCE_IDS_ORDERED)
 
+  const relicPresets: SeedPreset[] = [
+    {
+      id: 'relic:locuspore',
+      name: 'Locuspore',
+      tag: 'relic',
+      builtin: true,
+      selection: {
+        seedTypeId: 'burstSeed',
+        // Fast, relatively short-lived strain.
+        lifetimeSec: 60,
+        slots: [
+          { kind: 'recipe', resourceId: 'regolithMass', durationSec: 20 },
+          { kind: 'recipe', resourceId: 'silicates', durationSec: 20 },
+          { kind: 'recipe', resourceId: 'metals', durationSec: 20 },
+        ],
+        recipeStack: ['regolithMass', 'silicates', 'metals'],
+        strainId: 'Locuspore',
+      },
+    },
+    {
+      id: 'relic:oxweed',
+      name: 'Oxweed',
+      tag: 'relic',
+      builtin: true,
+      selection: {
+        seedTypeId: 'longlifeSeed',
+        // Slow, long-running and efficient strain.
+        lifetimeSec: 420,
+        slots: [
+          { kind: 'recipe', resourceId: 'regolithMass', durationSec: 120 },
+          { kind: 'recipe', resourceId: 'silicates', durationSec: 120 },
+          { kind: 'recipe', resourceId: 'metals', durationSec: 180 },
+        ],
+        recipeStack: ['regolithMass', 'silicates', 'metals'],
+        strainId: 'Oxweed',
+      },
+    },
+    {
+      id: 'relic:reaperseed',
+      name: 'Reaperseed',
+      tag: 'relic',
+      builtin: true,
+      selection: {
+        seedTypeId: 'efficientSeed',
+        // Fast and efficient strain with a shorter but intense run.
+        lifetimeSec: 180,
+        slots: [
+          { kind: 'recipe', resourceId: 'regolithMass', durationSec: 45 },
+          { kind: 'recipe', resourceId: 'silicates', durationSec: 45 },
+          { kind: 'recipe', resourceId: 'metals', durationSec: 90 },
+        ],
+        recipeStack: ['regolithMass', 'silicates', 'metals'],
+        strainId: 'Reaperseed',
+      },
+    },
+  ]
+
   function sanitizeSelection(sel: SeedSelection): SeedSelection | null {
     if (!validSeedIds.has(sel.seedTypeId)) return null
     const def = SEED_DEFS[sel.seedTypeId]
@@ -135,7 +203,7 @@ function sanitizeState(
     const rawSlots: SeedRecipeSlot[] =
       Array.isArray((sel as any).slots) && (sel as any).slots.length > 0
         ? (sel as any).slots
-        : ((sel.recipeStack ?? []) as ResourceId[]).map((id, idx, arr) => {
+        : ((sel.recipeStack ?? []) as ResourceId[]).map((id, _idx, arr) => {
             const perSlot = legacyTotalLifetime / Math.max(1, arr.length)
             return {
               kind: 'recipe' as const,
@@ -212,6 +280,7 @@ function sanitizeState(
       lifetimeSec: clampedLifetime,
       slots: nextSlots,
       recipeStack: nextRecipeStack.slice(0, maxStacks),
+      strainId: sel.strainId,
     }
   }
 
@@ -228,18 +297,39 @@ function sanitizeState(
     if (seenIds.has(id)) continue
     const sanitizedSel = sanitizeSelection(sel)
     if (!sanitizedSel) continue
+    const existingBuiltin = (raw as SeedPreset).builtin === true
+    const tag = (raw as SeedPreset).tag
     presets.push({
       id,
       name: name.trim().slice(0, 80),
       selection: sanitizedSel,
+      builtin: existingBuiltin,
+      tag,
     })
     seenIds.add(id)
+  }
+
+  // Ensure built-in Relic presets are present exactly once.
+  for (const relic of relicPresets) {
+    if (seenIds.has(relic.id)) continue
+    const sanitizedRelicSel = sanitizeSelection(relic.selection)
+    if (!sanitizedRelicSel) continue
+    presets.push({
+      id: relic.id,
+      name: relic.name,
+      selection: sanitizedRelicSel,
+      builtin: true,
+      tag: relic.tag,
+    })
+    seenIds.add(relic.id)
   }
 
   const activeSelectionSanitized =
     sanitizeSelection(input.activeSelection) ??
     sanitizeSelection({
       seedTypeId: 'basicSeed',
+      lifetimeSec: SEED_DEFS['basicSeed'].lifetimeSec,
+      slots: [],
       recipeStack: [],
     })
 
@@ -294,6 +384,7 @@ export function getActiveSeedSelection(): SeedSelection {
     lifetimeSec: state.activeSelection.lifetimeSec,
     slots: state.activeSelection.slots.map((s) => ({ ...s })),
     recipeStack: state.activeSelection.recipeStack.slice(),
+    strainId: state.activeSelection.strainId,
   }
 }
 
@@ -354,6 +445,10 @@ export function upsertSeedPreset(
 }
 
 export function deleteSeedPreset(id: string): void {
+  // Guard against deleting built-in relic/system presets.
+  if (id.startsWith('relic:')) {
+    return
+  }
   const next = state.presets.filter((p) => p.id !== id)
   if (next.length === state.presets.length) return
   state.presets = next

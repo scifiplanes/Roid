@@ -14,6 +14,7 @@ export type VoxelKind =
   | 'refinery'
   | 'depthScanner'
   | 'computronium'
+  | 'miningDrone'
 
 export interface VoxelKindDef {
   maxDurability: number
@@ -60,7 +61,7 @@ export const VOXEL_KIND_DEFS: Record<VoxelKind, VoxelKindDef> = {
   processedMatter: {
     maxDurability: 1,
     yields: {},
-    colorTint: new Color(0.22, 0.17, 0.28),
+    colorTint: new Color(0, 0, 0),
   },
   replicator: {
     maxDurability: 0,
@@ -96,6 +97,11 @@ export const VOXEL_KIND_DEFS: Record<VoxelKind, VoxelKindDef> = {
     maxDurability: 0,
     yields: {},
     colorTint: new Color(0.38, 0.14, 0.42),
+  },
+  miningDrone: {
+    maxDurability: 0,
+    yields: {},
+    colorTint: new Color(0.72, 0.58, 0.14),
   },
 }
 

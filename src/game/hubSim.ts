@@ -92,6 +92,11 @@ export interface StepHubsResult {
 export interface StepHubsOptions {
   /** Fires after one processed-matter unit is successfully taken from a `processedMatter` cell. */
   onProcessedMatterUnitTaken?: (cell: VoxelCell) => void
+  /**
+   * Optional callback when root tallies are credited from processed matter.
+   * Allows callers to maintain origin-tagged tallies alongside the primary map.
+   */
+  onRootTalliesFromPm?: (cell: VoxelCell, credited: Partial<Record<RootResourceId, number>>) => void
 }
 
 export function stepHubs(
@@ -104,6 +109,8 @@ export function stepHubs(
   if (dtSec <= 0 || cells.length === 0) {
     return { meshDirty: false, tallyChanged: false, replicatorStoreChanged: false }
   }
+
+  const nowMs = performance.now()
 
   const activeHubs = cells.filter(isHubProcessing)
   if (activeHubs.length === 0) {
@@ -134,6 +141,13 @@ export function stepHubs(
       let best: VoxelCell | null = null
       let bestScore = 0
       for (const cell of cells) {
+        if (
+          cell.kind === 'processedMatter' &&
+          cell.lifterChargeStartMs != null &&
+          nowMs - cell.lifterChargeStartMs < gameBalance.lifterChargeMs
+        ) {
+          continue
+        }
         if (!cellHasRefinableStock(cell)) continue
         const dk = posKey(cell.pos)
         const d = distMap.get(dk)
@@ -156,7 +170,11 @@ export function stepHubs(
         }
         energySpentHub += spent
         const comp = best.processedMatterRootComposition ?? defaultUniformRootComposition()
-        addRootTalliesFromPmComposition(tallies, comp)
+        const credited: Partial<Record<RootResourceId, number>> = {}
+        addRootTalliesFromPmComposition(tallies, comp, credited)
+        if (options?.onRootTalliesFromPm) {
+          options.onRootTalliesFromPm(best, credited)
+        }
         tallyChanged = true
         if (best.kind === 'processedMatter') {
           options?.onProcessedMatterUnitTaken?.(best)

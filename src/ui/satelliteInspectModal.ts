@@ -1,4 +1,9 @@
-export type SatelliteInspectKind = 'orbital' | 'excavating' | 'scanner' | 'drossCollector'
+export type SatelliteInspectKind =
+  | 'orbital'
+  | 'excavating'
+  | 'scanner'
+  | 'drossCollector'
+  | 'cargoDrone'
 
 export interface SatelliteInspectShowPayload {
   kind: SatelliteInspectKind
@@ -21,6 +26,7 @@ const TITLE: Record<SatelliteInspectKind, string> = {
   excavating: 'Dig laser satellite',
   scanner: 'Scanner satellite',
   drossCollector: 'Cleanup collector satellite',
+  cargoDrone: 'Cargo drone satellite',
 }
 
 function kindLabel(kind: SatelliteInspectKind): string {

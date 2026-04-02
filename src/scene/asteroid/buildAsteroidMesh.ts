@@ -28,7 +28,7 @@ import {
   REPLICATOR_STOCK_TINT_LERP,
   type VoxelKind,
 } from '../../game/voxelKinds'
-import { getSeedColor } from '../../game/seedColors'
+import { getReplicatorDisplayColor } from '../../game/resourceColors'
 import { replicatorResourceFill01 } from '../../game/localStores'
 import {
   addDepthOverlayAlphaMulAttribute,
@@ -73,8 +73,11 @@ export interface AsteroidRenderBundle {
   refinery: InstancedMesh
   refineryStandby: InstancedMesh
   depthScanner: InstancedMesh
+  miningDrone: InstancedMesh
   computronium: InstancedMesh
   computroniumStandby: InstancedMesh
+  /** Optional external group attached for debris visuals. */
+  debrisGroup?: Group
 }
 
 const _m = new Matrix4()
@@ -84,7 +87,6 @@ const _depthBase = new Color()
 const _depthCompose = new Color()
 const _voidColor = new Color(0, 0, 0)
 const _bulkRockHint = new Color()
-const _seedColor = new Color()
 const _depthHeatmap = new Color()
 const _surfaceHeatmap = new Color()
 const _debugLodeHeatmap = new Color()
@@ -110,12 +112,27 @@ function isEatingRock(cell: VoxelCell): boolean {
   return cell.replicatorEating === true && cell.kind !== 'replicator'
 }
 
+function isFeedingReplicator(cell: VoxelCell): boolean {
+  return cell.kind === 'replicator' && cell.replicatorFeedingOther === true
+}
+
+function isBeingFedReplicator(cell: VoxelCell): boolean {
+  return cell.kind === 'replicator' && cell.replicatorBeingFed === true
+}
+
+function isScourgeCell(cell: VoxelCell): boolean {
+  return cell.scourgeActive === true
+}
+
+function isLocustCell(cell: VoxelCell): boolean {
+  return cell.locustActive === true
+}
+
 function kindUsesBulkRockHint(kind: VoxelKind): boolean {
   return (
     kind === 'regolith' ||
     kind === 'silicateRock' ||
-    kind === 'metalRich' ||
-    kind === 'processedMatter'
+    kind === 'metalRich'
   )
 }
 
@@ -135,15 +152,29 @@ function replicatorPulseMul(cell: VoxelCell, nowMs: number): number {
   const tapEnd = cell.replicatorTapPulseEndMs
   if (tapEnd !== undefined) {
     const remaining = tapEnd - nowMs
-    const TAP_MS = 260
+    const TAP_MS = 320
     if (remaining > 0 && remaining <= TAP_MS) {
       const t = 1 - remaining / TAP_MS
       const ease = t * t * (3 - 2 * t)
-      mul *= 1 + 0.6 * (1 - ease)
+      mul *= 1 + 0.9 * (1 - ease)
     }
   }
 
   return mul
+}
+
+/** Pulse, cannibal feed/feed HSL nudge, and local stock lerp — keep in sync with `reapplyRockInstanceColors` solid replicator path. */
+function applyMatureReplicatorSolidTintMods(cell: VoxelCell, out: Color, nowMs: number): void {
+  out.multiplyScalar(replicatorPulseMul(cell, nowMs))
+  if (isFeedingReplicator(cell)) {
+    out.offsetHSL(0.02, 0.06, 0.12)
+  } else if (isBeingFedReplicator(cell)) {
+    out.offsetHSL(-0.02, -0.04, -0.08)
+  }
+  const fill = replicatorResourceFill01(cell)
+  if (fill > 0) {
+    out.lerp(REPLICATOR_STOCK_TINT, fill * REPLICATOR_STOCK_TINT_LERP)
+  }
 }
 
 function setCellMatrixAt(
@@ -306,8 +337,10 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
 
   const baseGeometry = new BoxGeometry(voxelSize, voxelSize, voxelSize)
 
+  // White albedo: instance colors already bake `baseColor` for rock; replicator RGB is absolute.
+  // Non-white material.color would multiply again and mute replicators to gray.
   const solidMat = new MeshStandardMaterial({
-    color: baseColor,
+    color: new Color(1, 1, 1),
     metalness: rockM,
     roughness: 0.92,
   })
@@ -317,7 +350,7 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
     metalness: eatingM,
     roughness: 0.82,
     emissive: new Color(0.08, 0.72, 0.64),
-    emissiveIntensity: 0.1,
+    emissiveIntensity: 0.32,
   })
 
   const reactorMat = new MeshStandardMaterial({
@@ -376,6 +409,14 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
     emissiveIntensity: 0.52,
   })
 
+  const miningDroneMat = new MeshStandardMaterial({
+    color: new Color(0.22, 0.16, 0.05),
+    metalness: 0.24,
+    roughness: 0.44,
+    emissive: new Color(0.95, 0.78, 0.12),
+    emissiveIntensity: 0.48,
+  })
+
   const computroniumMat = new MeshStandardMaterial({
     color: new Color(0.2, 0.05, 0.26),
     metalness: 0.26,
@@ -401,6 +442,7 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
     refineryMat,
     refineryStandbyMat,
     depthScannerMat,
+    miningDroneMat,
     computroniumMat,
     computroniumStandbyMat,
   ]) {
@@ -440,14 +482,16 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
   const refineryIndices: number[] = []
   const refineryStandbyIndices: number[] = []
   const depthScannerIndices: number[] = []
+  const miningDroneIndices: number[] = []
   const computroniumIndices: number[] = []
   const computroniumStandbyIndices: number[] = []
   for (let i = 0; i < n; i++) {
     const cell = cells[i]
-    if (isEatingRock(cell)) eatingIndices.push(i)
+    if (isEatingRock(cell) || isScourgeCell(cell) || isLocustCell(cell)) eatingIndices.push(i)
     else if (cell.kind === 'reactor') reactorIndices.push(i)
     else if (cell.kind === 'battery') batteryIndices.push(i)
     else if (cell.kind === 'depthScanner') depthScannerIndices.push(i)
+    else if (cell.kind === 'miningDrone') miningDroneIndices.push(i)
     else if (cell.kind === 'computronium' && cell.computroniumDisabled === true) {
       computroniumStandbyIndices.push(i)
     } else if (cell.kind === 'computronium') computroniumIndices.push(i)
@@ -463,6 +507,7 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
   const nr = Math.max(reactorIndices.length, 1)
   const nb = Math.max(batteryIndices.length, 1)
   const nd = Math.max(depthScannerIndices.length, 1)
+  const nmd = Math.max(miningDroneIndices.length, 1)
   const nh = Math.max(hubIndices.length, 1)
   const nhs = Math.max(hubStandbyIndices.length, 1)
   const nf = Math.max(refineryIndices.length, 1)
@@ -481,6 +526,7 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
   const reactor = emissiveInstancedMesh(reactorMat, nr, 'asteroid-reactor', reactorIndices)
   const battery = emissiveInstancedMesh(batteryMat, nb, 'asteroid-battery', batteryIndices)
   const depthScanner = emissiveInstancedMesh(depthScannerMat, nd, 'asteroid-depth-scanner', depthScannerIndices)
+  const miningDrone = emissiveInstancedMesh(miningDroneMat, nmd, 'asteroid-mining-drone', miningDroneIndices)
   const hub = emissiveInstancedMesh(hubMat, nh, 'asteroid-hub', hubIndices)
   const hubStandby = emissiveInstancedMesh(hubStandbyMat, nhs, 'asteroid-hub-standby', hubStandbyIndices)
   const refinery = emissiveInstancedMesh(refineryMat, nf, 'asteroid-refinery', refineryIndices)
@@ -498,7 +544,6 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
     computroniumStandbyIndices,
   )
 
-  const matureReplicatorTint = getKindDef('replicator').colorTint
   const scanVizForBuild = getActiveScanVisualizationDebug()
 
   if (n === 0) {
@@ -510,6 +555,7 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
       reactor,
       battery,
       depthScanner,
+      miningDrone,
       computronium,
       computroniumStandby,
       hub,
@@ -525,6 +571,7 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
     reactor.visible = false
     battery.visible = false
     depthScanner.visible = false
+    miningDrone.visible = false
     computronium.visible = false
     computroniumStandby.visible = false
     hub.visible = false
@@ -540,29 +587,21 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
       const rockDef = getKindDef(kind)
       let kindTint = rockDef.colorTint
       if (kind === 'replicator') {
-        const fill = replicatorResourceFill01(cell)
-        _blend.copy(matureReplicatorTint).lerp(REPLICATOR_STOCK_TINT, fill * REPLICATOR_STOCK_TINT_LERP)
-        const seedRuntime = cell.seedRuntime
-        if (seedRuntime) {
-          const sc = getSeedColor(seedRuntime.seedTypeId)
-          _seedColor.setRGB(sc.r, sc.g, sc.b)
-          // Blend a portion of the seed color into the base replicator tint.
-          _blend.lerp(_seedColor, 0.45)
-        }
-        kindTint = _blend
-      }
-      const h = (pos.x * 73 + pos.y * 137 + pos.z * 211) >>> 0
-      const tv = 0.78 + (h % 40) / 200
-      _c.copy(baseColor).multiply(kindTint).multiplyScalar(tv)
-      if (kind === 'processedMatter') {
-        _c.multiplyScalar(0.78)
+        const rgb = getReplicatorDisplayColor(cell)
+        _c.setRGB(rgb.r, rgb.g, rgb.b)
+      } else if (kind === 'processedMatter') {
+        _c.setRGB(0, 0, 0)
+      } else {
+        const h = (pos.x * 73 + pos.y * 137 + pos.z * 211) >>> 0
+        const tv = 0.78 + (h % 40) / 200
+        _c.copy(baseColor).multiply(kindTint).multiplyScalar(tv)
       }
       if (kindUsesBulkRockHint(kind)) {
         compositionToBulkRockHintColor(cell, _bulkRockHint, scanVizForBuild)
         blendBulkRockHintOntoBase(_c, _bulkRockHint, scanVizForBuild.baseRockBulkHintLerp, _c)
       }
       if (kind === 'replicator') {
-        _c.multiplyScalar(replicatorPulseMul(cell, performance.now()))
+        applyMatureReplicatorSolidTintMods(cell, _c, performance.now())
       }
       solid.setColorAt(j, _c)
     }
@@ -586,11 +625,6 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
         const tLinear = maxHp > 0 ? 1 - hpRemaining / maxHp : 0
         const t = tLinear * tLinear * (3 - 2 * tLinear)
         _blend.copy(rockDef.colorTint).lerp(REPLICATOR_PROCESSING_TINT, 0.12 + t * 0.88)
-        if (kind === 'replicator' && cell.seedRuntime) {
-          const sc = getSeedColor(cell.seedRuntime.seedTypeId)
-          _seedColor.setRGB(sc.r, sc.g, sc.b)
-          _blend.lerp(_seedColor, 0.45)
-        }
         const h = (pos.x * 73 + pos.y * 137 + pos.z * 211) >>> 0
         const tv = 0.82 + (h % 40) / 200
         _c.copy(baseColor).multiply(_blend).multiplyScalar(tv)
@@ -667,6 +701,28 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
         depthScanner.setColorAt(j, _c)
       }
       depthScanner.count = depthScannerIndices.length
+    }
+
+    const miningDroneTint = getKindDef('miningDrone').colorTint
+    if (miningDroneIndices.length === 0) {
+      _m.makeScale(0, 0, 0)
+      miningDrone.setMatrixAt(0, _m)
+      miningDrone.setColorAt(0, _c)
+      miningDrone.count = 0
+      miningDrone.visible = false
+    } else {
+      miningDrone.visible = true
+      for (let j = 0; j < miningDroneIndices.length; j++) {
+        const i = miningDroneIndices[j]
+        const cell = cells[i]
+        setCellMatrixAt(miningDrone, j, cell, center, voxelSize)
+        const { pos } = cell
+        const h = (pos.x * 73 + pos.y * 137 + pos.z * 211) >>> 0
+        const tv = 0.88 + (h % 40) / 200
+        _c.copy(baseColor).multiply(miningDroneTint).multiplyScalar(tv)
+        miningDrone.setColorAt(j, _c)
+      }
+      miningDrone.count = miningDroneIndices.length
     }
 
     const computroniumTint = getKindDef('computronium').colorTint
@@ -810,6 +866,8 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
     if (battery.instanceColor) battery.instanceColor.needsUpdate = true
     depthScanner.instanceMatrix.needsUpdate = true
     if (depthScanner.instanceColor) depthScanner.instanceColor.needsUpdate = true
+    miningDrone.instanceMatrix.needsUpdate = true
+    if (miningDrone.instanceColor) miningDrone.instanceColor.needsUpdate = true
     hub.instanceMatrix.needsUpdate = true
     if (hub.instanceColor) hub.instanceColor.needsUpdate = true
     hubStandby.instanceMatrix.needsUpdate = true
@@ -832,6 +890,7 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
     reactor,
     battery,
     depthScanner,
+    miningDrone,
     computronium,
     computroniumStandby,
     hub,
@@ -852,6 +911,7 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
     refinery,
     refineryStandby,
     depthScanner,
+    miningDrone,
     computronium,
     computroniumStandby,
   }
@@ -860,6 +920,7 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
 const _hlOrbital = new Color(0.35, 0.72, 1.0)
 const _hlExcav = new Color(1.0, 0.48, 0.1)
 const _hlExplosive = new Color(1.0, 0.14, 0.06)
+const _hlLifter = new Color(0.35, 1.0, 0.82)
 
 const _scanTint = new Color()
 const _scanTintHsl = { h: 0, s: 0, l: 0 }
@@ -898,7 +959,7 @@ export function reapplyRockInstanceColors(
   options: AsteroidMeshOptions,
   scanDebug: ScanVisualizationDebug,
   highlight: ReadonlySet<number> | null,
-  highlightMode: 'orbital' | 'excavating' | 'explosiveFuse' | null,
+  highlightMode: 'orbital' | 'excavating' | 'explosiveFuse' | 'lifter' | null,
   highlightPulse = 1,
   scannerTints: ReadonlyMap<number, Color> | null = null,
   depthOverlayActive = false,
@@ -912,6 +973,7 @@ export function reapplyRockInstanceColors(
     reactor,
     battery,
     depthScanner,
+    miningDrone,
     computronium,
     computroniumStandby,
     hub,
@@ -919,11 +981,12 @@ export function reapplyRockInstanceColors(
     refinery,
     refineryStandby,
   } = bundle
-  const matureReplicatorTint = getKindDef('replicator').colorTint
   const nowMs = performance.now()
 
   function applyDepthOverlayRock(cell: VoxelCell, out: Color, cellIndex: number): void {
+    // Infected fronts should cut through depth-overlay blending.
     if (!depthOverlayActive) return
+    if (isScourgeCell(cell) || isLocustCell(cell)) return
     if (!cellParticipatesInDepthReveal(cell)) return
     const prog = Math.min(1, cell.depthRevealProgress ?? 0)
     const lode0 = cell.rareLodeStrength01 ?? 0
@@ -991,6 +1054,8 @@ export function reapplyRockInstanceColors(
   function applyScannerTint(cellIndex: number, out: Color): void {
     if (!scannerTints?.has(cellIndex)) return
     const cell = cells[cellIndex]!
+    // Preserve strong infection colors; skip scanner tint for Scourge/Locust.
+    if (isScourgeCell(cell) || isLocustCell(cell)) return
     const lode = cell.rareLodeStrength01 ?? 0
     const floor = gameBalance.depthOverlayLodeOpaqueStrengthFloor
     if (lode >= floor) {
@@ -1025,8 +1090,19 @@ export function reapplyRockInstanceColors(
     out.multiplyScalar(1.12)
   }
 
+  function infectionPulseMul(base: number, phaseSeed: number, now: number): number {
+    // ~2 Hz wobble with per-cell phase offset; deliberately strong so fronts are clearly visible.
+    const phase = now * 0.012 + (phaseSeed % 8191) * 0.61
+    const wobble = 0.55 + 0.45 * (0.5 + 0.5 * Math.sin(phase))
+    return base * wobble
+  }
+
   function computeDepthOverlayAlphaMulForCell(cell: VoxelCell): number {
     if (!depthOverlayActive) return 1
+    if (isScourgeCell(cell) || isLocustCell(cell)) {
+      const rockOp = Math.max(0.05, gameBalance.depthOverlayRockOpacity)
+      return Math.min(1 / rockOp, 25)
+    }
     if (!cellParticipatesInDepthReveal(cell)) return 1
     const prog = Math.min(1, cell.depthRevealProgress ?? 0)
     const lode = cell.rareLodeStrength01 ?? 0
@@ -1041,6 +1117,11 @@ export function reapplyRockInstanceColors(
     if (highlightMode === 'explosiveFuse') {
       out.lerp(_hlExplosive, 0.88)
       out.multiplyScalar(2.45 * highlightPulse)
+      return
+    }
+    if (highlightMode === 'lifter') {
+      out.lerp(_hlLifter, 0.82)
+      out.multiplyScalar(2.15 * highlightPulse)
       return
     }
     const hc = highlightMode === 'orbital' ? _hlOrbital : _hlExcav
@@ -1059,29 +1140,34 @@ export function reapplyRockInstanceColors(
       const { pos, kind } = cell
       const rockDef = getKindDef(kind)
       let kindTint = rockDef.colorTint
-      if (kind === 'replicator') {
-        const fill = replicatorResourceFill01(cell)
-        _blend.copy(matureReplicatorTint).lerp(REPLICATOR_STOCK_TINT, fill * REPLICATOR_STOCK_TINT_LERP)
-        const seedRuntime = cell.seedRuntime
-        if (seedRuntime) {
-          const sc = getSeedColor(seedRuntime.seedTypeId)
-          _seedColor.setRGB(sc.r, sc.g, sc.b)
-          _blend.lerp(_seedColor, 0.45)
-        }
-        kindTint = _blend
-      }
       const h = (pos.x * 73 + pos.y * 137 + pos.z * 211) >>> 0
-      const tv = 0.78 + (h % 40) / 200
-      _c.copy(baseColor).multiply(kindTint).multiplyScalar(tv)
-      if (kind === 'processedMatter') {
-        _c.multiplyScalar(0.78)
+      if (isScourgeCell(cell)) {
+        const tv = 1.05 + (h % 40) / 160
+        const base = 1.7
+        const mul = infectionPulseMul(base, h, nowMs)
+        // Very bright, saturated crimson for active Scourge rock.
+        _c.setRGB(1.0, 0.18, 0.35).multiplyScalar(tv * mul)
+      } else if (isLocustCell(cell)) {
+        const tv = 1.0 + (h % 40) / 180
+        const base = 1.5
+        const mul = infectionPulseMul(base, h * 17, nowMs)
+        // Bright orange for active Locust rock.
+        _c.setRGB(1.0, 0.55, 0.18).multiplyScalar(tv * mul)
+      } else if (kind === 'replicator') {
+        const rgb = getReplicatorDisplayColor(cell)
+        _c.setRGB(rgb.r, rgb.g, rgb.b)
+      } else if (kind === 'processedMatter') {
+        _c.setRGB(0, 0, 0)
+      } else {
+        const tv = 0.78 + (h % 40) / 200
+        _c.copy(baseColor).multiply(kindTint).multiplyScalar(tv)
       }
       if (kindUsesBulkRockHint(kind)) {
         compositionToBulkRockHintColor(cell, _bulkRockHint, scanDebug)
         blendBulkRockHintOntoBase(_c, _bulkRockHint, scanDebug.baseRockBulkHintLerp, _c)
       }
       if (kind === 'replicator') {
-        _c.multiplyScalar(replicatorPulseMul(cell, nowMs))
+        applyMatureReplicatorSolidTintMods(cell, _c, nowMs)
       }
       applyDepthOverlayRock(cell, _c, i)
       applyScannerTint(i, _c)
@@ -1111,21 +1197,35 @@ export function reapplyRockInstanceColors(
         const i = eatingIndices[j]
         const cell = cells[i]
         const { pos, kind, hpRemaining } = cell
-        const rockDef = getKindDef(kind)
-        const maxHp = rockDef.maxDurability
-        const tLinear = maxHp > 0 ? 1 - hpRemaining / maxHp : 0
-        const t = tLinear * tLinear * (3 - 2 * tLinear)
-        _blend.copy(rockDef.colorTint).lerp(REPLICATOR_PROCESSING_TINT, 0.12 + t * 0.88)
-        const h = (pos.x * 73 + pos.y * 137 + pos.z * 211) >>> 0
-        const tv = 0.82 + (h % 40) / 200
-        _c.copy(baseColor).multiply(_blend).multiplyScalar(tv)
-        if (kindUsesBulkRockHint(kind)) {
-          compositionToBulkRockHintColor(cell, _bulkRockHint, scanDebug)
-          blendBulkRockHintOntoBase(_c, _bulkRockHint, scanDebug.baseRockBulkHintLerp * 0.72, _c)
+
+        if (isScourgeCell(cell)) {
+          const h = (pos.x * 73 + pos.y * 137 + pos.z * 211) >>> 0
+          const tv = 1.1 + (h % 40) / 140
+          const base = 1.9
+          const mul = infectionPulseMul(base, h, nowMs)
+          _c.setRGB(1.0, 0.18, 0.35).multiplyScalar(tv * mul)
+        } else if (isLocustCell(cell)) {
+          const h = (pos.x * 73 + pos.y * 137 + pos.z * 211) >>> 0
+          const tv = 1.05 + (h % 40) / 160
+          const base = 1.7
+          const mul = infectionPulseMul(base, h * 17, nowMs)
+          // Matching bright orange in emissive layer.
+          _c.setRGB(1.0, 0.55, 0.18).multiplyScalar(tv * mul)
+        } else {
+          const rockDef = getKindDef(kind)
+          const maxHp = rockDef.maxDurability
+          const tLinear = maxHp > 0 ? 1 - hpRemaining / maxHp : 0
+          const t = tLinear * tLinear * (3 - 2 * tLinear)
+          _blend.copy(rockDef.colorTint).lerp(REPLICATOR_PROCESSING_TINT, 0.12 + t * 0.88)
+          const h = (pos.x * 73 + pos.y * 137 + pos.z * 211) >>> 0
+          const tv = 0.82 + (h % 40) / 200
+          _c.copy(baseColor).multiply(_blend).multiplyScalar(tv)
+          if (kindUsesBulkRockHint(kind)) {
+            compositionToBulkRockHintColor(cell, _bulkRockHint, scanDebug)
+            blendBulkRockHintOntoBase(_c, _bulkRockHint, scanDebug.baseRockBulkHintLerp * 0.72, _c)
+          }
         }
-        if (kind === 'replicator') {
-          _c.multiplyScalar(replicatorPulseMul(cell, nowMs))
-        }
+
         applyDepthOverlayRock(cell, _c, i)
         applyScannerTint(i, _c)
         applyDiscoveryScanHint(i, _c)
@@ -1210,6 +1310,27 @@ export function reapplyRockInstanceColors(
       }
       if (depthScanner.instanceColor) depthScanner.instanceColor.needsUpdate = true
       flagScanEmissiveSuppressNeedsUpdate(depthScanner)
+    }
+  }
+
+  const miningDroneTint = getKindDef('miningDrone').colorTint
+  if (miningDrone.visible && miningDrone.count > 0) {
+    const miningDroneIndices = miningDrone.userData.cellIndices as number[] | undefined
+    if (miningDroneIndices) {
+      for (let j = 0; j < miningDrone.count; j++) {
+        const i = miningDroneIndices[j]
+        const cell = cells[i]
+        const { pos } = cell
+        const hh = (pos.x * 73 + pos.y * 137 + pos.z * 211) >>> 0
+        const tv = 0.88 + (hh % 40) / 200
+        _c.copy(baseColor).multiply(miningDroneTint).multiplyScalar(tv)
+        applyScannerTint(i, _c)
+        applyLaserHighlight(i, _c)
+        miningDrone.setColorAt(j, _c)
+        setScanEmissiveSuppressAt(miningDrone, j, scanEmissiveSuppressFactor(i, scannerTints, scanDebug))
+      }
+      if (miningDrone.instanceColor) miningDrone.instanceColor.needsUpdate = true
+      flagScanEmissiveSuppressNeedsUpdate(miningDrone)
     }
   }
 
@@ -1377,6 +1498,7 @@ export function disposeAsteroidBundle(bundle: AsteroidRenderBundle): void {
     bundle.reactor,
     bundle.battery,
     bundle.depthScanner,
+    bundle.miningDrone,
     bundle.computronium,
     bundle.computroniumStandby,
     bundle.hub,
@@ -1392,6 +1514,7 @@ export function disposeAsteroidBundle(bundle: AsteroidRenderBundle): void {
     bundle.reactor.material,
     bundle.battery.material,
     bundle.depthScanner.material,
+    bundle.miningDrone.material,
     bundle.computronium.material,
     bundle.computroniumStandby.material,
     bundle.hub.material,

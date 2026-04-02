@@ -22,6 +22,7 @@ import {
   generateAsteroidVoxels,
   type VoxelPos,
 } from './scene/asteroid/generateAsteroidVoxels'
+import { generateWreckVoxels } from './scene/wreck/generateWreckVoxels'
 import { applyImpactCraters } from './scene/asteroid/impactCraters'
 import {
   buildAsteroidMesh,
@@ -32,11 +33,13 @@ import {
   type AsteroidRenderBundle,
 } from './scene/asteroid/buildAsteroidMesh'
 import { raycastFirstOccupiedCellIndex } from './game/voxelGridRaycast'
-import { compositionToYields } from './game/compositionYields'
+import {
+  convertRockCellToProcessedMatterInPlace,
+  ROCK_LITHOLOGY_KINDS,
+} from './game/convertRockToProcessedMatter'
 import { deriveAsteroidProfile, discoveryDensityScale, formatProfileFingerprint } from './game/asteroidGenProfile'
 import {
   enrichVoxelCells,
-  hpForVoxelKind,
   type ReplicatorTransformTarget,
   type VoxelCell,
 } from './game/voxelState'
@@ -48,10 +51,10 @@ const REPLICATOR_TARGET_DEBUG_LABEL: Record<ReplicatorTransformTarget, string> =
   refinery: 'Refinery',
   computronium: 'Computronium',
 }
-import type { VoxelKind } from './game/voxelKinds'
 import { resourceHudCssColorForId } from './game/resourceOriginDepth'
 import {
   addResourceYields,
+  creditAllProcessedMatterUnitsToTallies,
   createEmptyResourceTallies,
   defaultUniformRootComposition,
   formatEnergyHudLine,
@@ -71,7 +74,6 @@ import {
   getScaledReplicatorPlaceCost,
   getScaledSatelliteDeployCost,
   stepEnergy,
-  clearReplicatorTransformState,
   tryConvertCellToDepthScannerWithMeta,
   tryStartReplicatorTransform,
   stepReplicatorTransforms,
@@ -80,6 +82,7 @@ import {
   type StructureConvertKind,
 } from './game/energyAndStructures'
 import {
+  applyInitialToolDebugConfigToResearch,
   countActiveComputronium,
   getDepthScanToolUiPhase,
   getDrossCollectorDeployUiPhase,
@@ -111,6 +114,20 @@ import {
   totalDrossMass,
 } from './game/drossSim'
 import {
+  collectDebris,
+  createDebrisState,
+  raycastDebris,
+  spawnDebrisFromRemovedCell as spawnDebrisShardFromRemovedCell,
+  stepDebris,
+  type DebrisState,
+} from './game/debrisSim'
+import { createDebrisShardsGroup, type DebrisShardsHandle } from './scene/debrisShards'
+import { createLifterFlightsGroup, type LifterFlightsHandle } from './scene/lifterFlights'
+import { spawnScourgeAt, stepScourge } from './game/scourgeSim'
+import { initMiningDroneCell, stepMiningDrones } from './game/miningDroneSim'
+import { spawnLocustAt, stepLocust } from './game/locustSim'
+import { pokeReplicator } from './game/replicatorSim'
+import {
   batteryToolUnlocked,
   computroniumToolUnlocked,
   getStructureToolUiPhase as structureToolPhaseFromCells,
@@ -121,6 +138,7 @@ import {
 import {
   applyFrameShake,
   createMineRippleElement,
+  onDebrisCollectFeedback,
   onMiningHitFeedback,
   onMiningHitFeedbackVisualOnly,
   playReplicatorConsumeClicks,
@@ -133,6 +151,7 @@ import {
   playHubToggle,
   playRefineryToggle,
   playReplicatorPlaceClick,
+  playReplicatorTapClick,
   playScanPing,
   playExplosiveChargeDetonation,
   playDiscoveryFalseSignal,
@@ -170,6 +189,8 @@ import {
   loadPersistedAudioMasterDebug,
   schedulePersistAudioMasterDebug,
 } from './game/audioMasterPersist'
+import { loadPersistedPickThudDebug } from './game/pickThudPersist'
+import { pickThudDebug } from './game/pickThudDebug'
 import {
   applyAudioMasterDebug,
   setAudioMasterDebugGetter,
@@ -177,9 +198,12 @@ import {
 import { createOverlaysMenu } from './ui/overlaysMenu'
 import { createSettingsMenu } from './ui/settingsMenu'
 import { COLOR_SCHEME_OPTIONS, DEFAULT_COLOR_SCHEME, getColorSchemeClass, type ColorSchemeId } from './ui/colorScheme'
+import { DEFAULT_FONT_ID, FONT_OPTIONS, getFontClass, type FontId } from './ui/fontTheme'
 import { updateDrossFog } from './scene/drossFog'
+import { createPauseButton } from './ui/pauseButton'
 import { createDrossParticlesGroup } from './scene/drossParticles'
 import { createSatelliteDotsGroup } from './scene/satelliteDots'
+import { getSandboxModeEnabled, subscribeSandboxMode } from './game/sandboxMode'
 import {
   projectVoxelPosToClient,
   segmentFirstBorderHitTowardRect,
@@ -193,7 +217,12 @@ import {
 } from './ui/satelliteInspectModal'
 import { createRefineryRecipesModal } from './ui/refineryRecipesModal'
 import { createSeedAssemblyModal, type SeedAssemblySelection } from './ui/seedAssemblyModal'
-import { createToolsPanel, type LaserSatelliteRowSnapshot, type PlayerTool } from './ui/toolsPanel'
+import {
+  createToolsPanel,
+  type LaserSatelliteRowSnapshot,
+  type PlayerTool,
+  type SatelliteDeployKind,
+} from './ui/toolsPanel'
 import { stepDepthReveal } from './game/depthScannerSim'
 import { formatInspectHudLines } from './game/inspectVoxel'
 import {
@@ -212,6 +241,7 @@ import {
   type ReplicatorNeighborIndex,
 } from './game/replicatorSim'
 import { stepHubs } from './game/hubSim'
+import { stepCargoDrones } from './game/cargoDroneSim'
 import { defaultRefineryRecipeSelection } from './game/refineryRecipeUnlock'
 import { stepRefineryProcessing } from './game/refineryProcessSim'
 import {
@@ -233,6 +263,8 @@ import {
   writeSunAnglesToLocalStorage,
   writeSunLightDebugToLocalStorage,
 } from './game/settingsClientPersist'
+import { loadColorSchemeId, saveColorSchemeId } from './game/colorSchemePrefs'
+import { loadFontId, saveFontId } from './game/fontPrefs'
 import {
   deleteSeedPreset,
   getActiveSeedSelection,
@@ -244,8 +276,11 @@ import {
   upsertSeedPreset,
   type SeedSelection,
 } from './game/seedInventory'
-import { currentComputroniumTier } from './game/seedRecipes'
-import { SEED_DEFS } from './game/seedDefs'
+import { currentComputroniumTier, type SeedRecipeAvailabilityState } from './game/seedRecipes'
+import { SEED_DEFS, type SeedId } from './game/seedDefs'
+import { createEmptyResourceTalliesBySource, type ResourceTalliesBySource } from './game/resources'
+import type { CoreAsset } from './game/coreAssets'
+import { deriveWreckProfile } from './game/wreckGenProfile'
 
 await autoLoadBundledDebugPreset()
 
@@ -262,6 +297,7 @@ setScanVisualizationDebugGetter(() => scanVisualizationDebug)
 const audioMasterDebug = createDefaultAudioMasterDebug()
 Object.assign(audioMasterDebug, loadPersistedAudioMasterDebug())
 setAudioMasterDebugGetter(() => audioMasterDebug)
+Object.assign(pickThudDebug, loadPersistedPickThudDebug())
 initAsteroidMusicDebugFromPersisted(musicDebugSnapshot, asteroidMusicDebug)
 const asteroidAmbientMusic = createAsteroidAmbientMusic({
   getDebug: () => asteroidMusicDebug,
@@ -407,29 +443,63 @@ const gridSize = 33
 const voxelSize = 0.92
 
 let currentSeed = 42
-let asteroidProfile = deriveAsteroidProfile(currentSeed)
-const positions = applyImpactCraters(
-  generateAsteroidVoxels({
-    gridSize,
-    seed: currentSeed,
-    ...asteroidProfile.shape,
-  }),
-  gridSize,
-  currentSeed,
-  asteroidProfile,
-  gameBalance.impactCraterRangeMult,
-  gameBalance.impactCraterRadiusMinVoxels,
-  gameBalance.impactCraterRadiusMaxVoxels,
-  gameBalance.impactCraterCountMin,
-  gameBalance.impactCraterCountMax,
-)
-let voxelCells: VoxelCell[] = enrichVoxelCells(positions, {
+let currentAsset: CoreAsset = {
+  id: 'core-asset',
+  kind: 'asteroid',
   seed: currentSeed,
   gridSize,
-  baseRadius: asteroidProfile.shape.baseRadius,
-  noiseAmplitude: asteroidProfile.shape.noiseAmplitude,
-  profile: asteroidProfile,
-})
+  profile: deriveAsteroidProfile(currentSeed),
+}
+
+function currentAsteroidProfile() {
+  return currentAsset.kind === 'asteroid' ? (currentAsset.profile as ReturnType<typeof deriveAsteroidProfile>) : deriveAsteroidProfile(currentAsset.seed)
+}
+
+function generateCoreAssetVoxels(kind: CoreAsset['kind'], seed: number): VoxelPos[] {
+  if (kind === 'wreck') {
+    const { profile } = deriveWreckProfile(seed)
+    return generateWreckVoxels({
+      gridSize,
+      seed,
+      profile,
+    })
+  }
+  const asteroidProfile = currentAsteroidProfile()
+  return applyImpactCraters(
+    generateAsteroidVoxels({
+      gridSize,
+      seed,
+      ...asteroidProfile.shape,
+    }),
+    gridSize,
+    seed,
+    asteroidProfile,
+    gameBalance.impactCraterRangeMult,
+    gameBalance.impactCraterRadiusMinVoxels,
+    gameBalance.impactCraterRadiusMaxVoxels,
+    gameBalance.impactCraterCountMin,
+    gameBalance.impactCraterCountMax,
+  )
+}
+
+function enrichCoreAssetVoxels(positions: VoxelPos[], kind: CoreAsset['kind']): VoxelCell[] {
+  const asteroidProfile = currentAsteroidProfile()
+  const cells = enrichVoxelCells(positions, {
+    seed: currentSeed,
+    gridSize,
+    baseRadius: asteroidProfile.shape.baseRadius,
+    noiseAmplitude: asteroidProfile.shape.noiseAmplitude,
+    profile: asteroidProfile,
+  })
+  const originSource = kind === 'wreck' ? 'wreck' : 'asteroid'
+  for (const cell of cells) {
+    cell.originSource = originSource
+  }
+  return cells
+}
+
+const initialPositions = generateCoreAssetVoxels(currentAsset.kind, currentSeed)
+let voxelCells: VoxelCell[] = enrichCoreAssetVoxels(initialPositions, currentAsset.kind)
 
 /** Cached for ambient music tick; updated in `replaceAsteroidMesh`. */
 let structureVoxelCountForMusic = 0
@@ -472,27 +542,54 @@ function getReplicatorNeighborIndex(): ReplicatorNeighborIndex {
   return replicatorNeighborIndex
 }
 
+const initialProfileForMesh = currentAsteroidProfile()
 let asteroidBundle: AsteroidRenderBundle = buildAsteroidMesh(voxelCells, {
   voxelSize,
   gridSize,
   baseColor: new Color(
-    asteroidProfile.rockBaseColorRgb.r,
-    asteroidProfile.rockBaseColorRgb.g,
-    asteroidProfile.rockBaseColorRgb.b,
+    initialProfileForMesh.rockBaseColorRgb.r,
+    initialProfileForMesh.rockBaseColorRgb.g,
+    initialProfileForMesh.rockBaseColorRgb.b,
   ),
-  rockMetalness: asteroidProfile.rockMetalness,
+  rockMetalness: initialProfileForMesh.rockMetalness,
 })
 scene.add(asteroidBundle.group)
 applyAsteroidGroupRotation()
 structureVoxelCountForMusic = countStructureVoxelsForMusic(voxelCells)
 
 const drossState = createDrossState()
+let debrisState: DebrisState = createDebrisState()
 const drossParticles = createDrossParticlesGroup()
 asteroidBundle.group.add(drossParticles.group)
+const debrisVisual: DebrisShardsHandle = createDebrisShardsGroup()
+asteroidBundle.group.add(debrisVisual.group)
+const lifterFlightsVisual: LifterFlightsHandle = createLifterFlightsGroup()
+asteroidBundle.group.add(lifterFlightsVisual.group)
 
-let orbitVisualRadius = asteroidProfile.shape.baseRadius * voxelSize * 1.5
+interface LifterFlight {
+  pos: { x: number; y: number; z: number }
+  vel: { x: number; y: number; z: number }
+  spawnMs: number
+  discoveryPos: VoxelPos
+  units: number
+  comp: Record<RootResourceId, number>
+  originSource?: 'asteroid' | 'wreck'
+}
+
+const lifterFlights: LifterFlight[] = []
+
+const debrisBracketLayer = document.createElement('div')
+debrisBracketLayer.className = 'debris-brackets-layer'
+viewport.appendChild(debrisBracketLayer)
+
+const _debrisWorldPos = new Vector3()
+const _debrisNdc = new Vector3()
+const _lifterCamLocal = new Vector3()
+const debrisBracketsById = new Map<number, HTMLDivElement>()
+
+let orbitVisualRadius = currentAsteroidProfile().shape.baseRadius * voxelSize * 1.5
 const satelliteDots = createSatelliteDotsGroup()
-satelliteDots.setCounts(0, 0, 0, 0, orbitVisualRadius)
+satelliteDots.setCounts(0, 0, 0, 0, 0, orbitVisualRadius)
 scene.add(satelliteDots.group)
 
 const controls = createOrbitControls(camera, renderer.domElement)
@@ -529,6 +626,9 @@ function depthOverlayViewChanged(): boolean {
 }
 
 const resourceTallies = createEmptyResourceTallies()
+const resourceTalliesBySource: ResourceTalliesBySource = createEmptyResourceTalliesBySource(
+  createEmptyResourceTallies,
+)
 const DEBUG_RESOURCE_GRANT: Partial<Record<ResourceId, number>> = (() => {
   const roots: Partial<Record<ResourceId, number>> = {
     regolithMass: 50,
@@ -646,8 +746,11 @@ const overlayVizLoaded = loadOverlayVisualizationPrefs()
 let surfaceScanOverlayVisible = overlayVizLoaded.surfaceScanOverlayVisible
 let depthOverlayVisible = overlayVizLoaded.depthOverlayVisible
 
-let colorScheme: ColorSchemeId =
-  (settingsClientSnapshot as { colorScheme?: ColorSchemeId } | undefined)?.colorScheme ?? DEFAULT_COLOR_SCHEME
+const snapshotColorScheme = (settingsClientSnapshot as { colorScheme?: ColorSchemeId } | undefined)?.colorScheme
+let colorScheme: ColorSchemeId = loadColorSchemeId(snapshotColorScheme ?? DEFAULT_COLOR_SCHEME)
+
+const snapshotFontId = (settingsClientSnapshot as { fontId?: FontId } | undefined)?.fontId
+let fontId: FontId = loadFontId(snapshotFontId ?? DEFAULT_FONT_ID)
 
 function applyColorSchemeToApp(next: ColorSchemeId): void {
   const classList = app.classList
@@ -657,7 +760,16 @@ function applyColorSchemeToApp(next: ColorSchemeId): void {
   classList.add(getColorSchemeClass(next))
 }
 
+function applyFontToApp(next: FontId): void {
+  const classList = app.classList
+  for (const opt of FONT_OPTIONS) {
+    classList.remove(getFontClass(opt.id))
+  }
+  classList.add(getFontClass(next))
+}
+
 applyColorSchemeToApp(colorScheme)
+applyFontToApp(fontId)
 
 function persistOverlayVisualizationPrefs(): void {
   saveOverlayVisualizationPrefs({ surfaceScanOverlayVisible, depthOverlayVisible })
@@ -676,7 +788,8 @@ registerSettingsClientSnapshot(() => ({
   musicVolumeLinear,
   matterHudCollapsed,
   matterHudCompact,
-   colorScheme,
+  colorScheme,
+  fontId,
 }))
 /** Last scanner hit refined-material preview (HUD); cleared on regenerate. */
 let lastScanRefinedPreviewLine: string | null = null
@@ -796,6 +909,63 @@ function appendMatterHudPlainLine(frag: DocumentFragment, text: string): void {
   frag.appendChild(document.createElement('br'))
 }
 
+function formatCoreAssetFingerprint(asset: CoreAsset): string {
+  if (asset.kind === 'asteroid') {
+    return formatProfileFingerprint(currentAsteroidProfile())
+  }
+  const tail = (asset.seed >>> 0).toString(16).slice(-4).padStart(4, '0')
+  const archetypeLabel = (() => {
+    switch (asset.archetype) {
+      case 'truss':
+        return 'truss segment'
+      case 'cargoPod':
+        return 'cargo pod'
+      case 'stationPanel':
+        return 'station panel'
+      case 'antenna':
+        return 'antenna mast'
+      case 'hullChunk':
+      default:
+        return 'hull fragment'
+    }
+  })()
+  return `Wreck · ${archetypeLabel} · ${tail}`
+}
+
+function spawnDebrisPickupFloat(
+  clientX: number,
+  clientY: number,
+  reward: Partial<Record<ResourceId, number>>,
+): void {
+  const entries: { id: ResourceId; n: number }[] = []
+  for (const id of ROOT_RESOURCE_IDS) {
+    const n = reward[id]
+    if (n !== undefined && n > 0) entries.push({ id, n })
+  }
+  if (entries.length === 0) return
+  const wrap = document.createElement('div')
+  wrap.className = 'debris-pickup-float'
+  wrap.setAttribute('aria-hidden', 'true')
+  const r = viewport.getBoundingClientRect()
+  wrap.style.left = `${clientX - r.left}px`
+  wrap.style.top = `${clientY - r.top}px`
+  for (let i = 0; i < entries.length; i++) {
+    const { id, n } = entries[i]!
+    const span = document.createElement('span')
+    span.className = 'debris-pickup-float-res'
+    span.style.color = resourceHudCssColorForId(id)
+    span.textContent = `${RESOURCE_DEFS[id].hudAbbrev} +${n}`
+    wrap.appendChild(span)
+    if (i < entries.length - 1) wrap.appendChild(document.createTextNode(', '))
+  }
+  viewport.appendChild(wrap)
+  const onEnd = (): void => {
+    wrap.removeEventListener('animationend', onEnd)
+    wrap.remove()
+  }
+  wrap.addEventListener('animationend', onEnd)
+}
+
 function appendMatterHudColoredResourceLine(
   frag: DocumentFragment,
   entries: readonly { id: ResourceId; n: number }[],
@@ -815,7 +985,7 @@ function appendMatterHudColoredResourceLine(
 function setResourceHud(): void {
   const cap = computeEnergyCap(voxelCells, debugEnergyCapBonus)
   const frag = document.createDocumentFragment()
-  appendMatterHudPlainLine(frag, formatProfileFingerprint(asteroidProfile))
+  appendMatterHudPlainLine(frag, formatCoreAssetFingerprint(currentAsset))
   const roots = matterHudRootEntries(resourceTallies)
   if (roots.length > 0) appendMatterHudColoredResourceLine(frag, roots)
   const refined = matterHudRefinedEntries(resourceTallies)
@@ -841,8 +1011,13 @@ function replaceAsteroidMesh(cells: VoxelCell[]): void {
   markRockInstanceColorsDirty()
   resetDepthOverlayViewBaseline()
   drossParticles.group.removeFromParent()
+  debrisVisual.group.removeFromParent()
+  lifterFlightsVisual.group.removeFromParent()
+  for (const [, el] of debrisBracketsById) el.remove()
+  debrisBracketsById.clear()
   scene.remove(asteroidBundle.group)
   disposeAsteroidBundle(asteroidBundle)
+  const asteroidProfile = currentAsteroidProfile()
   asteroidBundle = buildAsteroidMesh(cells, {
     voxelSize,
     gridSize,
@@ -855,12 +1030,16 @@ function replaceAsteroidMesh(cells: VoxelCell[]): void {
   })
   scene.add(asteroidBundle.group)
   asteroidBundle.group.add(drossParticles.group)
+  asteroidBundle.group.add(debrisVisual.group)
+  asteroidBundle.group.add(lifterFlightsVisual.group)
   applyAsteroidGroupRotation()
   invalidateVoxelPosIndexMap()
   if (laserPointerDown || excavatingLaserPointerDown) {
     refreshLaserRockHighlightColors()
   } else if (hasActiveExplosiveFuse(performance.now())) {
     refreshExplosiveFuseRockColors()
+  } else if (hasActiveLifterCharge(performance.now())) {
+    refreshLifterRockColors()
   } else {
     reapplyAllRockColorsNoLaser()
   }
@@ -880,32 +1059,39 @@ let currentSeedAssemblySelection: SeedAssemblySelection = (() => {
   }
 })()
 
+function pickNextCoreAssetKind(): CoreAsset['kind'] {
+  const p = Math.min(1, Math.max(0, gameBalance.wreckSpawnProbability))
+  if (p <= 0) return 'asteroid'
+  if (p >= 1) return 'wreck'
+  const r = Math.random()
+  return r < p ? 'wreck' : 'asteroid'
+}
+
 function generateNewAsteroidGeometry(): void {
   currentSeed = Math.floor(Math.random() * 0xffffffff) >>> 0
-  asteroidProfile = deriveAsteroidProfile(currentSeed)
-  const nextPositions = applyImpactCraters(
-    generateAsteroidVoxels({
-      gridSize,
+  const kind = pickNextCoreAssetKind()
+  if (kind === 'wreck') {
+    const { archetype, profile } = deriveWreckProfile(currentSeed)
+    currentAsset = {
+      id: 'core-asset',
+      kind: 'wreck',
       seed: currentSeed,
-      ...asteroidProfile.shape,
-    }),
-    gridSize,
-    currentSeed,
-    asteroidProfile,
-    gameBalance.impactCraterRangeMult,
-    gameBalance.impactCraterRadiusMinVoxels,
-    gameBalance.impactCraterRadiusMaxVoxels,
-    gameBalance.impactCraterCountMin,
-    gameBalance.impactCraterCountMax,
-  )
-  voxelCells = enrichVoxelCells(nextPositions, {
-    seed: currentSeed,
-    gridSize,
-    baseRadius: asteroidProfile.shape.baseRadius,
-    noiseAmplitude: asteroidProfile.shape.noiseAmplitude,
-    profile: asteroidProfile,
-  })
-  orbitVisualRadius = asteroidProfile.shape.baseRadius * voxelSize * 1.5
+      gridSize,
+      archetype,
+      profile,
+    }
+  } else {
+    currentAsset = {
+      id: 'core-asset',
+      kind: 'asteroid',
+      seed: currentSeed,
+      gridSize,
+      profile: deriveAsteroidProfile(currentSeed),
+    }
+  }
+  const nextPositions = generateCoreAssetVoxels(currentAsset.kind, currentSeed)
+  voxelCells = enrichCoreAssetVoxels(nextPositions, currentAsset.kind)
+  orbitVisualRadius = currentAsteroidProfile().shape.baseRadius * voxelSize * 1.5
 }
 
 function resetEconomyAndDrossForNewRockBody(): void {
@@ -921,6 +1107,8 @@ function resetEconomyAndDrossForNewRockBody(): void {
   pendingDiscoveries.length = 0
   syncDiscoveryHud()
   resetDrossState(drossState)
+  lifterFlights.length = 0
+  lifterFlightsVisual.syncPositions([])
 }
 
 function resetAllResearchAndUnlocksForRegenerate(): void {
@@ -933,9 +1121,38 @@ function resetAllResearchAndUnlocksForRegenerate(): void {
   depthScanUnlocked = false
   drossCollectorUnlocked = false
   drossCollectorSatelliteCount = 0
+  cargoDroneSatelliteCount = 0
   emCatapultUnlocked = false
   debugUnlockAllTools = false
   computroniumUnlockPoints.current = 0
+
+  const laserUnlockApply: LaserUnlockApply = {
+    orbitalLaserUnlocked,
+    excavatingLaserUnlocked,
+    scannerLaserUnlocked,
+    depthScanUnlocked,
+    drossCollectorUnlocked,
+    emCatapultUnlocked,
+    orbitalSatelliteCount,
+    excavatingSatelliteCount,
+    scannerSatelliteCount,
+    drossCollectorSatelliteCount,
+    cargoDroneSatelliteCount,
+  }
+
+  applyInitialToolDebugConfigToResearch(computroniumUnlockPoints, laserUnlockApply, gameBalance)
+
+  orbitalLaserUnlocked = laserUnlockApply.orbitalLaserUnlocked
+  excavatingLaserUnlocked = laserUnlockApply.excavatingLaserUnlocked
+  scannerLaserUnlocked = laserUnlockApply.scannerLaserUnlocked
+  depthScanUnlocked = laserUnlockApply.depthScanUnlocked
+  drossCollectorUnlocked = laserUnlockApply.drossCollectorUnlocked
+  emCatapultUnlocked = laserUnlockApply.emCatapultUnlocked
+  orbitalSatelliteCount = laserUnlockApply.orbitalSatelliteCount
+  excavatingSatelliteCount = laserUnlockApply.excavatingSatelliteCount
+  scannerSatelliteCount = laserUnlockApply.scannerSatelliteCount
+  drossCollectorSatelliteCount = laserUnlockApply.drossCollectorSatelliteCount
+  cargoDroneSatelliteCount = laserUnlockApply.cargoDroneSatelliteCount
   selectedRefineryRoot = defaultRefineryRecipeSelection((r) =>
     isRefineryRecipeUnlocked(
       r,
@@ -958,13 +1175,14 @@ function finalizeNewAsteroidPresentation(options: { zeroSatelliteDots: boolean }
   setSelectedTool('pick', { skipBeforeToolChange: true })
   satelliteInspectModal.hide()
   if (options.zeroSatelliteDots) {
-    satelliteDots.setCounts(0, 0, 0, 0, orbitVisualRadius)
+    satelliteDots.setCounts(0, 0, 0, 0, 0, orbitVisualRadius)
   } else {
     satelliteDots.setCounts(
       orbitalSatelliteCount,
       excavatingSatelliteCount,
       scannerSatelliteCount,
       drossCollectorSatelliteCount,
+      cargoDroneSatelliteCount,
       orbitVisualRadius,
     )
   }
@@ -995,11 +1213,16 @@ let orbitalLaserUnlocked = false
 let excavatingLaserUnlocked = false
 let scannerLaserUnlocked = false
 let depthScanUnlocked = false
+let scourgeUnlocked = false
+let locustUnlocked = false
+let miningDroneUnlocked = false
 let orbitalSatelliteCount = 0
 let excavatingSatelliteCount = 0
 let scannerSatelliteCount = 0
 let drossCollectorUnlocked = false
 let drossCollectorSatelliteCount = 0
+/** Cargo drone orbit fleet count. Reset on Regenerate; preserved on EM catapult. */
+let cargoDroneSatelliteCount = 0
 /** Tier 6 computronium: EM Catapult tool. Reset on full Regenerate; preserved on catapult-to-new-asteroid. */
 let emCatapultUnlocked = false
 /** Debug cheat: bypass structure gates, explosive research gate (Settings → Unlock all tools). Reset on Regenerate. */
@@ -1039,7 +1262,7 @@ function buildDiscoveryScanHintIndices(): Set<number> | null {
     const c = voxelCells[i]!
     if (c.surfaceScanTintRgb === undefined) continue
     if (discoveryConsumedPos.has(discoveryPosKey(c.pos))) continue
-    if (isDiscoverySite(currentSeed, c.pos, gameBalance, discoveryDensityScale(asteroidProfile))) s.add(i)
+    if (isDiscoverySite(currentSeed, c.pos, gameBalance, discoveryDensityScale(currentAsteroidProfile()))) s.add(i)
   }
   return s.size > 0 ? s : null
 }
@@ -1073,6 +1296,7 @@ function getLaserSatelliteRow(): LaserSatelliteRowSnapshot {
   const eDeploy = getScaledSatelliteDeployCost('excavating', excavatingSatelliteCount)
   const sDeploy = getScaledSatelliteDeployCost('scanner', scannerSatelliteCount)
   const dDeploy = getScaledSatelliteDeployCost('drossCollector', drossCollectorSatelliteCount)
+  const cDeploy = getScaledSatelliteDeployCost('cargoDrone', cargoDroneSatelliteCount)
   return {
     orbital: {
       unlocked: orbitalLaserUnlocked,
@@ -1098,10 +1322,16 @@ function getLaserSatelliteRow(): LaserSatelliteRowSnapshot {
       deployCostLine: formatResourceCostWithTallies(resourceTallies, dDeploy),
       canAffordDeploy: drossCollectorUnlocked && canAfford(resourceTallies, dDeploy),
     },
+    cargoDrone: {
+      unlocked: drossCollectorUnlocked,
+      satelliteCount: cargoDroneSatelliteCount,
+      deployCostLine: formatResourceCostWithTallies(resourceTallies, cDeploy),
+      canAffordDeploy: drossCollectorUnlocked && canAfford(resourceTallies, cDeploy),
+    },
   }
 }
 
-function onDeploySatellite(kind: 'orbital' | 'excavating' | 'scanner' | 'drossCollector'): boolean {
+function onDeploySatellite(kind: SatelliteDeployKind): boolean {
   if (kind === 'orbital') {
     if (!orbitalLaserUnlocked) return false
     const cost = getScaledSatelliteDeployCost('orbital', orbitalSatelliteCount)
@@ -1117,11 +1347,16 @@ function onDeploySatellite(kind: 'orbital' | 'excavating' | 'scanner' | 'drossCo
     const cost = getScaledSatelliteDeployCost('scanner', scannerSatelliteCount)
     if (!tryPayResources(resourceTallies, cost)) return false
     scannerSatelliteCount += 1
-  } else {
+  } else if (kind === 'drossCollector') {
     if (!drossCollectorUnlocked) return false
     const cost = getScaledSatelliteDeployCost('drossCollector', drossCollectorSatelliteCount)
     if (!tryPayResources(resourceTallies, cost)) return false
     drossCollectorSatelliteCount += 1
+  } else {
+    if (!drossCollectorUnlocked) return false
+    const cost = getScaledSatelliteDeployCost('cargoDrone', cargoDroneSatelliteCount)
+    if (!tryPayResources(resourceTallies, cost)) return false
+    cargoDroneSatelliteCount += 1
   }
   setResourceHud()
   satelliteDots.setCounts(
@@ -1129,6 +1364,7 @@ function onDeploySatellite(kind: 'orbital' | 'excavating' | 'scanner' | 'drossCo
     excavatingSatelliteCount,
     scannerSatelliteCount,
     drossCollectorSatelliteCount,
+    cargoDroneSatelliteCount,
     orbitVisualRadius,
   )
   return true
@@ -1150,10 +1386,14 @@ function decommissionSatelliteByKind(kind: SatelliteInspectKind, count: number =
     const remove = Math.min(n, scannerSatelliteCount)
     if (remove <= 0) return
     scannerSatelliteCount -= remove
-  } else {
+  } else if (kind === 'drossCollector') {
     const remove = Math.min(n, drossCollectorSatelliteCount)
     if (remove <= 0) return
     drossCollectorSatelliteCount -= remove
+  } else {
+    const remove = Math.min(n, cargoDroneSatelliteCount)
+    if (remove <= 0) return
+    cargoDroneSatelliteCount -= remove
   }
   setResourceHud()
   refreshToolCosts()
@@ -1162,6 +1402,7 @@ function decommissionSatelliteByKind(kind: SatelliteInspectKind, count: number =
     excavatingSatelliteCount,
     scannerSatelliteCount,
     drossCollectorSatelliteCount,
+    cargoDroneSatelliteCount,
     orbitVisualRadius,
   )
   invalidateRockTintCaches()
@@ -1171,6 +1412,8 @@ function decommissionSatelliteByKind(kind: SatelliteInspectKind, count: number =
 function beforeToolChange(_from: PlayerTool, to: PlayerTool): boolean {
   if (to === 'drossCollector') return true
   if (to === 'emCatapult') return canSelectEmCatapultTool()
+  if (to === 'lifter') return debugUnlockAllTools || drossCollectorUnlocked
+  if (to === 'cargoDrone') return debugUnlockAllTools || drossCollectorUnlocked
   if (to === 'orbitalLaser') return orbitalLaserUnlocked
   if (to === 'excavatingLaser') return excavatingLaserUnlocked
   if (to === 'scanner') return scannerLaserUnlocked
@@ -1185,6 +1428,7 @@ function beforeToolChange(_from: PlayerTool, to: PlayerTool): boolean {
     return debugUnlockAllTools || structureToolPhaseFromCells('battery', voxelCells) === 'unlocked'
   if (to === 'computronium')
     return debugUnlockAllTools || structureToolPhaseFromCells('computronium', voxelCells) === 'unlocked'
+  if (to === 'miningDrone') return debugUnlockAllTools || miningDroneUnlocked
   return true
 }
 
@@ -1218,6 +1462,8 @@ const overlaysMenu = createOverlaysMenu(app, {
       refreshLaserRockHighlightColors()
     } else if (hasActiveExplosiveFuse(performance.now())) {
       refreshExplosiveFuseRockColors()
+    } else if (hasActiveLifterCharge(performance.now())) {
+      refreshLifterRockColors()
     } else {
       reapplyAllRockColorsNoLaser()
     }
@@ -1230,11 +1476,33 @@ const overlaysMenu = createOverlaysMenu(app, {
   },
 })
 syncOverlaysDepthRow = overlaysMenu.syncDepthOverlayUnlock
-const overlaysLeading = overlaysMenu.element
+
+const pauseButton = createPauseButton(app, {
+  initialPaused: false,
+  onTogglePause: (paused) => {
+    setPaused(paused)
+  },
+})
+
+const overlaysLeadingWrapper = document.createElement('div')
+overlaysLeadingWrapper.className = 'settings-leading-actions'
+overlaysLeadingWrapper.append(pauseButton.element, overlaysMenu.element)
+
+const overlaysLeading = overlaysLeadingWrapper
 
 const debugUnlockAllToolsHandlers: { apply: () => void } = {
   apply: () => {},
 }
+
+subscribeSandboxMode((on) => {
+  if (on && !debugUnlockAllTools) {
+    debugUnlockAllToolsHandlers.apply()
+    addResourceYields(resourceTallies, DEBUG_RESOURCE_GRANT)
+    const cap = computeEnergyCap(voxelCells, debugEnergyCapBonus)
+    energyState.current = cap
+    setResourceHud()
+  }
+})
 
 const gameStartTipsModal = createGameStartTipsModal(app, {
   onDismiss: () => {
@@ -1282,6 +1550,14 @@ const { syncSunRotationSpeed, syncLightAngleSliders } = createSettingsMenu(app, 
   onColorSchemeChange: (scheme) => {
     colorScheme = scheme
     applyColorSchemeToApp(colorScheme)
+    saveColorSchemeId(colorScheme)
+    schedulePersistSettingsClient()
+  },
+  initialFontId: fontId,
+  onFontChange: (next) => {
+    fontId = next
+    applyFontToApp(fontId)
+    saveFontId(fontId)
     schedulePersistSettingsClient()
   },
   onBalanceChange,
@@ -1413,7 +1689,7 @@ const {
   },
   getLaserSatelliteRow,
   onDeploySatellite,
-  canAffordResourceCost: (cost) => canAfford(resourceTallies, cost),
+  canAffordResourceCost: (cost) => (getSandboxModeEnabled() ? true : canAfford(resourceTallies, cost)),
   getLaserToolUiPhase: (tool) =>
     getLaserToolUiPhase(
       tool,
@@ -1452,8 +1728,9 @@ const {
           gameBalance,
         ),
   canAffordExplosiveChargeArm: () =>
-    canAfford(resourceTallies, getScaledExplosiveChargeArmCost()) &&
-    energyState.current >= gameBalance.explosiveChargeEnergyPerArm,
+    getSandboxModeEnabled() ||
+    (canAfford(resourceTallies, getScaledExplosiveChargeArmCost()) &&
+      energyState.current >= gameBalance.explosiveChargeEnergyPerArm),
   getResourceTallies: () => resourceTallies,
   getCurrentEnergy: () => energyState.current,
   getDrossCollectorDeployUiPhase: () =>
@@ -1541,11 +1818,16 @@ const {
               slots: sel.slots.map((s) => ({ ...s })),
               recipeStack: sel.recipeStack.slice(),
             }
+            const selectedPresetId = getSelectedSeedPresetId()
+            const adhocStrain =
+              selectedPresetId ??
+              `adhoc:${sel.seedTypeId}:${sel.recipeStack.join('+') || 'none'}`
             setActiveSeedSelection({
               seedTypeId: sel.seedTypeId,
               lifetimeSec: sel.lifetimeSec,
               slots: sel.slots.map((s) => ({ ...s })),
               recipeStack: sel.recipeStack.slice(),
+              strainId: adhocStrain,
             })
           },
           getPresets: () =>
@@ -1569,12 +1851,15 @@ const {
             currentSeedAssemblySelection = {
               seedTypeId: sel.seedTypeId,
               lifetimeSec: sel.lifetimeSec,
+              slots: sel.slots.map((s) => ({ ...s })),
               recipeStack: sel.recipeStack.slice(),
             }
             setActiveSeedSelection({
               seedTypeId: sel.seedTypeId,
               lifetimeSec: sel.lifetimeSec,
+              slots: sel.slots.map((s) => ({ ...s })),
               recipeStack: sel.recipeStack.slice(),
+              strainId: sel.strainId ?? id,
             })
           },
           onDeletePreset: (id) => {
@@ -1593,6 +1878,7 @@ const {
               lifetimeSec: selection.lifetimeSec,
               slots: selection.slots.map((s) => ({ ...s })),
               recipeStack: selection.recipeStack.slice(),
+              strainId: newId,
             })
             currentSeedAssemblySelection = {
               seedTypeId: selection.seedTypeId,
@@ -1693,6 +1979,7 @@ const discoveryModal = createDiscoveryModal(app, {
       excavatingSatelliteCount,
       scannerSatelliteCount,
       drossCollectorSatelliteCount,
+      cargoDroneSatelliteCount,
     }
     applyDiscoveryAccept(offer, resourceTallies, laserUnlockApply, computroniumUnlockPoints, gameBalance)
     orbitalLaserUnlocked = laserUnlockApply.orbitalLaserUnlocked
@@ -1705,6 +1992,7 @@ const discoveryModal = createDiscoveryModal(app, {
     excavatingSatelliteCount = laserUnlockApply.excavatingSatelliteCount
     scannerSatelliteCount = laserUnlockApply.scannerSatelliteCount
     drossCollectorSatelliteCount = laserUnlockApply.drossCollectorSatelliteCount
+    cargoDroneSatelliteCount = laserUnlockApply.cargoDroneSatelliteCount
     setResourceHud()
     refreshToolCosts()
     syncOverlaysDepthRow()
@@ -1713,6 +2001,7 @@ const discoveryModal = createDiscoveryModal(app, {
       excavatingSatelliteCount,
       scannerSatelliteCount,
       drossCollectorSatelliteCount,
+      cargoDroneSatelliteCount,
       orbitVisualRadius,
     )
     invalidateRockTintCaches()
@@ -1770,7 +2059,7 @@ function tryDiscoveryAt(pos: VoxelPos): void {
     gameBalance,
     discoveryConsumedPos,
     discoveryCounter,
-    discoveryDensityScale(asteroidProfile),
+    discoveryDensityScale(currentAsteroidProfile()),
   )
   if (result.kind === 'offer') {
     const offer = result.offer
@@ -1796,10 +2085,12 @@ function applyDebugUnlockAllTools(): void {
   depthScanUnlocked = true
   drossCollectorUnlocked = true
   emCatapultUnlocked = true
+  miningDroneUnlocked = true
   orbitalSatelliteCount = Math.max(1, orbitalSatelliteCount)
   excavatingSatelliteCount = Math.max(1, excavatingSatelliteCount)
   scannerSatelliteCount = Math.max(1, scannerSatelliteCount)
   drossCollectorSatelliteCount = Math.max(1, drossCollectorSatelliteCount)
+  cargoDroneSatelliteCount = Math.max(1, cargoDroneSatelliteCount)
   setResourceHud()
   refreshToolCosts()
   syncOverlaysDepthRow()
@@ -1808,6 +2099,7 @@ function applyDebugUnlockAllTools(): void {
     excavatingSatelliteCount,
     scannerSatelliteCount,
     drossCollectorSatelliteCount,
+    cargoDroneSatelliteCount,
     orbitVisualRadius,
   )
   clampRefinerySelection()
@@ -1831,7 +2123,6 @@ let lastLaserDragClient: { x: number; y: number } | null = null
 let lastLaserDragTool: 'orbitalLaser' | 'excavatingLaser' | null = null
 /** Orbit disabled until pointerup after arming explosive charge on a voxel (avoids CLICK_MAX_PX vs orbit). */
 let explosiveChargeAwaitingUp = false
-const LASER_LITHOLOGY: ReadonlySet<VoxelKind> = new Set(['regolith', 'silicateRock', 'metalRich'])
 const ORBITAL_LASER_ENERGY_BASE = 2.75
 const EXCAVATING_LASER_ENERGY_BASE = 2.1
 const SCANNER_ENERGY_BASE = 1.65
@@ -1845,37 +2136,11 @@ const NEIGHBOR_DELTAS: ReadonlyArray<[number, number, number]> = [
   [0, 0, -1],
 ]
 
-function normalizeRootSnapshot(bulk: Record<RootResourceId, number> | undefined): Record<RootResourceId, number> {
-  if (!bulk) return defaultUniformRootComposition()
-  let s = 0
-  for (const r of ROOT_RESOURCE_IDS) s += bulk[r]
-  if (s <= 0) return defaultUniformRootComposition()
-  const o = defaultUniformRootComposition()
-  for (const r of ROOT_RESOURCE_IDS) o[r] = bulk[r] / s
-  return o
-}
-
 function convertCellToProcessedMatter(cell: VoxelCell): void {
-  const bulk = cell.bulkComposition ?? defaultUniformRootComposition()
-  const yields = compositionToYields(cell.kind, bulk)
-  let matterUnits = 0
-  for (const r of ROOT_RESOURCE_IDS) matterUnits += yields[r] ?? 0
-  matterUnits = Math.max(3, matterUnits)
-  cell.kind = 'processedMatter'
-  cell.hpRemaining = hpForVoxelKind('processedMatter')
-  cell.processedMatterUnits = matterUnits
-  cell.processedMatterRootComposition = normalizeRootSnapshot(cell.bulkComposition)
-  cell.bulkComposition = undefined
-  cell.replicatorActive = false
-  cell.replicatorEating = false
-  cell.replicatorEatAccumulatorMs = 0
-  cell.replicatorMsPerHp = undefined
-  cell.storedResources = undefined
-  cell.passiveRemainder = undefined
-  clearReplicatorTransformState(cell)
-  clearSurfaceScanTint(cell)
-  clearDepthRevealState(cell)
-  tryDiscoveryAt(cell.pos)
+  convertRockCellToProcessedMatterInPlace(cell, {
+    originSource: currentAsset.kind === 'wreck' ? 'wreck' : 'asteroid',
+    onDiscovery: tryDiscoveryAt,
+  })
 }
 
 function collectOrbitalLaserTargetIndices(
@@ -1885,7 +2150,7 @@ function collectOrbitalLaserTargetIndices(
   posMap: Map<string, number>,
 ): number[] {
   const center = cells[centerIdx]
-  if (!LASER_LITHOLOGY.has(center.kind)) return []
+  if (!ROCK_LITHOLOGY_KINDS.has(center.kind)) return []
   const out: number[] = [centerIdx]
   const seen = new Set<number>([centerIdx])
   const queue: number[] = [centerIdx]
@@ -1898,7 +2163,7 @@ function collectOrbitalLaserTargetIndices(
       const ni = posMap.get(key)
       if (ni === undefined || seen.has(ni)) continue
       const nc = cells[ni]
-      if (!LASER_LITHOLOGY.has(nc.kind)) continue
+      if (!ROCK_LITHOLOGY_KINDS.has(nc.kind)) continue
       seen.add(ni)
       out.push(ni)
       queue.push(ni)
@@ -1930,7 +2195,7 @@ function collectOrbitalLaserVisualHighlightIndices(
   pushUnique(centerIdx)
 
   const queue: number[] = []
-  if (LASER_LITHOLOGY.has(center.kind)) {
+  if (ROCK_LITHOLOGY_KINDS.has(center.kind)) {
     queue.push(centerIdx)
   } else {
     const p = center.pos
@@ -1938,7 +2203,7 @@ function collectOrbitalLaserVisualHighlightIndices(
       const key = `${p.x + dx},${p.y + dy},${p.z + dz}`
       const ni = posMap.get(key)
       if (ni === undefined || seen.has(ni)) continue
-      if (LASER_LITHOLOGY.has(cells[ni].kind)) {
+      if (ROCK_LITHOLOGY_KINDS.has(cells[ni].kind)) {
         pushUnique(ni)
         queue.push(ni)
         if (out.length >= maxCount) return out
@@ -1954,7 +2219,7 @@ function collectOrbitalLaserVisualHighlightIndices(
       const key = `${p.x + dx},${p.y + dy},${p.z + dz}`
       const ni = posMap.get(key)
       if (ni === undefined || seen.has(ni)) continue
-      if (!LASER_LITHOLOGY.has(cells[ni].kind)) continue
+      if (!ROCK_LITHOLOGY_KINDS.has(cells[ni].kind)) continue
       pushUnique(ni)
       queue.push(ni)
     }
@@ -2017,6 +2282,160 @@ function refreshExplosiveFuseRockColors(): void {
   syncDepthOverlayMaterials()
 }
 
+function hasActiveLifterCharge(nowMs: number): boolean {
+  const need = gameBalance.lifterChargeMs
+  for (let i = 0; i < voxelCells.length; i++) {
+    const start = voxelCells[i].lifterChargeStartMs
+    if (start != null && nowMs - start < need) return true
+  }
+  return false
+}
+
+function refreshLifterRockColors(): void {
+  const meshOpts = { voxelSize, gridSize }
+  const t = performance.now()
+  const pulse = 0.55 + 0.45 * (0.5 + 0.5 * Math.sin(t * 0.088))
+  const highlight = new Set<number>()
+  const need = gameBalance.lifterChargeMs
+  for (let i = 0; i < voxelCells.length; i++) {
+    const start = voxelCells[i].lifterChargeStartMs
+    if (start != null && t - start < need) highlight.add(i)
+  }
+  reapplyRockInstanceColors(
+    asteroidBundle,
+    voxelCells,
+    meshOpts,
+    scanVisualizationDebug,
+    highlight,
+    'lifter',
+    pulse,
+    buildSurfaceScanTintIndexMap(),
+    depthOverlayTintActive(),
+    buildDiscoveryScanHintIndices(),
+    debugLodeDisplayIndices,
+  )
+  syncDepthOverlayMaterials()
+}
+
+function lifterVelocityTowardCameraLocal(localPos: { x: number; y: number; z: number }): {
+  x: number
+  y: number
+  z: number
+} {
+  _asteroidInvWorld.copy(asteroidBundle.group.matrixWorld).invert()
+  _lifterCamLocal.copy(camera.position).applyMatrix4(_asteroidInvWorld)
+  const dx = _lifterCamLocal.x - localPos.x
+  const dy = _lifterCamLocal.y - localPos.y
+  const dz = _lifterCamLocal.z - localPos.z
+  const len = Math.hypot(dx, dy, dz) || 1
+  const sp = gameBalance.lifterFlightSpeed / 1000
+  return { x: (dx / len) * sp, y: (dy / len) * sp, z: (dz / len) * sp }
+}
+
+function clearLifterChargeExceptCellIndex(keepIdx: number | null): void {
+  for (let i = 0; i < voxelCells.length; i++) {
+    if (i === keepIdx) continue
+    voxelCells[i].lifterChargeStartMs = undefined
+  }
+}
+
+function tryLifterAt(clientX: number, clientY: number): void {
+  if (voxelCells.length === 0) return
+  if (!debugUnlockAllTools && !drossCollectorUnlocked) return
+  const i = asteroidRaycastCellIndex(clientX, clientY)
+  if (i === null) return
+  const cell = voxelCells[i]
+  if (cell.kind !== 'processedMatter' || (cell.processedMatterUnits ?? 0) < 1) return
+  const now = performance.now()
+  clearLifterChargeExceptCellIndex(i)
+  cell.lifterChargeStartMs = now
+  markRockInstanceColorsDirty()
+  refreshLifterRockColors()
+}
+
+function stepLifterCharges(nowMs: number): void {
+  const need = gameBalance.lifterChargeMs
+  const pending: {
+    idx: number
+    cell: VoxelCell
+  }[] = []
+  for (let i = 0; i < voxelCells.length; i++) {
+    const cell = voxelCells[i]
+    const start = cell.lifterChargeStartMs
+    if (start == null) continue
+    if (cell.kind !== 'processedMatter' || (cell.processedMatterUnits ?? 0) < 1) {
+      cell.lifterChargeStartMs = undefined
+      markRockInstanceColorsDirty()
+      continue
+    }
+    if (nowMs - start < need) continue
+    pending.push({ idx: i, cell })
+  }
+  if (pending.length === 0) return
+
+  pending.sort((a, b) => b.idx - a.idx)
+  const center = (gridSize - 1) / 2
+  const newFlights: LifterFlight[] = []
+  for (const { idx, cell } of pending) {
+    cell.lifterChargeStartMs = undefined
+    const units = cell.processedMatterUnits ?? 0
+    const comp = cell.processedMatterRootComposition ?? defaultUniformRootComposition()
+    const discoveryPos = { ...cell.pos }
+    const lp = {
+      x: (cell.pos.x - center) * voxelSize,
+      y: (cell.pos.y - center) * voxelSize,
+      z: (cell.pos.z - center) * voxelSize,
+    }
+    const vel = lifterVelocityTowardCameraLocal(lp)
+    voxelCells.splice(idx, 1)
+    newFlights.push({
+      pos: { ...lp },
+      vel,
+      spawnMs: nowMs,
+      discoveryPos,
+      units,
+      comp: { ...comp },
+      originSource: cell.originSource,
+    })
+  }
+  if (newFlights.length > 0) {
+    replaceAsteroidMesh(voxelCells)
+    for (const f of newFlights) lifterFlights.push(f)
+  }
+}
+
+function stepLifterFlights(nowMs: number, dtMs: number): void {
+  if (lifterFlights.length === 0) {
+    lifterFlightsVisual.syncPositions([])
+    return
+  }
+  const maxMs = gameBalance.lifterFlightMs
+  for (let i = lifterFlights.length - 1; i >= 0; i--) {
+    const f = lifterFlights[i]!
+    if (nowMs - f.spawnMs >= maxMs) {
+      const credited: Partial<Record<RootResourceId, number>> = {}
+      creditAllProcessedMatterUnitsToTallies(resourceTallies, f.units, f.comp, credited)
+      const origin =
+        f.originSource === 'wreck' || f.originSource === 'asteroid' ? f.originSource : 'asteroid'
+      const dest = resourceTalliesBySource[origin]
+      for (const r of ROOT_RESOURCE_IDS) {
+        const v = credited[r]
+        if (v === undefined || v <= 0) continue
+        dest[r] = (dest[r] ?? 0) + v
+      }
+      tryDiscoveryAt(f.discoveryPos)
+      lifterFlights.splice(i, 1)
+      markMatterHudDirty()
+      setResourceHud()
+      continue
+    }
+    f.pos.x += f.vel.x * dtMs
+    f.pos.y += f.vel.y * dtMs
+    f.pos.z += f.vel.z * dtMs
+  }
+  lifterFlightsVisual.syncPositions(lifterFlights.map((fl) => fl.pos))
+}
+
 function tryExplosiveChargeAt(clientX: number, clientY: number): boolean {
   if (voxelCells.length === 0) return false
   if (!debugUnlockAllTools && !orbitalLaserUnlocked) return false
@@ -2065,6 +2484,29 @@ function stepExplosiveCharges(nowMs: number): void {
   const removedCells = sorted.map((idx) => voxelCells[idx]!)
   for (const cell of removedCells) {
     spawnDrossFromRemovedCell(drossState, cell, gameBalance)
+    const center = (gridSize - 1) / 2
+    const lp = {
+      x: (cell.pos.x - center) * voxelSize,
+      y: (cell.pos.y - center) * voxelSize,
+      z: (cell.pos.z - center) * voxelSize,
+    }
+    spawnDebrisShardFromRemovedCell(
+      debrisState,
+      cell,
+      lp,
+      nowMs,
+      {
+        spawnChance: gameBalance.debrisSpawnChance,
+        lifetimeMs: {
+          min: gameBalance.debrisLifetimeMinSec * 1000,
+          max: gameBalance.debrisLifetimeMaxSec * 1000,
+        },
+        speedPerSec: { min: gameBalance.debrisSpeedMin, max: gameBalance.debrisSpeedMax },
+        rewardBaseUnits: 0.35,
+        bonusUnits: 1,
+        bonusChance: 0.12,
+      },
+    )
   }
   for (const idx of sorted) {
     voxelCells.splice(idx, 1)
@@ -2087,9 +2529,7 @@ function tryScannerAt(clientX: number, clientY: number): void {
     gameBalance.scannerEnergyMult *
     scannerSatelliteCount *
     (scanVol / baseScanVol)
-  if (energyState.current < cost) return
-
-  trySpendEnergy(energyState, cost)
+  if (trySpendEnergy(energyState, cost) <= 0) return
   const posMap = getVoxelPosIndexMap()
   const idx = collectScannerNeighborIndices(i, posMap, r)
   const scratch = new Color()
@@ -2200,7 +2640,7 @@ function clearLaserRockHighlightColors(): void {
 function isLaserLithologyAt(clientX: number, clientY: number): boolean {
   const i = asteroidRaycastCellIndex(clientX, clientY)
   if (i === null) return false
-  return LASER_LITHOLOGY.has(voxelCells[i].kind)
+  return ROCK_LITHOLOGY_KINDS.has(voxelCells[i].kind)
 }
 
 function isExcavatingTargetAt(clientX: number, clientY: number): boolean {
@@ -2218,6 +2658,7 @@ const SATELLITE_PICK_MESH_NAMES = new Set([
   'excavating-satellites',
   'scanner-satellites',
   'dross-collector-satellites',
+  'cargo-drone-satellites',
 ])
 
 const SATELLITE_PICK_NAME_TO_KIND: Record<string, SatelliteInspectKind> = {
@@ -2225,6 +2666,7 @@ const SATELLITE_PICK_NAME_TO_KIND: Record<string, SatelliteInspectKind> = {
   'excavating-satellites': 'excavating',
   'scanner-satellites': 'scanner',
   'dross-collector-satellites': 'drossCollector',
+  'cargo-drone-satellites': 'cargoDrone',
 }
 
 function asteroidVoxelPickMeshes(bundle: AsteroidRenderBundle): InstancedMesh[] {
@@ -2238,6 +2680,7 @@ function asteroidVoxelPickMeshes(bundle: AsteroidRenderBundle): InstancedMesh[] 
     bundle.refinery,
     bundle.refineryStandby,
     bundle.depthScanner,
+    bundle.miningDrone,
     bundle.computronium,
     bundle.computroniumStandby,
   ]
@@ -2253,6 +2696,8 @@ function formatSatelliteGameplayLine(kind: SatelliteInspectKind): string {
       return 'Scanner: neighborhood scan energy scales with deployed count and scan volume.'
     case 'drossCollector':
       return 'Cleanup collectors: collection rate scales with deployed count (balance).'
+    case 'cargoDrone':
+      return 'Cargo drones: automatically move processed matter to root tallies after hubs each tick (balance).'
     default:
       return ''
   }
@@ -2280,7 +2725,9 @@ function tryInspectAt(clientX: number, clientY: number): void {
               ? excavatingSatelliteCount
               : kind === 'scanner'
                 ? scannerSatelliteCount
-                : drossCollectorSatelliteCount
+                : kind === 'drossCollector'
+                  ? drossCollectorSatelliteCount
+                  : cargoDroneSatelliteCount
         lastInspectHudLines = null
         setResourceHud()
         satelliteInspectModal.show({
@@ -2301,6 +2748,44 @@ function tryInspectAt(clientX: number, clientY: number): void {
   setResourceHud()
 }
 
+function trySpawnScourgeAt(clientX: number, clientY: number): void {
+  if (!gameBalance.scourgeEnabled) return
+  if (!debugUnlockAllTools && !scourgeUnlocked) return
+  if (voxelCells.length === 0) return
+  const i = asteroidRaycastCellIndex(clientX, clientY)
+  if (i === null) return
+  const cell = voxelCells[i]
+  spawnScourgeAt(cell)
+  markRockInstanceColorsDirty()
+  replaceAsteroidMesh(voxelCells)
+}
+
+function trySpawnLocustAt(clientX: number, clientY: number): void {
+  if (!gameBalance.locustEnabled) return
+  if (!debugUnlockAllTools && !locustUnlocked) return
+  if (voxelCells.length === 0) return
+  const i = asteroidRaycastCellIndex(clientX, clientY)
+  if (i === null) return
+  const cell = voxelCells[i]
+  spawnLocustAt(cell)
+  markRockInstanceColorsDirty()
+  replaceAsteroidMesh(voxelCells)
+}
+
+function tryPlaceMiningDroneAt(clientX: number, clientY: number): void {
+  if (!gameBalance.miningDroneEnabled) return
+  if (!debugUnlockAllTools && !miningDroneUnlocked) return
+  if (voxelCells.length === 0) return
+  const i = asteroidRaycastCellIndex(clientX, clientY)
+  if (i === null) return
+  const cell = voxelCells[i]
+  if (!ROCK_LITHOLOGY_KINDS.has(cell.kind)) return
+  if (cell.replicatorEating || cell.replicatorActive) return
+  initMiningDroneCell(cell)
+  markRockInstanceColorsDirty()
+  replaceAsteroidMesh(voxelCells)
+}
+
 function tryPickAt(clientX: number, clientY: number): void {
   if (voxelCells.length === 0) return
 
@@ -2316,6 +2801,7 @@ function tryPickAt(clientX: number, clientY: number): void {
     cell.kind === 'refinery' ||
     cell.kind === 'depthScanner' ||
     cell.kind === 'computronium' ||
+    cell.kind === 'miningDrone' ||
     cell.kind === 'processedMatter'
   )
     return
@@ -2327,6 +2813,29 @@ function tryPickAt(clientX: number, clientY: number): void {
 
   tryDiscoveryAt(cell.pos)
   spawnDrossFromRemovedCell(drossState, cell, gameBalance)
+  const center = (gridSize - 1) / 2
+  const lp = {
+    x: (cell.pos.x - center) * voxelSize,
+    y: (cell.pos.y - center) * voxelSize,
+    z: (cell.pos.z - center) * voxelSize,
+  }
+  spawnDebrisShardFromRemovedCell(
+    debrisState,
+    cell,
+    lp,
+    performance.now(),
+    {
+      spawnChance: gameBalance.debrisSpawnChance,
+      lifetimeMs: {
+        min: gameBalance.debrisLifetimeMinSec * 1000,
+        max: gameBalance.debrisLifetimeMaxSec * 1000,
+      },
+      speedPerSec: { min: gameBalance.debrisSpeedMin, max: gameBalance.debrisSpeedMax },
+      rewardBaseUnits: 0.2,
+      bonusUnits: 1,
+      bonusChance: 0.08,
+    },
+  )
   voxelCells.splice(i, 1)
   setResourceHud()
   replaceAsteroidMesh(voxelCells)
@@ -2360,6 +2869,8 @@ function trySeedToolAt(clientX: number, clientY: number): void {
           ? activeSel.slots[0]!.durationSec
           : 0,
     }
+    markRockInstanceColorsDirty()
+    setResourceHud()
     return
   }
 
@@ -2370,6 +2881,7 @@ function trySeedToolAt(clientX: number, clientY: number): void {
     cell.kind === 'refinery' ||
     cell.kind === 'depthScanner' ||
     cell.kind === 'computronium' ||
+    cell.kind === 'miningDrone' ||
     cell.kind === 'processedMatter'
   )
     return
@@ -2383,6 +2895,7 @@ function trySeedToolAt(clientX: number, clientY: number): void {
   cell.replicatorActive = true
   cell.replicatorEating = true
   cell.replicatorEatAccumulatorMs = 0
+  cell.replicatorStrainId = activeSel.strainId
   cell.seedRuntime = {
     seedTypeId: activeSel.seedTypeId,
     lifetimeTotalSec: chosenLifetime,
@@ -2409,11 +2922,13 @@ function tryPlaceReplicator(clientX: number, clientY: number): void {
   const cell = voxelCells[i]
   if (cell.kind === 'replicator') {
     const now = performance.now()
-    cell.replicatorTapPulseEndMs = now + 260
+    pokeReplicator(cell, now)
     markRockInstanceColorsDirty()
+    playReplicatorTapClick()
     return
   }
   if (cell.kind === 'processedMatter') return
+  if (cell.kind === 'miningDrone') return
   if (cell.replicatorActive || cell.replicatorEating) return
 
   if (!tryPayResources(resourceTallies, getScaledReplicatorPlaceCost())) return
@@ -2558,7 +3073,7 @@ function tryOrbitalLaserHit(clientX: number, clientY: number): void {
   trySpendEnergy(energyState, cost)
   for (const ti of targets) {
     const cell = voxelCells[ti]
-    if (!LASER_LITHOLOGY.has(cell.kind)) continue
+    if (!ROCK_LITHOLOGY_KINDS.has(cell.kind)) continue
     convertCellToProcessedMatter(cell)
   }
 
@@ -2589,6 +3104,29 @@ function tryExcavatingLaserHit(clientX: number, clientY: number): void {
     return
   }
   spawnDrossFromRemovedCell(drossState, cell, gameBalance)
+  const center = (gridSize - 1) / 2
+  const lp = {
+    x: (cell.pos.x - center) * voxelSize,
+    y: (cell.pos.y - center) * voxelSize,
+    z: (cell.pos.z - center) * voxelSize,
+  }
+  spawnDebrisShardFromRemovedCell(
+    debrisState,
+    cell,
+    lp,
+    performance.now(),
+    {
+      spawnChance: gameBalance.debrisSpawnChance,
+      lifetimeMs: {
+        min: gameBalance.debrisLifetimeMinSec * 1000,
+        max: gameBalance.debrisLifetimeMaxSec * 1000,
+      },
+      speedPerSec: { min: gameBalance.debrisSpeedMin, max: gameBalance.debrisSpeedMax },
+      rewardBaseUnits: 0.25,
+      bonusUnits: 1,
+      bonusChance: 0.1,
+    },
+  )
   voxelCells.splice(i, 1)
   setResourceHud()
   replaceAsteroidMesh(voxelCells)
@@ -2729,6 +3267,40 @@ canvas.addEventListener('pointerup', (e) => {
   pointerDown = null
   if (moved > CLICK_MAX_PX) return
   const tool = getSelectedTool()
+
+  // Debris click: allow collecting drifting shards regardless of tool, as long
+  // as the click is a short tap. Use asteroid-local ray like voxel picking.
+  if (debrisState.shards.length > 0) {
+    canvasPointerToNdc(e.clientX, e.clientY)
+    raycaster.setFromCamera(pointerNdc, camera)
+    _asteroidInvWorld.copy(asteroidBundle.group.matrixWorld).invert()
+    _rayLocalOrigin.copy(raycaster.ray.origin).applyMatrix4(_asteroidInvWorld)
+    _rayLocalDir.copy(raycaster.ray.direction).transformDirection(_asteroidInvWorld)
+    const hit = raycaster.intersectObject(asteroidBundle.group, true)[0]
+    const maxDist = hit ? hit.distance + 5 : 64
+    const debrisHit = raycastDebris(
+      debrisState,
+      {
+        origin: { x: _rayLocalOrigin.x, y: _rayLocalOrigin.y, z: _rayLocalOrigin.z },
+        dir: { x: _rayLocalDir.x, y: _rayLocalDir.y, z: _rayLocalDir.z },
+        maxDist,
+      },
+      0.45,
+    )
+    if (debrisHit) {
+      const nowMs = performance.now()
+      const cooldownMs = gameBalance.debrisPickupCooldownSec * 1000
+      if (nowMs - debrisHit.shard.spawnTimeMs >= cooldownMs) {
+        const reward = debrisHit.shard.reward
+        if (collectDebris(debrisState, debrisHit.shard.id, resourceTallies)) {
+          onDebrisCollectFeedback(e.clientX, e.clientY, viewport, pickRipple)
+          spawnDebrisPickupFloat(e.clientX, e.clientY, reward)
+          setResourceHud()
+        }
+        return
+      }
+    }
+  }
   if (tool === 'emCatapult') {
     if (
       confirm(
@@ -2744,11 +3316,49 @@ canvas.addEventListener('pointerup', (e) => {
     tryScannerAt(e.clientX, e.clientY)
     return
   }
+  if (tool === 'scourge') {
+    trySpawnScourgeAt(e.clientX, e.clientY)
+    return
+  }
+  if (tool === 'locust') {
+    trySpawnLocustAt(e.clientX, e.clientY)
+    return
+  }
+  if (tool === 'miningDrone') {
+    tryPlaceMiningDroneAt(e.clientX, e.clientY)
+    return
+  }
   if (tool === 'inspect') {
     tryInspectAt(e.clientX, e.clientY)
     return
   }
+  if (tool === 'lifter') {
+    tryLifterAt(e.clientX, e.clientY)
+    return
+  }
   if (tool === 'pick') {
+    const i = asteroidRaycastCellIndex(e.clientX, e.clientY)
+    if (i !== null) {
+      const cell = voxelCells[i]
+      if (cell.kind === 'replicator') {
+        const now = performance.now()
+        // Move stored replicator yields straight into global tallies.
+        const src = cell.storedResources
+        if (src) {
+          for (const id in src) {
+            const v = src[id as ResourceId]
+            if (!v || !Number.isFinite(v) || v <= 0) continue
+            resourceTallies[id as ResourceId] += v
+            src[id as ResourceId] = 0
+          }
+        }
+        pokeReplicator(cell, now)
+        markRockInstanceColorsDirty()
+        playReplicatorTapClick()
+        setResourceHud()
+        return
+      }
+    }
     tryPickAt(e.clientX, e.clientY)
   } else if (tool === 'replicator') {
     tryPlaceReplicator(e.clientX, e.clientY)
@@ -2812,6 +3422,17 @@ onResize()
 
 let lastTickMs = performance.now()
 const MAX_STEP_MS = 120
+const SCOURGE_STEP_INTERVAL_MS = 1500
+let scourgeStepAccumMs = 0
+const LOCUST_STEP_INTERVAL_MS = 1500
+let locustStepAccumMs = 0
+let miningDroneStepAccumMs = 0
+
+let isPaused = false
+
+function setPaused(next: boolean): void {
+  isPaused = next
+}
 
 function tick(): void {
   requestAnimationFrame(tick)
@@ -2819,281 +3440,458 @@ function tick(): void {
   const dtMs = Math.min(MAX_STEP_MS, Math.max(0, now - lastTickMs))
   lastTickMs = now
 
-  perfMark('roid-sim-start')
+  if (!isPaused) {
+    perfMark('roid-sim-start')
 
-  stepExplosiveCharges(now)
+    stepExplosiveCharges(now)
+    stepLifterCharges(now)
 
-  perfMark('roid-replicator-transform-start')
-  const { meshDirty: transformMeshDirty, completedTransforms } = stepReplicatorTransforms(
-    dtMs,
-    voxelCells,
-    { paused: replicatorKillswitchEngaged },
-  )
-  perfMark('roid-replicator-transform-end')
-  perfMeasure(
-    'roid-replicator-transform',
-    'roid-replicator-transform-start',
-    'roid-replicator-transform-end',
-  )
-  if (completedTransforms > 0) {
-    playReplicatorPlaceClick()
-    setResourceHud()
-    syncOverlaysDepthRow()
-  }
-
-  perfMark('roid-replicator-feed-start')
-  const {
-    meshDirty,
-    tallyChanged: replicatorTallyChanged,
-    replicatorConsumeTicks,
-  } = stepReplicators(dtMs, voxelCells, {
-    replicatorPaused: replicatorKillswitchEngaged,
-    neighborIndex: getReplicatorNeighborIndex(),
-    onReplicatorRockHpConsumed(cell) {
-      tryDiscoveryAt(cell.pos)
-      if (Math.random() >= gameBalance.drossReplicatorSpawnChance) return
-      spawnDrossReplicatorScrap(drossState, cell, gameBalance)
-    },
-  })
-  perfMark('roid-replicator-feed-end')
-  perfMeasure('roid-replicator-feed', 'roid-replicator-feed-start', 'roid-replicator-feed-end')
-  if (replicatorConsumeTicks > 0) {
-    playReplicatorConsumeClicks(replicatorConsumeTicks)
-  }
-  if (replicatorTallyChanged) {
-    markRockInstanceColorsDirty()
-  }
-  if (!transformMeshDirty) {
-    const nowMs = now
-    for (const c of voxelCells) {
-      if (c.replicatorTransformTarget !== undefined) {
-        markRockInstanceColorsDirty()
-        break
-      }
-      if (c.replicatorTapPulseEndMs !== undefined && c.replicatorTapPulseEndMs > nowMs) {
-        markRockInstanceColorsDirty()
-        break
-      }
+    perfMark('roid-replicator-transform-start')
+    const { meshDirty: transformMeshDirty, completedTransforms } = stepReplicatorTransforms(
+      dtMs,
+      voxelCells,
+      { paused: replicatorKillswitchEngaged },
+    )
+    perfMark('roid-replicator-transform-end')
+    perfMeasure(
+      'roid-replicator-transform',
+      'roid-replicator-transform-start',
+      'roid-replicator-transform-end',
+    )
+    if (completedTransforms > 0) {
+      playReplicatorPlaceClick()
+      setResourceHud()
+      syncOverlaysDepthRow()
     }
-  }
-  if (meshDirty || transformMeshDirty) {
-    replaceAsteroidMesh(voxelCells)
-  }
 
-  stepEnergy(dtMs / 1000, voxelCells, energyState, debugEnergyCapBonus)
-
-  const laserUnlockApply = {
-    orbitalLaserUnlocked,
-    excavatingLaserUnlocked,
-    scannerLaserUnlocked,
-    depthScanUnlocked,
-    drossCollectorUnlocked,
-    emCatapultUnlocked,
-    orbitalSatelliteCount,
-    excavatingSatelliteCount,
-    scannerSatelliteCount,
-    drossCollectorSatelliteCount,
-  }
-  const lasersFromComputronium = stepComputronium(
-    dtMs / 1000,
-    voxelCells,
-    energyState,
-    computroniumUnlockPoints,
-    laserUnlockApply,
-    gameBalance,
-  )
-  if (lasersFromComputronium) {
-    orbitalLaserUnlocked = laserUnlockApply.orbitalLaserUnlocked
-    excavatingLaserUnlocked = laserUnlockApply.excavatingLaserUnlocked
-    scannerLaserUnlocked = laserUnlockApply.scannerLaserUnlocked
-    depthScanUnlocked = laserUnlockApply.depthScanUnlocked
-    drossCollectorUnlocked = laserUnlockApply.drossCollectorUnlocked
-    emCatapultUnlocked = laserUnlockApply.emCatapultUnlocked
-    orbitalSatelliteCount = laserUnlockApply.orbitalSatelliteCount
-    excavatingSatelliteCount = laserUnlockApply.excavatingSatelliteCount
-    scannerSatelliteCount = laserUnlockApply.scannerSatelliteCount
-    drossCollectorSatelliteCount = laserUnlockApply.drossCollectorSatelliteCount
-    refreshToolCosts()
-    syncOverlaysDepthRow()
-    satelliteDots.setCounts(
-      orbitalSatelliteCount,
-      excavatingSatelliteCount,
-      scannerSatelliteCount,
-      drossCollectorSatelliteCount,
-      orbitVisualRadius,
-    )
-  }
-
-  if (hasBuiltRefinery && !scannerLaserUnlocked && !debugUnlockAllTools) {
-    scannerLaserUnlocked = true
-    scannerSatelliteCount = Math.max(1, scannerSatelliteCount)
-    refreshToolCosts()
-    satelliteDots.setCounts(
-      orbitalSatelliteCount,
-      excavatingSatelliteCount,
-      scannerSatelliteCount,
-      drossCollectorSatelliteCount,
-      orbitVisualRadius,
-    )
-  }
-
-  const hubResult = stepHubs(dtMs / 1000, voxelCells, resourceTallies, energyState, {
-    onProcessedMatterUnitTaken(cell) {
-      tryDiscoveryAt(cell.pos)
-    },
-  })
-  if (hubResult.tallyChanged) {
-    markMatterHudDirty()
-  }
-  if (hubResult.replicatorStoreChanged) {
-    markRockInstanceColorsDirty()
-  }
-  if (hubResult.meshDirty) {
-    replaceAsteroidMesh(voxelCells)
-  }
-
-  const refineryResult = stepRefineryProcessing(dtMs / 1000, voxelCells, resourceTallies, energyState, {
-    selectedRoot: selectedRefineryRoot,
-    isRecipeUnlocked: (r) => isRefineryRecipeUnlocked(r, refineryRecipeUiState(), gameBalance),
-  })
-  if (refineryResult.tallyChanged) {
-    markMatterHudDirty()
-  }
-
-  const depthProgressChanged = stepDepthReveal(dtMs / 1000, voxelCells, gameBalance, depthScanUnlocked, gridSize)
-  if (depthProgressChanged) {
-    invalidateRockTintCaches()
-    if (depthOverlayTintActive()) {
+    perfMark('roid-replicator-feed-start')
+    const {
+      meshDirty,
+      tallyChanged: replicatorTallyChanged,
+      replicatorConsumeTicks,
+      replicatorCannibalTicks,
+    } = stepReplicators(dtMs, voxelCells, {
+      replicatorPaused: replicatorKillswitchEngaged,
+      neighborIndex: getReplicatorNeighborIndex(),
+      onReplicatorRockHpConsumed(cell) {
+        tryDiscoveryAt(cell.pos)
+        if (Math.random() >= gameBalance.drossReplicatorSpawnChance) return
+        spawnDrossReplicatorScrap(drossState, cell, gameBalance)
+      },
+    })
+    perfMark('roid-replicator-feed-end')
+    perfMeasure('roid-replicator-feed', 'roid-replicator-feed-start', 'roid-replicator-feed-end')
+    if (replicatorConsumeTicks > 0) {
+      playReplicatorConsumeClicks(replicatorConsumeTicks)
+    }
+    if (replicatorCannibalTicks > 0) {
+      playReplicatorConsumeClicks(replicatorCannibalTicks)
+    }
+    if (replicatorTallyChanged) {
       markRockInstanceColorsDirty()
     }
-  }
+    scourgeStepAccumMs += dtMs
+    if (scourgeStepAccumMs >= SCOURGE_STEP_INTERVAL_MS) {
+      scourgeStepAccumMs -= SCOURGE_STEP_INTERVAL_MS
+      const { changed, consumeTicks } = stepScourge(voxelCells, {
+        drossState,
+        balance: gameBalance,
+        debrisState,
+        nowMs: now,
+        gridSize,
+        voxelSize,
+      })
+      if (consumeTicks > 0) {
+        // Reuse replicator rock-eating clicks for Scourge destroying voxels.
+        playReplicatorConsumeClicks(consumeTicks)
+      }
+      if (changed) {
+        markRockInstanceColorsDirty()
+        replaceAsteroidMesh(voxelCells)
+      }
+    }
+    locustStepAccumMs += dtMs
+    if (locustStepAccumMs >= LOCUST_STEP_INTERVAL_MS) {
+      locustStepAccumMs -= LOCUST_STEP_INTERVAL_MS
+      if (
+        stepLocust(voxelCells, {
+          drossState,
+          balance: gameBalance,
+          debrisState,
+          nowMs: now,
+          gridSize,
+          voxelSize,
+        })
+      ) {
+        markRockInstanceColorsDirty()
+        replaceAsteroidMesh(voxelCells)
+      }
+    }
+    miningDroneStepAccumMs += dtMs
+    if (miningDroneStepAccumMs >= gameBalance.miningDroneStepIntervalMs) {
+      miningDroneStepAccumMs -= gameBalance.miningDroneStepIntervalMs
+      if (
+        stepMiningDrones(voxelCells, {
+          balance: gameBalance,
+          originSource: currentAsset.kind === 'wreck' ? 'wreck' : 'asteroid',
+          onDiscovery: tryDiscoveryAt,
+        })
+      ) {
+        markRockInstanceColorsDirty()
+        replaceAsteroidMesh(voxelCells)
+      }
+    }
+    if (!transformMeshDirty) {
+      const nowMs = now
+      for (const c of voxelCells) {
+        if (c.replicatorTransformTarget !== undefined) {
+          markRockInstanceColorsDirty()
+          break
+        }
+        if (c.replicatorTapPulseEndMs !== undefined && c.replicatorTapPulseEndMs > nowMs) {
+          markRockInstanceColorsDirty()
+          break
+        }
+      }
+    }
+    if (meshDirty || transformMeshDirty) {
+      replaceAsteroidMesh(voxelCells)
+    }
 
-  if (
-    stepDrossCollection(
-      dtMs / 1000,
-      drossState,
-      resourceTallies,
+    stepEnergy(dtMs / 1000, voxelCells, energyState, debugEnergyCapBonus)
+    stepDebris(debrisState, now, dtMs)
+    debrisVisual.syncFromState(debrisState)
+    stepLifterFlights(now, dtMs)
+
+    // Screen-space brackets around debris shards (viewport-relative, stable per shard id).
+    const cooldownMs = gameBalance.debrisPickupCooldownSec * 1000
+    const nowMsUi = now
+    const vw = viewport.clientWidth || window.innerWidth
+    const vh = viewport.clientHeight || window.innerHeight
+    const maxUi = 32
+    const eligible: { id: number; sx: number; sy: number }[] = []
+    if (debrisState.shards.length > 0) {
+      for (const shard of debrisState.shards) {
+        if (nowMsUi - shard.spawnTimeMs < cooldownMs) continue
+        _debrisWorldPos.set(shard.pos.x, shard.pos.y, shard.pos.z)
+        _debrisWorldPos.applyMatrix4(asteroidBundle.group.matrixWorld)
+        _debrisNdc.copy(_debrisWorldPos).project(camera)
+        // Skip shards behind the camera or outside clip space.
+        if (_debrisNdc.z < -1 || _debrisNdc.z > 1) continue
+        const sx = ((_debrisNdc.x + 1) / 2) * vw
+        const sy = ((-_debrisNdc.y + 1) / 2) * vh
+        if (sx < 0 || sx > vw || sy < 0 || sy > vh) continue
+        eligible.push({ id: shard.id, sx, sy })
+      }
+    }
+    // Sort by stable id so a consistent subset gets brackets.
+    eligible.sort((a, b) => a.id - b.id)
+    const used = new Set<number>()
+    for (let i = 0; i < eligible.length && i < maxUi; i++) {
+      const { id, sx, sy } = eligible[i]!
+      let el = debrisBracketsById.get(id)
+      if (!el) {
+        el = document.createElement('div')
+        el.className = 'debris-bracket'
+        debrisBracketsById.set(id, el)
+        debrisBracketLayer.appendChild(el)
+      }
+      el.style.left = `${sx}px`
+      el.style.top = `${sy}px`
+      used.add(id)
+    }
+    // Remove brackets for shards that no longer qualify.
+    for (const [id, el] of debrisBracketsById) {
+      if (!used.has(id)) {
+        el.remove()
+        debrisBracketsById.delete(id)
+      }
+    }
+
+    const laserUnlockApply = {
+      orbitalLaserUnlocked,
+      excavatingLaserUnlocked,
+      scannerLaserUnlocked,
+      depthScanUnlocked,
+      drossCollectorUnlocked,
+      emCatapultUnlocked,
+      orbitalSatelliteCount,
+      excavatingSatelliteCount,
+      scannerSatelliteCount,
       drossCollectorSatelliteCount,
+      cargoDroneSatelliteCount,
+    }
+    const lasersFromComputronium = stepComputronium(
+      dtMs / 1000,
+      voxelCells,
+      energyState,
+      computroniumUnlockPoints,
+      laserUnlockApply,
       gameBalance,
     )
-  ) {
-    markMatterHudDirty()
-  }
+    if (lasersFromComputronium) {
+      orbitalLaserUnlocked = laserUnlockApply.orbitalLaserUnlocked
+      excavatingLaserUnlocked = laserUnlockApply.excavatingLaserUnlocked
+      scannerLaserUnlocked = laserUnlockApply.scannerLaserUnlocked
+      depthScanUnlocked = laserUnlockApply.depthScanUnlocked
+      drossCollectorUnlocked = laserUnlockApply.drossCollectorUnlocked
+      emCatapultUnlocked = laserUnlockApply.emCatapultUnlocked
+      orbitalSatelliteCount = laserUnlockApply.orbitalSatelliteCount
+      excavatingSatelliteCount = laserUnlockApply.excavatingSatelliteCount
+      scannerSatelliteCount = laserUnlockApply.scannerSatelliteCount
+      drossCollectorSatelliteCount = laserUnlockApply.drossCollectorSatelliteCount
+      cargoDroneSatelliteCount = laserUnlockApply.cargoDroneSatelliteCount
+      refreshToolCosts()
+      syncOverlaysDepthRow()
+      satelliteDots.setCounts(
+        orbitalSatelliteCount,
+        excavatingSatelliteCount,
+        scannerSatelliteCount,
+        drossCollectorSatelliteCount,
+        cargoDroneSatelliteCount,
+        orbitVisualRadius,
+      )
+      const per = gameBalance.computroniumPointsPerStage
+      const t5 = per * 5
+      if (!debugUnlockAllTools) {
+        if (!scourgeUnlocked && computroniumUnlockPoints.current >= t5) {
+          scourgeUnlocked = true
+        }
+        if (!locustUnlocked && computroniumUnlockPoints.current >= t5) {
+          locustUnlocked = true
+        }
+        if (!miningDroneUnlocked && computroniumUnlockPoints.current >= t5) {
+          miningDroneUnlocked = true
+        }
+      } else {
+        scourgeUnlocked = true
+        locustUnlocked = true
+        miningDroneUnlocked = true
+      }
+    }
 
-  if (hooverPointerDown && lastHooverClient && voxelCells.length > 0 && drossState.clusters.length > 0) {
-    const idx = asteroidRaycastCellIndex(lastHooverClient.x, lastHooverClient.y)
-    if (idx !== null) {
-      const centerPos = voxelCells[idx]!.pos
-      if (
-        stepDrossHoover(
-          dtMs / 1000,
-          drossState,
-          resourceTallies,
-          centerPos,
-          gameBalance.drossHooverRadiusVox,
-          gameBalance,
-        )
-      ) {
-        markMatterHudDirty()
+    if (hasBuiltRefinery && !scannerLaserUnlocked && !debugUnlockAllTools) {
+      scannerLaserUnlocked = true
+      scannerSatelliteCount = Math.max(1, scannerSatelliteCount)
+      refreshToolCosts()
+      satelliteDots.setCounts(
+        orbitalSatelliteCount,
+        excavatingSatelliteCount,
+        scannerSatelliteCount,
+        drossCollectorSatelliteCount,
+        cargoDroneSatelliteCount,
+        orbitVisualRadius,
+      )
+    }
+
+    const hubResult = stepHubs(dtMs / 1000, voxelCells, resourceTallies, energyState, {
+      onProcessedMatterUnitTaken(cell) {
+        tryDiscoveryAt(cell.pos)
+      },
+      onRootTalliesFromPm(cell, credited) {
+        const origin =
+          cell.originSource === 'wreck' || cell.originSource === 'asteroid'
+            ? cell.originSource
+            : 'asteroid'
+        const dest = resourceTalliesBySource[origin]
+        for (const r of ROOT_RESOURCE_IDS) {
+          const v = credited[r]
+          if (v === undefined || v <= 0) continue
+          dest[r] = (dest[r] ?? 0) + v
+        }
+      },
+    })
+    if (hubResult.tallyChanged) {
+      markMatterHudDirty()
+    }
+    if (hubResult.replicatorStoreChanged) {
+      markRockInstanceColorsDirty()
+    }
+    if (hubResult.meshDirty) {
+      replaceAsteroidMesh(voxelCells)
+    }
+
+    const cargoDroneResult = stepCargoDrones(
+      dtMs / 1000,
+      voxelCells,
+      resourceTallies,
+      cargoDroneSatelliteCount,
+      {
+        nowMs: now,
+        onRootTalliesFromPm(cell, credited) {
+          const origin =
+            cell.originSource === 'wreck' || cell.originSource === 'asteroid'
+              ? cell.originSource
+              : 'asteroid'
+          const dest = resourceTalliesBySource[origin]
+          for (const r of ROOT_RESOURCE_IDS) {
+            const v = credited[r]
+            if (v === undefined || v <= 0) continue
+            dest[r] = (dest[r] ?? 0) + v
+          }
+        },
+        onProcessedMatterUnitTaken(cell) {
+          tryDiscoveryAt(cell.pos)
+        },
+      },
+    )
+    if (cargoDroneResult.tallyChanged) {
+      markMatterHudDirty()
+    }
+    if (cargoDroneResult.meshDirty) {
+      replaceAsteroidMesh(voxelCells)
+    }
+
+    const refineryResult = stepRefineryProcessing(dtMs / 1000, voxelCells, resourceTallies, energyState, {
+      selectedRoot: selectedRefineryRoot,
+      isRecipeUnlocked: (r) => isRefineryRecipeUnlocked(r, refineryRecipeUiState(), gameBalance),
+    })
+    if (refineryResult.tallyChanged) {
+      markMatterHudDirty()
+    }
+
+    const depthProgressChanged = stepDepthReveal(dtMs / 1000, voxelCells, gameBalance, depthScanUnlocked, gridSize)
+    if (depthProgressChanged) {
+      invalidateRockTintCaches()
+      if (depthOverlayTintActive()) {
+        markRockInstanceColorsDirty()
+      }
+    }
+
+    if (
+      stepDrossCollection(
+        dtMs / 1000,
+        drossState,
+        resourceTallies,
+        drossCollectorSatelliteCount,
+        gameBalance,
+      )
+    ) {
+      markMatterHudDirty()
+    }
+
+    if (hooverPointerDown && lastHooverClient && voxelCells.length > 0 && drossState.clusters.length > 0) {
+      const idx = asteroidRaycastCellIndex(lastHooverClient.x, lastHooverClient.y)
+      if (idx !== null) {
+        const centerPos = voxelCells[idx]!.pos
+        if (
+          stepDrossHoover(
+            dtMs / 1000,
+            drossState,
+            resourceTallies,
+            centerPos,
+            gameBalance.drossHooverRadiusVox,
+            gameBalance,
+          )
+        ) {
+          markMatterHudDirty()
+        }
+      }
+    }
+
+    const capHud = computeEnergyCap(voxelCells, debugEnergyCapBonus)
+    const energyLineHud = formatEnergyHudLine(energyState.current, capHud)
+    if (matterHudDirty || energyLineHud !== lastMatterHudEnergyLine) {
+      setResourceHud()
+    } else {
+      refreshToolCosts()
+    }
+
+    perfMark('roid-sim-end')
+    perfMeasure('roid-sim', 'roid-sim-start', 'roid-sim-end')
+
+    drossParticles.syncFromState(drossState, gridSize, voxelSize, currentSeed, now, scanVisualizationDebug)
+
+    const eatingMat = asteroidBundle.eating.material as MeshStandardMaterial
+    if (asteroidBundle.eating.visible && asteroidBundle.eating.count > 0) {
+      eatingMat.emissiveIntensity = 0.07 + 0.06 * Math.sin(now * 0.00145)
+    }
+
+    const batteryMat = asteroidBundle.battery.material as MeshStandardMaterial
+    if (asteroidBundle.battery.visible && asteroidBundle.battery.count > 0) {
+      batteryMat.emissiveIntensity = 0.32 + 0.14 * Math.sin(now * 0.00038)
+    }
+
+    const reactorMat = asteroidBundle.reactor.material as MeshStandardMaterial
+    if (asteroidBundle.reactor.visible && asteroidBundle.reactor.count > 0) {
+      reactorMat.emissiveIntensity = 0.98 + 0.05 * Math.sin(now * 0.0009)
+    }
+
+    const hubMat = asteroidBundle.hub.material as MeshStandardMaterial
+    if (asteroidBundle.hub.visible && asteroidBundle.hub.count > 0) {
+      hubMat.emissiveIntensity = 0.52 + 0.12 * Math.sin(now * 0.00072)
+    }
+
+    const hubStandbyMat = asteroidBundle.hubStandby.material as MeshStandardMaterial
+    if (asteroidBundle.hubStandby.visible && asteroidBundle.hubStandby.count > 0) {
+      hubStandbyMat.emissiveIntensity = 0.06 + 0.025 * Math.sin(now * 0.0005)
+    }
+
+    const refineryMat = asteroidBundle.refinery.material as MeshStandardMaterial
+    if (asteroidBundle.refinery.visible && asteroidBundle.refinery.count > 0) {
+      refineryMat.emissiveIntensity = 0.48 + 0.11 * Math.sin(now * 0.00068)
+    }
+
+    const refineryStandbyMat = asteroidBundle.refineryStandby.material as MeshStandardMaterial
+    if (asteroidBundle.refineryStandby.visible && asteroidBundle.refineryStandby.count > 0) {
+      refineryStandbyMat.emissiveIntensity = 0.055 + 0.022 * Math.sin(now * 0.00048)
+    }
+
+    const depthScannerMat = asteroidBundle.depthScanner.material as MeshStandardMaterial
+    if (asteroidBundle.depthScanner.visible && asteroidBundle.depthScanner.count > 0) {
+      depthScannerMat.emissiveIntensity = 0.48 + 0.1 * Math.sin(now * 0.00055)
+    }
+
+    const miningDroneMat = asteroidBundle.miningDrone.material as MeshStandardMaterial
+    if (asteroidBundle.miningDrone.visible && asteroidBundle.miningDrone.count > 0) {
+      miningDroneMat.emissiveIntensity = 0.42 + 0.09 * Math.sin(now * 0.00062)
+    }
+
+    const computroniumMat = asteroidBundle.computronium.material as MeshStandardMaterial
+    if (asteroidBundle.computronium.visible && asteroidBundle.computronium.count > 0) {
+      computroniumMat.emissiveIntensity = 0.82 + 0.12 * Math.sin(now * 0.00048)
+    }
+
+    satelliteDots.tick(now)
+
+    perfMark('roid-music-start')
+    asteroidAmbientMusic.tick(
+      dtMs / 1000,
+      structureVoxelCountForMusic,
+      orbitalSatelliteCount,
+      excavatingSatelliteCount,
+      scannerSatelliteCount,
+      drossCollectorSatelliteCount,
+      cargoDroneSatelliteCount,
+    )
+    perfMark('roid-music-end')
+    perfMeasure('roid-music', 'roid-music-start', 'roid-music-end')
+
+    const dtSec = dtMs / 1000
+    const sunDegPerSec = Number(sunLightDebug.rotationDegPerSec)
+    const sunDegPerSecUse = Number.isFinite(sunDegPerSec) ? sunDegPerSec : 0
+    const starOmegaRadPerSec =
+      sunLightDebug.rotateSunAzimuth && sunDegPerSecUse !== 0
+        ? (sunDegPerSecUse * Math.PI) / 180
+        : 0
+    stepStarfield(dtSec, starOmegaRadPerSec)
+
+    if (sunLightDebug.rotateSunAzimuth) {
+      if (sunDegPerSecUse !== 0 && Number.isFinite(sunAzimuthDeg)) {
+        sunAzimuthDeg = (sunAzimuthDeg + sunDegPerSecUse * dtSec + 360) % 360
+      }
+      applySunFromState()
+      if (sunDegPerSecUse !== 0) {
+        const t = performance.now()
+        if (t - lastPersistedSunAnglesWallMs > 2000) {
+          lastPersistedSunAnglesWallMs = t
+          writeSunAnglesToLocalStorage(sunAzimuthDeg, sunElevationDeg)
+          schedulePersistSettingsClient()
+        }
       }
     }
   }
 
-  const capHud = computeEnergyCap(voxelCells, debugEnergyCapBonus)
-  const energyLineHud = formatEnergyHudLine(energyState.current, capHud)
-  if (matterHudDirty || energyLineHud !== lastMatterHudEnergyLine) {
-    setResourceHud()
-  } else {
-    refreshToolCosts()
-  }
-
-  perfMark('roid-sim-end')
-  perfMeasure('roid-sim', 'roid-sim-start', 'roid-sim-end')
-
-  drossParticles.syncFromState(drossState, gridSize, voxelSize, currentSeed, now, scanVisualizationDebug)
-
-  const eatingMat = asteroidBundle.eating.material as MeshStandardMaterial
-  if (asteroidBundle.eating.visible && asteroidBundle.eating.count > 0) {
-    eatingMat.emissiveIntensity = 0.07 + 0.06 * Math.sin(now * 0.00145)
-  }
-
-  const batteryMat = asteroidBundle.battery.material as MeshStandardMaterial
-  if (asteroidBundle.battery.visible && asteroidBundle.battery.count > 0) {
-    batteryMat.emissiveIntensity = 0.32 + 0.14 * Math.sin(now * 0.00038)
-  }
-
-  const reactorMat = asteroidBundle.reactor.material as MeshStandardMaterial
-  if (asteroidBundle.reactor.visible && asteroidBundle.reactor.count > 0) {
-    reactorMat.emissiveIntensity = 0.98 + 0.05 * Math.sin(now * 0.0009)
-  }
-
-  const hubMat = asteroidBundle.hub.material as MeshStandardMaterial
-  if (asteroidBundle.hub.visible && asteroidBundle.hub.count > 0) {
-    hubMat.emissiveIntensity = 0.52 + 0.12 * Math.sin(now * 0.00072)
-  }
-
-  const hubStandbyMat = asteroidBundle.hubStandby.material as MeshStandardMaterial
-  if (asteroidBundle.hubStandby.visible && asteroidBundle.hubStandby.count > 0) {
-    hubStandbyMat.emissiveIntensity = 0.06 + 0.025 * Math.sin(now * 0.0005)
-  }
-
-  const refineryMat = asteroidBundle.refinery.material as MeshStandardMaterial
-  if (asteroidBundle.refinery.visible && asteroidBundle.refinery.count > 0) {
-    refineryMat.emissiveIntensity = 0.48 + 0.11 * Math.sin(now * 0.00068)
-  }
-
-  const refineryStandbyMat = asteroidBundle.refineryStandby.material as MeshStandardMaterial
-  if (asteroidBundle.refineryStandby.visible && asteroidBundle.refineryStandby.count > 0) {
-    refineryStandbyMat.emissiveIntensity = 0.055 + 0.022 * Math.sin(now * 0.00048)
-  }
-
-  const depthScannerMat = asteroidBundle.depthScanner.material as MeshStandardMaterial
-  if (asteroidBundle.depthScanner.visible && asteroidBundle.depthScanner.count > 0) {
-    depthScannerMat.emissiveIntensity = 0.48 + 0.1 * Math.sin(now * 0.00055)
-  }
-
-  const computroniumMat = asteroidBundle.computronium.material as MeshStandardMaterial
-  if (asteroidBundle.computronium.visible && asteroidBundle.computronium.count > 0) {
-    computroniumMat.emissiveIntensity = 0.82 + 0.12 * Math.sin(now * 0.00048)
-  }
-
-  satelliteDots.tick(now)
-
-  perfMark('roid-music-start')
-  asteroidAmbientMusic.tick(
-    dtMs / 1000,
-    structureVoxelCountForMusic,
-    orbitalSatelliteCount,
-    excavatingSatelliteCount,
-    scannerSatelliteCount,
-    drossCollectorSatelliteCount,
-  )
-  perfMark('roid-music-end')
-  perfMeasure('roid-music', 'roid-music-start', 'roid-music-end')
-
-  const dtSec = dtMs / 1000
-  const sunDegPerSec = Number(sunLightDebug.rotationDegPerSec)
-  const sunDegPerSecUse = Number.isFinite(sunDegPerSec) ? sunDegPerSec : 0
-  const starOmegaRadPerSec =
-    sunLightDebug.rotateSunAzimuth && sunDegPerSecUse !== 0
-      ? (sunDegPerSecUse * Math.PI) / 180
-      : 0
-  stepStarfield(dtSec, starOmegaRadPerSec)
-
-  if (sunLightDebug.rotateSunAzimuth) {
-    if (sunDegPerSecUse !== 0 && Number.isFinite(sunAzimuthDeg)) {
-      sunAzimuthDeg = (sunAzimuthDeg + sunDegPerSecUse * dtSec + 360) % 360
-    }
-    applySunFromState()
-    if (sunDegPerSecUse !== 0) {
-      const t = performance.now()
-      if (t - lastPersistedSunAnglesWallMs > 2000) {
-        lastPersistedSunAnglesWallMs = t
-        writeSunAnglesToLocalStorage(sunAzimuthDeg, sunElevationDeg)
-        schedulePersistSettingsClient()
-      }
-    }
-  }
 
   if (sunDirectionHelper) {
     sunDirectionHelper.update()
@@ -3135,6 +3933,7 @@ function tick(): void {
       lastLaserDragTool === 'excavatingLaser' &&
       lastLaserDragClient)
   const fuseActive = hasActiveExplosiveFuse(now)
+  const lifterChargeActive = hasActiveLifterCharge(now)
 
   if (depthOn) {
     const viewChanged = depthOverlayViewChanged()
@@ -3160,6 +3959,17 @@ function tick(): void {
         )
       }
       refreshExplosiveFuseRockColors()
+    } else if (lifterChargeActive) {
+      if (viewChanged) {
+        sortDepthOverlayRockInstancesByViewDistance(
+          asteroidBundle,
+          voxelCells,
+          voxelSize,
+          gridSize,
+          camera.position,
+        )
+      }
+      refreshLifterRockColors()
     } else if (viewChanged || rockInstanceColorsDirty) {
       if (viewChanged) {
         sortDepthOverlayRockInstancesByViewDistance(
@@ -3182,6 +3992,8 @@ function tick(): void {
       refreshLaserRockHighlightColors()
     } else if (fuseActive) {
       refreshExplosiveFuseRockColors()
+    } else if (lifterChargeActive) {
+      refreshLifterRockColors()
     }
   }
   perfMark('roid-depth-overlay-end')

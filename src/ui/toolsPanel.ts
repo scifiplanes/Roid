@@ -30,12 +30,17 @@ export type PlayerTool =
   | 'hub'
   | 'refinery'
   | 'hoover'
+  | 'lifter'
+  | 'cargoDrone'
   | 'orbitalLaser'
   | 'excavatingLaser'
   | 'scanner'
   | 'explosiveCharge'
   | 'depthScanner'
   | 'drossCollector'
+  | 'scourge'
+  | 'locust'
+  | 'miningDrone'
   | 'computronium'
   | 'emCatapult'
 
@@ -54,6 +59,8 @@ const TOOL_CATEGORY: Readonly<Record<PlayerTool, ToolCategoryId>> = {
   pick: 'basic',
   inspect: 'basic',
   hoover: 'basic',
+  lifter: 'basic',
+  cargoDrone: 'basic',
   replicator: 'structures',
   seed: 'structures',
   reactor: 'structures',
@@ -67,6 +74,9 @@ const TOOL_CATEGORY: Readonly<Record<PlayerTool, ToolCategoryId>> = {
   explosiveCharge: 'lasers',
   depthScanner: 'scanningDepth',
   drossCollector: 'cleanup',
+  scourge: 'cleanup',
+  locust: 'cleanup',
+  miningDrone: 'cleanup',
   emCatapult: 'travel',
 }
 
@@ -95,9 +105,20 @@ export interface LaserSatelliteRowSnapshot {
     deployCostLine: string
     canAffordDeploy: boolean
   }
+  cargoDrone: {
+    unlocked: boolean
+    satelliteCount: number
+    deployCostLine: string
+    canAffordDeploy: boolean
+  }
 }
 
-export type SatelliteDeployKind = 'orbital' | 'excavating' | 'scanner' | 'drossCollector'
+export type SatelliteDeployKind =
+  | 'orbital'
+  | 'excavating'
+  | 'scanner'
+  | 'drossCollector'
+  | 'cargoDrone'
 
 /** Which main-row tool must be selected for each +sat deploy button (contextual row). */
 const SATELLITE_DEPLOY_TOOL: Record<SatelliteDeployKind, PlayerTool> = {
@@ -105,6 +126,7 @@ const SATELLITE_DEPLOY_TOOL: Record<SatelliteDeployKind, PlayerTool> = {
   excavating: 'excavatingLaser',
   scanner: 'scanner',
   drossCollector: 'drossCollector',
+  cargoDrone: 'cargoDrone',
 }
 
 export interface ToolsPanelOptions {
@@ -172,6 +194,10 @@ type CostToolKind =
   | 'excavatingLaserUnlock'
   | 'scannerUnlock'
   | 'drossCollectorInfo'
+  | 'scourgeInfo'
+  | 'locustInfo'
+  | 'miningDroneInfo'
+  | 'cargoDroneInfo'
   | 'emCatapultInfo'
 
 const TOOL_FILTERS: ReadonlyArray<{
@@ -195,7 +221,7 @@ const TOOLS: ReadonlyArray<{
   /** Very short blurb for the selected-tool status line (with costs). */
   short: string
   costTool?: CostToolKind
-  laserSatelliteKind?: 'orbital' | 'excavating' | 'scanner'
+  laserSatelliteKind?: 'orbital' | 'excavating' | 'scanner' | 'cargoDrone'
 }> = [
   {
     id: 'pick',
@@ -271,6 +297,24 @@ const TOOLS: ReadonlyArray<{
     short: 'Vacuum local debris into resources',
   },
   {
+    id: 'lifter',
+    fKey: 'LF',
+    label: 'Lifter',
+    title:
+      'Click processed matter (mining laser) to charge; when ready it flies off and credits roots like a hub pull.',
+    short: 'Pickup processed matter → roots (after charge)',
+  },
+  {
+    id: 'cargoDrone',
+    fKey: 'CD',
+    label: 'Cargo drone',
+    title:
+      'Deploy cargo drones with + Cargo sat (mining laser tier). Orbit fleet automatically transfers processed matter into root tallies over time (after hubs on each tick).',
+    short: 'Orbit drones → PM → roots (auto)',
+    costTool: 'cargoDroneInfo',
+    laserSatelliteKind: 'cargoDrone',
+  },
+  {
     id: 'orbitalLaser',
     fKey: 'F7',
     label: 'Laser',
@@ -327,6 +371,33 @@ const TOOLS: ReadonlyArray<{
     costTool: 'drossCollectorInfo',
   },
   {
+    id: 'scourge',
+    fKey: 'F16',
+    label: 'Scourge',
+    title:
+      'Place a Scourge seed on rock. Seeds spread flood-fill style, consuming neighboring rock into cleanup dross mass while Debug → balance Scourge settings cap per-tick conversions.',
+    short: 'Place Scourge seed; rock → dross',
+    costTool: 'scourgeInfo',
+  },
+  {
+    id: 'locust',
+    fKey: 'F17',
+    label: 'Locust',
+    title:
+      'Place a Locust seed on rock. Locust behaves like Scourge but replicates along the front, growing a thicker cleanup wave as it advances.',
+    short: 'Place Locust seed; front-replicating rock → dross',
+    costTool: 'locustInfo',
+  },
+  {
+    id: 'miningDrone',
+    fKey: 'F18',
+    label: 'Mining drone',
+    title:
+      'Place a mining drone on rock. Each step it moves into a random neighboring rock voxel, leaving processed matter behind (tier 5 computronium research, same as Scourge/Locust).',
+    short: 'Rock → drone; travels → PM trail',
+    costTool: 'miningDroneInfo',
+  },
+  {
     id: 'computronium',
     fKey: 'F12',
     label: 'Computronium',
@@ -357,6 +428,10 @@ function costForTool(kind: CostToolKind): Partial<Record<ResourceId, number>> {
   if (kind === 'depthScanner') return getScaledDepthScannerBuildCost()
   if (kind === 'computronium') return getScaledComputroniumBuildCost()
   if (kind === 'drossCollectorInfo') return {}
+  if (kind === 'scourgeInfo') return {}
+  if (kind === 'locustInfo') return {}
+  if (kind === 'miningDroneInfo') return {}
+  if (kind === 'cargoDroneInfo') return {}
   if (kind === 'emCatapultInfo') return {}
   return {}
 }
@@ -488,7 +563,7 @@ export function createToolsPanel(
       costSpan: HTMLSpanElement
       baseTitle: string
       kind: CostToolKind
-      laserSatelliteKind?: 'orbital' | 'excavating' | 'scanner'
+      laserSatelliteKind?: 'orbital' | 'excavating' | 'scanner' | 'cargoDrone'
       fkeyEl?: HTMLSpanElement
       labelEl?: HTMLSpanElement
       gibLen?: { fKey: number; label: number; cost: number }
@@ -523,6 +598,11 @@ export function createToolsPanel(
   drossDeployBtn.type = 'button'
   drossDeployBtn.className = 'tools-sat-btn'
   drossDeployBtn.textContent = '+ Cleanup sat'
+
+  const cargoDeployBtn = document.createElement('button')
+  cargoDeployBtn.type = 'button'
+  cargoDeployBtn.className = 'tools-sat-btn'
+  cargoDeployBtn.textContent = '+ Cargo sat'
 
   const satContextRow = document.createElement('div')
   satContextRow.className = 'tools-sat-context'
@@ -761,7 +841,17 @@ export function createToolsPanel(
       pendingSatelliteKind = 'drossCollector'
       syncSatelliteDeployRow()
     })
-    satRow.append(orbitalDeployBtn, excavatingDeployBtn, scannerDeployBtn, drossDeployBtn)
+    cargoDeployBtn.addEventListener('click', () => {
+      pendingSatelliteKind = 'cargoDrone'
+      syncSatelliteDeployRow()
+    })
+    satRow.append(
+      orbitalDeployBtn,
+      excavatingDeployBtn,
+      scannerDeployBtn,
+      drossDeployBtn,
+      cargoDeployBtn,
+    )
   }
 
   function isToolHidden(tool: PlayerTool): boolean {
@@ -790,15 +880,30 @@ export function createToolsPanel(
     ) {
       if (getLaserToolUiPhase(tool) === 'hidden') return true
     }
+    if (
+      tool === 'scourge' ||
+      tool === 'locust' ||
+      tool === 'miningDrone' ||
+      tool === 'lifter' ||
+      tool === 'cargoDrone'
+    ) {
+      // Tier-5 cleanup ladder: Scourge, Locust, Mining drone, Lifter, Cargo drone.
+      const phase = researchPhaseForTool(tool, {})
+      if (phase === 'hidden') return true
+    }
     return false
   }
 
   function researchPhaseForTool(
     toolId: PlayerTool,
     ui: {
-      laserSatelliteKind?: 'orbital' | 'excavating' | 'scanner'
+      laserSatelliteKind?: 'orbital' | 'excavating' | 'scanner' | 'cargoDrone'
     },
   ): LaserToolUiPhase | null {
+    if (ui.laserSatelliteKind === 'cargoDrone') {
+      if (!getDrossCollectorToolUiPhase && !getDrossCollectorDeployUiPhase) return 'hidden'
+      return (getDrossCollectorToolUiPhase ?? getDrossCollectorDeployUiPhase)!()
+    }
     if (ui.laserSatelliteKind && getLaserToolUiPhase) {
       return getLaserToolUiPhase(toolId as LaserToolId)
     }
@@ -813,6 +918,17 @@ export function createToolsPanel(
     }
     if (toolId === 'emCatapult' && getEmCatapultToolUiPhase) {
       return getEmCatapultToolUiPhase()
+    }
+    if (
+      toolId === 'scourge' ||
+      toolId === 'locust' ||
+      toolId === 'miningDrone' ||
+      toolId === 'lifter' ||
+      toolId === 'cargoDrone'
+    ) {
+      // Tier 5: Scourge/Locust/Mining drone/Lifter/Cargo drone share the cleanup ladder.
+      if (!getDrossCollectorToolUiPhase && !getDrossCollectorDeployUiPhase) return 'hidden'
+      return (getDrossCollectorToolUiPhase ?? getDrossCollectorDeployUiPhase)!()
     }
     return null
   }
@@ -928,10 +1044,11 @@ export function createToolsPanel(
 
   function costAffordableForUi(ui: {
     kind: CostToolKind
-    laserSatelliteKind?: 'orbital' | 'excavating' | 'scanner'
+    laserSatelliteKind?: 'orbital' | 'excavating' | 'scanner' | 'cargoDrone'
   }): boolean {
     if (!canAffordResourceCost) return true
     if (ui.kind === 'drossCollectorInfo') return true
+    if (ui.kind === 'cargoDroneInfo') return true
     if (ui.kind === 'emCatapultInfo') return true
     if (ui.kind === 'explosiveChargeArm') {
       if (!canAffordExplosiveChargeArm) return true
@@ -950,7 +1067,7 @@ export function createToolsPanel(
     costSpan: HTMLSpanElement
     baseTitle: string
     kind: CostToolKind
-    laserSatelliteKind?: 'orbital' | 'excavating' | 'scanner'
+    laserSatelliteKind?: 'orbital' | 'excavating' | 'scanner' | 'cargoDrone'
   }): void {
     if (ui.kind === 'drossCollectorInfo') {
       ui.costSpan.textContent = 'Tier 5'
@@ -1011,6 +1128,7 @@ export function createToolsPanel(
     excavating: 'Dig laser satellite',
     scanner: 'Scanner satellite',
     drossCollector: 'Cleanup collector satellite',
+    cargoDrone: 'Cargo drone satellite',
   }
 
   let openSatDecommissionModal: (
@@ -1159,25 +1277,34 @@ export function createToolsPanel(
     const e = snap.excavating
     const s = snap.scanner
     const d = snap.drossCollector
+    const c = snap.cargoDrone
     const drossPhase = getDrossCollectorDeployUiPhase?.() ?? 'hidden'
     orbitalDeployBtn.hidden = !o.unlocked || selected !== 'orbitalLaser'
     excavatingDeployBtn.hidden = !e.unlocked || selected !== 'excavatingLaser'
     scannerDeployBtn.hidden = !s.unlocked || selected !== 'scanner'
     drossDeployBtn.hidden = drossPhase === 'hidden' || selected !== 'drossCollector'
+    cargoDeployBtn.hidden = !c.unlocked || selected !== 'cargoDrone'
     satRow.hidden =
-      orbitalDeployBtn.hidden && excavatingDeployBtn.hidden && scannerDeployBtn.hidden && drossDeployBtn.hidden
+      orbitalDeployBtn.hidden &&
+      excavatingDeployBtn.hidden &&
+      scannerDeployBtn.hidden &&
+      drossDeployBtn.hidden &&
+      cargoDeployBtn.hidden
 
     if (pendingSatelliteKind === 'orbital' && orbitalDeployBtn.hidden) pendingSatelliteKind = null
     if (pendingSatelliteKind === 'excavating' && excavatingDeployBtn.hidden) pendingSatelliteKind = null
     if (pendingSatelliteKind === 'scanner' && scannerDeployBtn.hidden) pendingSatelliteKind = null
     if (pendingSatelliteKind === 'drossCollector' && drossDeployBtn.hidden) pendingSatelliteKind = null
+    if (pendingSatelliteKind === 'cargoDrone' && cargoDeployBtn.hidden) pendingSatelliteKind = null
 
     orbitalDeployBtn.disabled = false
     excavatingDeployBtn.disabled = false
     scannerDeployBtn.disabled = false
+    cargoDeployBtn.disabled = false
     orbitalDeployBtn.title = `Select to deploy another mining satellite. Next deploy: ${o.deployCostLine}.`
     excavatingDeployBtn.title = `Select to deploy another dig laser satellite. Next deploy: ${e.deployCostLine}.`
     scannerDeployBtn.title = `Select to deploy another scanner satellite. Next deploy: ${s.deployCostLine}.`
+    cargoDeployBtn.title = `Select to deploy another cargo drone satellite. Next deploy: ${c.deployCostLine}.`
 
     orbitalDeployBtn.classList.toggle('tools-sat-btn--active', pendingSatelliteKind === 'orbital')
     orbitalDeployBtn.setAttribute('aria-pressed', pendingSatelliteKind === 'orbital' ? 'true' : 'false')
@@ -1187,6 +1314,8 @@ export function createToolsPanel(
     scannerDeployBtn.setAttribute('aria-pressed', pendingSatelliteKind === 'scanner' ? 'true' : 'false')
     drossDeployBtn.classList.toggle('tools-sat-btn--active', pendingSatelliteKind === 'drossCollector')
     drossDeployBtn.setAttribute('aria-pressed', pendingSatelliteKind === 'drossCollector' ? 'true' : 'false')
+    cargoDeployBtn.classList.toggle('tools-sat-btn--active', pendingSatelliteKind === 'cargoDrone')
+    cargoDeployBtn.setAttribute('aria-pressed', pendingSatelliteKind === 'cargoDrone' ? 'true' : 'false')
 
     if (drossPhase === 'researching') {
       drossDeployBtn.disabled = true

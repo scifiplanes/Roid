@@ -4,6 +4,7 @@ import { clearDepthRevealState, clearSurfaceScanTint } from './scanVisualization
 import { gameBalance } from './gameBalance'
 import { getKindDef } from './voxelKinds'
 import { RESOURCE_IDS_ORDERED, type ResourceId } from './resources'
+import { getSandboxModeEnabled } from './sandboxMode'
 
 /** Energy storage before any battery voxels exist. */
 export const ENERGY_BASE_CAP = 24
@@ -141,6 +142,16 @@ const SATELLITE_DEPLOY_BASE_DROSS_COLLECTOR: Partial<Record<ResourceId, number>>
   titaniumCondensates: 1,
 }
 
+/** Cargo drone: automatic processed-matter → roots (orbit fleet). */
+const SATELLITE_DEPLOY_BASE_CARGO_DRONE: Partial<Record<ResourceId, number>> = {
+  silicates: 2,
+  metals: 2,
+  oxides: 1,
+  sulfides: 1,
+  regolithMass: 1,
+  carbonaceous: 1,
+}
+
 /** One-time cost to enable the scanner satellite tool (includes first satellite). */
 export const SCANNER_UNLOCK_COST: Partial<Record<ResourceId, number>> = {
   silicates: 3,
@@ -153,7 +164,12 @@ export const SCANNER_UNLOCK_COST: Partial<Record<ResourceId, number>> = {
 
 export type StructureConvertKind = Extract<VoxelKind, 'reactor' | 'battery' | 'hub' | 'refinery'>
 export type { ReplicatorTransformTarget } from './voxelState'
-export type LaserSatelliteKind = 'orbital' | 'excavating' | 'scanner' | 'drossCollector'
+export type LaserSatelliteKind =
+  | 'orbital'
+  | 'excavating'
+  | 'scanner'
+  | 'drossCollector'
+  | 'cargoDrone'
 
 function scaleToolCost(cost: Partial<Record<ResourceId, number>>): Partial<Record<ResourceId, number>> {
   const m = gameBalance.toolCostMult
@@ -226,7 +242,9 @@ export function getScaledSatelliteDeployCost(
         ? SATELLITE_DEPLOY_BASE_EXCAVATING
         : kind === 'scanner'
           ? SATELLITE_DEPLOY_BASE_SCANNER
-          : SATELLITE_DEPLOY_BASE_DROSS_COLLECTOR
+          : kind === 'drossCollector'
+            ? SATELLITE_DEPLOY_BASE_DROSS_COLLECTOR
+            : SATELLITE_DEPLOY_BASE_CARGO_DRONE
   const base = scaleToolCost(raw)
   const mult = Math.max(1, currentSatelliteCount)
   const out: Partial<Record<ResourceId, number>> = {}
@@ -284,6 +302,7 @@ export function tryConvertCellToDepthScanner(
   cell.hubDisabled = undefined
   cell.refineryDisabled = undefined
   cell.explosiveFuseEndMs = undefined
+  cell.lifterChargeStartMs = undefined
   clearReplicatorTransformState(cell)
   clearSurfaceScanTint(cell)
   clearDepthRevealState(cell)
@@ -306,6 +325,7 @@ export function canAfford(
   tallies: Record<ResourceId, number>,
   cost: Partial<Record<ResourceId, number>>,
 ): boolean {
+  if (getSandboxModeEnabled()) return true
   for (const id of RESOURCE_IDS_ORDERED) {
     const need = cost[id]
     if (need !== undefined && need > 0 && tallies[id] < need) return false
@@ -314,6 +334,7 @@ export function canAfford(
 }
 
 function payCost(tallies: Record<ResourceId, number>, cost: Partial<Record<ResourceId, number>>): void {
+  if (getSandboxModeEnabled()) return
   for (const id of RESOURCE_IDS_ORDERED) {
     const need = cost[id]
     if (need !== undefined && need > 0) tallies[id] -= need
@@ -325,6 +346,7 @@ export function tryPayResources(
   tallies: Record<ResourceId, number>,
   cost: Partial<Record<ResourceId, number>>,
 ): boolean {
+  if (getSandboxModeEnabled()) return true
   if (!canAfford(tallies, cost)) return false
   payCost(tallies, cost)
   return true
@@ -332,6 +354,7 @@ export function tryPayResources(
 
 /** Spends up to `amount` energy; returns amount actually spent. */
 export function trySpendEnergy(state: { current: number }, amount: number): number {
+  if (getSandboxModeEnabled()) return amount
   if (amount <= 0) return 0
   const spent = Math.min(state.current, amount)
   state.current -= spent

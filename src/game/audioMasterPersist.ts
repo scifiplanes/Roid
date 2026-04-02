@@ -11,6 +11,9 @@ const NUM_KEYS: (keyof AudioMasterDebug)[] = [
   'eqLowDb',
   'eqMidDb',
   'eqHighDb',
+  'hooverLowpassBaseHz',
+  'hooverLowpassLfoDepthHz',
+  'hooverLowpassLfoRateHz',
 ]
 
 function isFiniteNumber(n: unknown): n is number {

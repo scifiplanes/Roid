@@ -22,3 +22,31 @@ export function getSeedColor(id: SeedId): SeedColor {
   return SEED_COLORS[id] ?? SEED_COLORS.basicSeed
 }
 
+function hashStringTo01(s: string): number {
+  let h = 2166136261 >>> 0
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i)
+    h = Math.imul(h, 16777619)
+  }
+  return (h >>> 0) / 4294967295
+}
+
+/**
+ * Deterministic, broader color per preset/strain.
+ * Ignores the base Seed type palette so each strain can land anywhere
+ * in a bright-ish RGB space, while remaining stable for a given strainId.
+ */
+export function getSeedPresetTint(_seedId: SeedId, strainId: string | undefined): SeedColor {
+  if (!strainId) return getSeedColor('basicSeed')
+  const h1 = hashStringTo01(`r:${strainId}`)
+  const h2 = hashStringTo01(`g:${strainId}`)
+  const h3 = hashStringTo01(`b:${strainId}`)
+  // Bias toward brighter colors (0.35–1.0 range).
+  const toBright = (u: number) => 0.35 + u * 0.65
+  return {
+    r: toBright(h1),
+    g: toBright(h2),
+    b: toBright(h3),
+  }
+}
+

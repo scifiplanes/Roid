@@ -22,6 +22,9 @@ import {
   MATTER_HUD_COMPACT_STORAGE_KEY,
 } from '../ui/uiLayoutPrefs'
 import type { ColorSchemeId } from '../ui/colorScheme'
+import { COLOR_SCHEME_STORAGE_KEY, isColorSchemeId } from './colorSchemePrefs'
+import type { FontId } from '../ui/fontTheme'
+import { FONT_STORAGE_KEY, isFontId } from './fontPrefs'
 
 export const SUN_LIGHT_ANGLES_STORAGE_KEY = 'roid:sunLightAngles'
 export const SUN_LIGHT_DEBUG_STORAGE_KEY = 'roid:sunLightDebug'
@@ -51,6 +54,7 @@ export interface SettingsClientPersistedV1 {
   matterHudCollapsed?: boolean
   matterHudCompact?: boolean
   colorScheme?: ColorSchemeId
+  fontId?: FontId
 }
 
 export interface SettingsClientRuntimeSnapshot {
@@ -66,6 +70,7 @@ export interface SettingsClientRuntimeSnapshot {
   matterHudCollapsed: boolean
   matterHudCompact: boolean
   colorScheme: ColorSchemeId
+  fontId: FontId
 }
 
 let snapshotGetter: (() => SettingsClientRuntimeSnapshot) | null = null
@@ -93,6 +98,7 @@ export function buildSettingsClientPayload(s: SettingsClientRuntimeSnapshot): Se
     matterHudCollapsed: s.matterHudCollapsed,
     matterHudCompact: s.matterHudCompact,
     colorScheme: s.colorScheme,
+    fontId: s.fontId,
   }
 }
 
@@ -285,6 +291,16 @@ export function seedSettingsClientLocalStorageFromBundleIfMissing(imported: unkn
   const mhcomp = imported.matterHudCompact
   if (typeof mhcomp === 'boolean') {
     seedStringIfAbsent(MATTER_HUD_COMPACT_STORAGE_KEY, JSON.stringify(mhcomp))
+  }
+
+  const cs = imported.colorScheme
+  if (isColorSchemeId(cs)) {
+    seedStringIfAbsent(COLOR_SCHEME_STORAGE_KEY, cs)
+  }
+
+  const font = imported.fontId
+  if (isFontId(font)) {
+    seedStringIfAbsent(FONT_STORAGE_KEY, font)
   }
 }
 

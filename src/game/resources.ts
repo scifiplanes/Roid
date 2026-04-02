@@ -17,6 +17,12 @@ export type RootResourceId =
   | 'phosphates'
   | 'halides'
 
+/**
+ * High-level origin for mined materials and refined products.
+ * Currently tracks whether matter ultimately came from asteroid rock or wreck debris.
+ */
+export type ResourceSource = 'asteroid' | 'wreck'
+
 export type ResourceId =
   | RootResourceId
   | 'impactBrecciaFines'
@@ -78,6 +84,21 @@ export function defaultUniformRootComposition(): Record<RootResourceId, number> 
   const o = {} as Record<RootResourceId, number>
   for (const r of ROOT_RESOURCE_IDS) o[r] = U12
   return o
+}
+
+/**
+ * Origin-tagged tallies: per-origin clones of the global resource tallies map.
+ * This is intentionally separate from the primary tallies so existing HUD / costs remain unchanged.
+ */
+export type ResourceTalliesBySource = Record<ResourceSource, Record<ResourceId, number>>
+
+export function createEmptyResourceTalliesBySource(
+  makeBaseTallies: () => Record<ResourceId, number>,
+): ResourceTalliesBySource {
+  return {
+    asteroid: makeBaseTallies(),
+    wreck: makeBaseTallies(),
+  }
 }
 
 export const RESOURCE_DEFS: Record<ResourceId, ResourceDef> = {
@@ -511,10 +532,12 @@ const HUB_PM_ROOT_MASS_UNITS = 12
 
 /**
  * Credits root resources to global tallies from normalized PM composition (largest remainder).
+ * When `outCredited` is provided, it is populated with the integer units added per root.
  */
 export function addRootTalliesFromPmComposition(
   tallies: Record<ResourceId, number>,
   comp: Record<RootResourceId, number>,
+  outCredited?: Partial<Record<RootResourceId, number>>,
 ): void {
   let sumW = 0
   for (const r of ROOT_RESOURCE_IDS) sumW += comp[r] ?? 0
@@ -539,7 +562,36 @@ export function addRootTalliesFromPmComposition(
     rem--
   }
   for (const row of rows) {
-    if (row.floor > 0) tallies[row.id] = (tallies[row.id] ?? 0) + row.floor
+    if (row.floor > 0) {
+      tallies[row.id] = (tallies[row.id] ?? 0) + row.floor
+      if (outCredited) {
+        outCredited[row.id] = (outCredited[row.id] ?? 0) + row.floor
+      }
+    }
+  }
+}
+
+/**
+ * Credits all remaining processed-matter units using the same per-unit root split as Hub (`addRootTalliesFromPmComposition`).
+ * Aggregates per-root credits into `outCreditedTotal` when provided (e.g. origin-tagged tallies).
+ */
+export function creditAllProcessedMatterUnitsToTallies(
+  tallies: Record<ResourceId, number>,
+  units: number,
+  comp: Record<RootResourceId, number>,
+  outCreditedTotal?: Partial<Record<RootResourceId, number>>,
+): void {
+  const n = Math.max(0, Math.floor(units))
+  for (let u = 0; u < n; u++) {
+    const tickCredit: Partial<Record<RootResourceId, number>> = {}
+    addRootTalliesFromPmComposition(tallies, comp, tickCredit)
+    if (outCreditedTotal) {
+      for (const r of ROOT_RESOURCE_IDS) {
+        const v = tickCredit[r]
+        if (v === undefined || v <= 0) continue
+        outCreditedTotal[r] = (outCreditedTotal[r] ?? 0) + v
+      }
+    }
   }
 }
 

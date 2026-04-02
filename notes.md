@@ -80,3 +80,6 @@ replace "unlock all research tools" button in debug with "unlock all tools" (so 
 hide resources that the player doesn't own currently from the desplayed list.
 
 we will separate depth scanner into a range of scanners with different focuses, grounded in science. We will expand the range of depth overlays accordingly. Each one will show the voxels that it specializes on as opaque among the otherwise transparent.
+
+
+Extend into debris pieces generation. Introduce upstream “regoliths” etc., preserve as much as possible of downstream chemistry.

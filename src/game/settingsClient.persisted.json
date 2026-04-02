@@ -1,6 +1,6 @@
 {
   "v": 1,
-  "sunAzimuthDeg": 178.78418196700102,
+  "sunAzimuthDeg": 252.05682996430232,
   "sunElevationDeg": -70,
   "sunLightDebug": {
     "rotateSunAzimuth": true,
@@ -8,37 +8,41 @@
     "showSunHelper": false
   },
   "scanVisualizationDebug": {
-    "compositionLerp": 0.86,
+    "compositionLerp": 0.85,
     "anchorSaturation": 1,
     "anchorLightness": 0.59,
     "boostSaturationMul": 2,
     "boostSaturationAdd": 0.185,
-    "boostLightnessMin": 0.37,
+    "boostLightnessMin": 0.33,
     "boostLightnessMax": 0.75,
-    "boostLightnessScale": 1.015,
-    "boostLightnessAdd": 0.04,
+    "boostLightnessScale": 1.01,
+    "boostLightnessAdd": 0.025,
     "applyTintRgbMul": 1.9,
     "suppressEmissiveWhenScanned": true,
-    "baseRockBulkHintLerp": 0.78,
-    "baseRockBulkHintSaturation": 0.23,
-    "baseRockBulkHintLightness": 0.42,
+    "baseRockBulkHintLerp": 0,
+    "baseRockBulkHintSaturation": 0.2,
+    "baseRockBulkHintLightness": 0.41,
     "baseRockDensityShade": 0.74
   },
   "audioMasterDebug": {
     "masterHighPassHz": 41.212598265400004,
     "eqLowDb": 6.5,
     "eqMidDb": 6,
-    "eqHighDb": -5.5
+    "eqHighDb": -5.5,
+    "hooverLowpassBaseHz": 70,
+    "hooverLowpassLfoDepthHz": 10,
+    "hooverLowpassLfoRateHz": 0.55
   },
   "overlayVisualization": {
-    "surfaceScanOverlayVisible": false,
-    "depthOverlayVisible": true
+    "surfaceScanOverlayVisible": true,
+    "depthOverlayVisible": false
   },
   "discoveryAutoResolve": false,
-  "musicVolumeLinear": 0,
-  "toolsBarCollapsed": true,
-  "overlayLegendCollapsed": true,
+  "musicVolumeLinear": 1,
+  "toolsBarCollapsed": false,
+  "overlayLegendCollapsed": false,
   "matterHudCollapsed": true,
   "matterHudCompact": true,
-  "colorScheme": "blue"
+  "colorScheme": "orange",
+  "fontId": "disketMono"
 }

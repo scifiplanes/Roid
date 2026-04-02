@@ -6,8 +6,25 @@
   font-display: swap;
 }
 
+@font-face {
+  font-family: DisketMono;
+  src: url('/fonts/Disket-Mono-Regular.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: DisketMono;
+  src: url('/fonts/Disket-Mono-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
-  --ui-font: PerfectDosVga, monospace;
+  --ui-font: DisketMono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
   /* Defaults mirror the Blue theme; concrete values are overridden by theme classes. */
   --nc-panel-bg: #0000aa;
   --nc-panel-bg-mid: #000092;
@@ -30,6 +47,19 @@
   --tools-unaffordable-active-fg: #a3a3a3;
   --tools-unaffordable-active-border: #888888;
   --tools-unaffordable-active-muted: #8e8e8e;
+}
+
+/* Font choice: classes on `#app` from `applyFontToApp` in main.ts */
+#app.font-disket-mono {
+  --ui-font: DisketMono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
+  font-family: var(--ui-font);
+}
+
+#app.font-perfect-dos-vga {
+  --ui-font: PerfectDosVga, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
+  font-family: var(--ui-font);
 }
 
 /* UI color schemes (applied to the root app shell). */
@@ -62,13 +92,13 @@
 }
 
 .theme-orange {
-  /* Martian red/orange palette with ivory text and deep blue accents. */
+  /* Martian red/orange palette with ivory text and warm orange accents. */
   --nc-panel-bg: #3a1206;
   --nc-panel-bg-mid: #4a1a0a;
   --nc-panel-bg-deep: #260a04;
   --nc-fg: #f4e6cf; /* ivory */
   --nc-fg-bright: #fff9e8;
-  --nc-accent: #2350a6; /* deep blue accent */
+  --nc-accent: #ffb347; /* warm orange accent */
   --nc-border: #b64a24; /* burnt orange border */
   --nc-muted: #b8997a;
   --nc-selected-bg: #d24b1a; /* bright Martian orange-red */
@@ -99,6 +129,67 @@ body {
 
 #viewport {
   position: relative;
+}
+
+.debris-brackets-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 8;
+}
+
+.debris-bracket {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  margin: -9px 0 0 -9px;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.85),
+    0 0 6px rgba(120, 200, 255, 0.55);
+  opacity: 0.85;
+  animation: debris-bracket-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes debris-bracket-pulse {
+  0%,
+  100% {
+    opacity: 0.9;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.85);
+  }
+}
+
+.debris-pickup-float {
+  position: absolute;
+  margin: -2px 0 0 4px;
+  pointer-events: none;
+  z-index: 12;
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: 1.2;
+  text-shadow:
+    0 0 4px rgba(0, 0, 0, 0.9),
+    0 1px 2px rgba(0, 0, 0, 0.85);
+  animation: debris-pickup-float-drift 0.68s ease-out forwards;
+}
+
+.debris-pickup-float-res {
+  display: inline;
+}
+
+@keyframes debris-pickup-float-drift {
+  0% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
 }
 
 .matter-hud-wrap {
@@ -387,6 +478,38 @@ body {
 .overlays-toggle:hover {
   border-color: var(--nc-fg-bright);
   background: var(--nc-panel-bg-mid);
+}
+
+.pause-menu {
+  pointer-events: auto;
+}
+
+.pause-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  height: 40px;
+  padding: 4px;
+  border-radius: 0;
+  border: 2px solid var(--nc-accent);
+  background: var(--nc-panel-bg);
+  color: var(--nc-fg-bright);
+  cursor: pointer;
+  box-shadow:
+    inset 1px 1px 0 var(--nc-inset-light),
+    inset -1px -1px 0 var(--nc-inset-dark);
+}
+
+.pause-toggle:hover {
+  border-color: var(--nc-fg-bright);
+  background: var(--nc-panel-bg-mid);
+}
+
+.pause-icon {
+  display: block;
+  font-size: 16px;
+  line-height: 1;
 }
 
 .overlays-eye-svg {
@@ -763,6 +886,30 @@ body {
 .settings-debug-nav-btn:hover {
   border-color: var(--nc-accent);
   color: var(--nc-fg-bright);
+}
+
+.settings-debug-nav-btn--filtered-out {
+  opacity: 0.35;
+}
+
+.settings-debug-filter-row {
+  margin: 4px 0 8px;
+}
+
+.settings-debug-filter-row input[type='search'] {
+  width: 100%;
+  padding: 2px 4px;
+  border: 1px solid var(--nc-border);
+  background: var(--nc-panel-bg-mid);
+  color: var(--nc-fg);
+  font-family: var(--ui-font);
+  font-size: 11px;
+}
+
+.settings-debug-filter-row input[type='search']:focus {
+  outline: 1px solid var(--nc-accent);
+  outline-offset: 0;
+  border-color: var(--nc-accent);
 }
 
 .settings-debug-hint {

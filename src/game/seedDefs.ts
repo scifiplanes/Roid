@@ -61,7 +61,7 @@ export const SEED_DEFS: Record<SeedId, SeedDef> = {
     maxLifetimeSec: 360,
     maxRecipeStacks: 4,
     defaultRecipeStack: ['regolithMass', 'silicates'],
-    requiredComputroniumTier: 1,
+    requiredComputroniumTier: 0,
   },
   longlifeSeed: {
     id: 'longlifeSeed',
@@ -73,7 +73,7 @@ export const SEED_DEFS: Record<SeedId, SeedDef> = {
     maxLifetimeSec: 720,
     maxRecipeStacks: 5,
     defaultRecipeStack: ['regolithMass', 'silicates', 'metals'],
-    requiredComputroniumTier: 3,
+    requiredComputroniumTier: 0,
   },
   burstSeed: {
     id: 'burstSeed',
@@ -85,7 +85,7 @@ export const SEED_DEFS: Record<SeedId, SeedDef> = {
     maxLifetimeSec: 90,
     maxRecipeStacks: 4,
     defaultRecipeStack: ['metals', 'volatiles'],
-    requiredComputroniumTier: 2,
+    requiredComputroniumTier: 0,
   },
   schedulerSeed: {
     id: 'schedulerSeed',

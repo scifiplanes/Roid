@@ -18,6 +18,7 @@ const KIND_LABEL: Record<VoxelKind, string> = {
   refinery: 'Refinery',
   depthScanner: 'Depth scanner',
   computronium: 'Computronium',
+  miningDrone: 'Mining drone',
 }
 
 export function voxelHasCompositionIntel(cell: VoxelCell): boolean {
@@ -37,6 +38,9 @@ function pushStructureNotes(lines: string[], cell: VoxelCell, nowMs: number): vo
   if (kind === 'computronium') {
     lines.push(cell.computroniumDisabled === true ? 'Computronium: off' : 'Computronium: on')
   }
+  if (kind === 'miningDrone') {
+    lines.push('Mining drone: steps into random neighbor rock; previous cell becomes processed matter')
+  }
   if (kind === 'replicator') {
     const target = cell.replicatorTransformTarget
     if (target !== undefined) {
@@ -49,6 +53,15 @@ function pushStructureNotes(lines: string[], cell: VoxelCell, nowMs: number): vo
     } else if (cell.replicatorEating) lines.push('Replicator: consuming rock')
     else if (cell.replicatorActive) lines.push('Replicator: mature')
     else lines.push('Replicator')
+    if (cell.replicatorStrainId) {
+      lines.push(`Strain: ${cell.replicatorStrainId}`)
+    }
+  }
+  if (cell.scourgeActive) {
+    lines.push('Scourge: active')
+  }
+  if (cell.locustActive) {
+    lines.push('Locust: active front')
   }
   if (kind === 'processedMatter' && cell.processedMatterUnits != null && cell.processedMatterUnits > 0) {
     lines.push(`Processed matter units: ${Math.round(cell.processedMatterUnits)}`)

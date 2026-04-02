@@ -23,6 +23,7 @@ const STRUCTURE_KINDS = new Set<string>([
   'refinery',
   'depthScanner',
   'computronium',
+  'miningDrone',
   'processedMatter',
 ])
 
@@ -253,6 +254,7 @@ export function createAsteroidAmbientMusic(options: {
     excavatingSats: number,
     scannerSats: number,
     drossCollectorSats: number,
+    cargoDroneSats: number,
   ) => void
   dispose: () => void
 } {
@@ -1621,7 +1623,15 @@ export function createAsteroidAmbientMusic(options: {
       syncVoiceSlotMaskFromDisplayed()
     },
 
-    tick(dtSec, structureVoxelCount, orbitalSats, excavatingSats, scannerSats, drossCollectorSats): void {
+    tick(
+      dtSec: number,
+      structureVoxelCount: number,
+      orbitalSats: number,
+      excavatingSats: number,
+      scannerSats: number,
+      drossCollectorSats: number,
+      cargoDroneSats: number,
+    ): void {
       if (voices.length === 0) return
       const d = getDebug()
       const dt = Math.max(0, dtSec)
@@ -1636,7 +1646,8 @@ export function createAsteroidAmbientMusic(options: {
           rollScaleCycleDelay()
         }
       }
-      const satSum = orbitalSats + excavatingSats + scannerSats + drossCollectorSats
+      const satSum =
+        orbitalSats + excavatingSats + scannerSats + drossCollectorSats + cargoDroneSats
       const w = structureVoxelCount * d.voxelWeight + satSum * d.satelliteWeight
       let target = Math.round(w * d.activityScale)
       target = Math.min(d.maxVoices, Math.max(d.minVoices, target))

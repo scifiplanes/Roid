@@ -3,6 +3,12 @@ import { getDebugProjectAutosave, setDebugProjectAutosave } from './debugProject
 export interface GameBalance {
   durabilityMult: number
   replicatorFeedSpeedMult: number
+  /** When true, cross-strain replicator-on-replicator feeding is enabled. */
+  replicatorCannibalismEnabled: boolean
+  /** Multiplier on HP drain rate when replicators feed on other strains. */
+  replicatorCannibalFeedSpeedMult: number
+  /** Fraction [0,1] of drained HP converted into useful resources on the feeder. */
+  replicatorCannibalYieldEfficiency: number
   /** Seconds from payment until a mature replicator becomes the chosen structure/computronium. */
   replicatorTransformDurationSec: number
   toolCostMult: number
@@ -247,11 +253,67 @@ export interface GameBalance {
   discoveryWeightDrain: number
   discoveryWeightLore: number
   discoveryWeightResearchBypass: number
+  /** When true, Scourge propagation is enabled (debug / experimental). */
+  scourgeEnabled: boolean
+  /**
+   * Hard cap on how many voxels Scourge may convert to dross per sim step.
+   * Prevents runaway work when large regions are infected.
+   */
+  scourgeMaxConversionsPerTick: number
+  /** When true, Locust propagation is enabled (debug / experimental). */
+  locustEnabled: boolean
+  /**
+   * Hard cap on how many voxels Locust may convert to dross per sim step.
+   * Prevents runaway work when large regions are infected.
+   */
+  locustMaxConversionsPerTick: number
+  /** When true, Mining drone placement and stepping are enabled. */
+  miningDroneEnabled: boolean
+  /** Wall-clock interval (ms) between mining-drone movement steps. */
+  miningDroneStepIntervalMs: number
+  /** Max mining-drone moves (one voxel each) per step interval. */
+  miningDroneMaxMovesPerTick: number
+  /**
+   * Probability [0,1] that a new core asset spawned by EM Catapult / Regenerate
+   * is a wreck instead of an asteroid. 0 = asteroids only.
+   */
+  wreckSpawnProbability: number
+  /**
+   * Global probability [0,1] that destroying a rock voxel (mining, dig laser, explosion, Locust, Scourge)
+   * spawns a clickable drifting debris shard.
+   */
+  debrisSpawnChance: number
+  /** Approximate minimum debris shard lifetime in seconds. */
+  debrisLifetimeMinSec: number
+  /** Approximate maximum debris shard lifetime in seconds. */
+  debrisLifetimeMaxSec: number
+  /** Approximate minimum debris shard drift speed (world units per second). */
+  debrisSpeedMin: number
+  /** Approximate maximum debris shard drift speed (world units per second). */
+  debrisSpeedMax: number
+  /** Minimum time after spawn before a debris shard can be collected (seconds). */
+  debrisPickupCooldownSec: number
+  /** Lifter tool: hold (ms) on processed matter before launch. */
+  lifterChargeMs: number
+  /** Lifter package visual duration before tallies credit (ms). */
+  lifterFlightMs: number
+  /** Lifter flight speed in asteroid-local space (world units per second). */
+  lifterFlightSpeed: number
+  /**
+   * Cargo drone satellites: processed-matter units moved to root tallies per second **per deployed drone**
+   * (after hub pulls on the same tick). Scales with `cargoDronePullMult`.
+   */
+  cargoDroneMatterUnitsPerSecPerSat: number
+  /** Multiplier on cargo drone PM throughput (Debug tuning). */
+  cargoDronePullMult: number
 }
 
 export const defaultGameBalance: GameBalance = {
   durabilityMult: 1,
   replicatorFeedSpeedMult: 1,
+  replicatorCannibalismEnabled: false,
+  replicatorCannibalFeedSpeedMult: 1,
+  replicatorCannibalYieldEfficiency: 0.2,
   replicatorTransformDurationSec: 3,
   toolCostMult: 1,
   reactorOutputMult: 1,
@@ -347,6 +409,25 @@ export const defaultGameBalance: GameBalance = {
   discoveryWeightDrain: 0.45,
   discoveryWeightLore: 0.65,
   discoveryWeightResearchBypass: 0.28,
+  scourgeEnabled: true,
+  scourgeMaxConversionsPerTick: 64,
+  locustEnabled: true,
+  locustMaxConversionsPerTick: 32,
+  miningDroneEnabled: true,
+  miningDroneStepIntervalMs: 1500,
+  miningDroneMaxMovesPerTick: 64,
+  wreckSpawnProbability: 0,
+  debrisSpawnChance: 0.4,
+  debrisLifetimeMinSec: 3.5,
+  debrisLifetimeMaxSec: 6,
+  debrisSpeedMin: 0.35,
+  debrisSpeedMax: 0.7,
+  debrisPickupCooldownSec: 0.18,
+  lifterChargeMs: 1100,
+  lifterFlightMs: 1600,
+  lifterFlightSpeed: 4.2,
+  cargoDroneMatterUnitsPerSecPerSat: 0.22,
+  cargoDronePullMult: 1,
 }
 
 /** Live tuning values; init via `initGameBalanceFromPersisted` before gameplay. */
@@ -408,6 +489,8 @@ export async function persistGameBalanceToProjectNow(): Promise<boolean> {
 export const GAME_BALANCE_KEYS: readonly (keyof GameBalance)[] = [
   'durabilityMult',
   'replicatorFeedSpeedMult',
+  'replicatorCannibalFeedSpeedMult',
+  'replicatorCannibalYieldEfficiency',
   'replicatorTransformDurationSec',
   'toolCostMult',
   'reactorOutputMult',
@@ -501,6 +584,22 @@ export const GAME_BALANCE_KEYS: readonly (keyof GameBalance)[] = [
   'discoveryWeightDrain',
   'discoveryWeightLore',
   'discoveryWeightResearchBypass',
+  'scourgeMaxConversionsPerTick',
+  'locustMaxConversionsPerTick',
+  'miningDroneStepIntervalMs',
+  'miningDroneMaxMovesPerTick',
+  'wreckSpawnProbability',
+  'debrisSpawnChance',
+  'debrisLifetimeMinSec',
+  'debrisLifetimeMaxSec',
+  'debrisSpeedMin',
+  'debrisSpeedMax',
+  'debrisPickupCooldownSec',
+  'lifterChargeMs',
+  'lifterFlightMs',
+  'lifterFlightSpeed',
+  'cargoDroneMatterUnitsPerSecPerSat',
+  'cargoDronePullMult',
 ] as const
 
 const DIG_LASER_AUDIO_CLAMP: Partial<Record<keyof GameBalance, { min: number; max: number }>> = {
@@ -516,7 +615,7 @@ const DIG_LASER_AUDIO_CLAMP: Partial<Record<keyof GameBalance, { min: number; ma
 const REPLICATOR_FEED_AUDIO_CLAMP: Partial<Record<keyof GameBalance, { min: number; max: number }>> = {
   replicatorFeedAudioMaxVoices: { min: 1, max: 8 },
   replicatorFeedAudioStepSec: { min: 0.012, max: 0.12 },
-  replicatorFeedAudioBaseHz: { min: 400, max: 8000 },
+  replicatorFeedAudioBaseHz: { min: 20, max: 8000 },
   replicatorFeedAudioPitchSpread: { min: 0, max: 800 },
   replicatorFeedAudioTailSec: { min: 0.004, max: 0.055 },
   replicatorFeedAudioAttackSec: { min: 0.001, max: 0.035 },
@@ -627,6 +726,12 @@ export function clampBalanceField(key: keyof GameBalance, v: number): number {
   if (key === 'drossMassPerReplicatorHp') {
     return Math.min(2, Math.max(0.001, v))
   }
+  if (key === 'replicatorCannibalFeedSpeedMult') {
+    return Math.min(MULT_MAX, Math.max(MULT_MIN, v))
+  }
+  if (key === 'replicatorCannibalYieldEfficiency') {
+    return Math.min(1, Math.max(0, v))
+  }
   if (key === 'drossFogDensityPerMass') {
     return Math.min(0.002, Math.max(0, v))
   }
@@ -642,6 +747,16 @@ export function clampBalanceField(key: keyof GameBalance, v: number): number {
   if (key === 'drossFogTintLerp01') {
     return Math.min(1, Math.max(0, v))
   }
+  if (
+    key === 'scourgeMaxConversionsPerTick' ||
+    key === 'locustMaxConversionsPerTick' ||
+    key === 'miningDroneMaxMovesPerTick'
+  ) {
+    return Math.min(512, Math.max(0, v))
+  }
+  if (key === 'miningDroneStepIntervalMs') {
+    return Math.min(60000, Math.max(50, v))
+  }
   if (key === 'replicatorTransformDurationSec') {
     return Math.min(120, Math.max(0, v))
   }
@@ -656,6 +771,36 @@ export function clampBalanceField(key: keyof GameBalance, v: number): number {
   ) {
     return Math.min(8, Math.max(0, v))
   }
+  if (key === 'wreckSpawnProbability') {
+    return Math.min(1, Math.max(0, v))
+  }
+  if (key === 'debrisSpawnChance') {
+    return Math.min(1, Math.max(0, v))
+  }
+  if (
+    key === 'debrisLifetimeMinSec' ||
+    key === 'debrisLifetimeMaxSec'
+  ) {
+    return Math.min(20, Math.max(0.2, v))
+  }
+  if (key === 'debrisSpeedMin' || key === 'debrisSpeedMax') {
+    return Math.min(3, Math.max(0.05, v))
+  }
+  if (key === 'debrisPickupCooldownSec') {
+    return Math.min(2, Math.max(0, v))
+  }
+  if (key === 'lifterChargeMs' || key === 'lifterFlightMs') {
+    return Math.min(60000, Math.max(100, v))
+  }
+  if (key === 'lifterFlightSpeed') {
+    return Math.min(24, Math.max(0.2, v))
+  }
+  if (key === 'cargoDroneMatterUnitsPerSecPerSat') {
+    return Math.min(8, Math.max(0, v))
+  }
+  if (key === 'cargoDronePullMult') {
+    return Math.min(8, Math.max(0, v))
+  }
   return Math.min(MULT_MAX, Math.max(MULT_MIN, v))
 }
 
@@ -664,11 +809,29 @@ function mergeBalance(
   partial: Partial<Record<string, unknown>>,
 ): GameBalance {
   const out: GameBalance = { ...base }
+  // Numeric fields (sliders / multipliers).
   for (const key of GAME_BALANCE_KEYS) {
     const v = partial[key as string]
     if (typeof v === 'number' && Number.isFinite(v)) {
-      out[key] = clampBalanceField(key, v)
+      ;(out as unknown as Record<string, number>)[key as string] = clampBalanceField(key, v)
     }
+  }
+  // Boolean debug toggles that should persist as-is.
+  const cannibal = partial['replicatorCannibalismEnabled']
+  if (typeof cannibal === 'boolean') {
+    out.replicatorCannibalismEnabled = cannibal
+  }
+  const scourgeEn = partial['scourgeEnabled']
+  if (typeof scourgeEn === 'boolean') {
+    out.scourgeEnabled = scourgeEn
+  }
+  const locustEn = partial['locustEnabled']
+  if (typeof locustEn === 'boolean') {
+    out.locustEnabled = locustEn
+  }
+  const miningDroneEn = partial['miningDroneEnabled']
+  if (typeof miningDroneEn === 'boolean') {
+    out.miningDroneEnabled = miningDroneEn
   }
   const legacyPull = partial['refineryPullMult']
   if (
@@ -724,10 +887,22 @@ function normalizeImpactCraterPairs(b: GameBalance): void {
 }
 
 export function patchGameBalance(partial: Partial<GameBalance>): void {
+  if (partial.replicatorCannibalismEnabled !== undefined) {
+    gameBalance.replicatorCannibalismEnabled = partial.replicatorCannibalismEnabled
+  }
+  if (partial.scourgeEnabled !== undefined) {
+    gameBalance.scourgeEnabled = partial.scourgeEnabled
+  }
+  if (partial.locustEnabled !== undefined) {
+    gameBalance.locustEnabled = partial.locustEnabled
+  }
+  if (partial.miningDroneEnabled !== undefined) {
+    gameBalance.miningDroneEnabled = partial.miningDroneEnabled
+  }
   for (const key of GAME_BALANCE_KEYS) {
     const v = partial[key]
-    if (v !== undefined) {
-      gameBalance[key] = clampBalanceField(key, v)
+    if (v !== undefined && typeof v === 'number' && Number.isFinite(v)) {
+      ;(gameBalance as unknown as Record<string, number>)[key as string] = clampBalanceField(key, v)
     }
   }
   normalizeImpactCraterPairs(gameBalance)

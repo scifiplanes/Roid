@@ -2,6 +2,8 @@ import { Vector3, type PerspectiveCamera } from 'three'
 import { getAudioContext } from './audioContext'
 import { getSfxBusInput } from './sfxReverbBus'
 import { gameBalance } from './gameBalance'
+import { getAudioMasterDebugSnapshot } from './masterOutputChain'
+import { pickThudDebug } from './pickThudDebug'
 import type { VoxelKind } from './voxelKinds'
 
 const shakeOffset = new Vector3()
@@ -79,6 +81,27 @@ export function playReplicatorPlaceClick(): void {
     const c = getAudioContext()
     if (!c || c.state !== 'running') return
     scheduleReplicatorClick(c, c.currentTime, 0.048, 1760, 0.016, 0.009)
+  } catch {
+    /* ignore blocked / unsupported audio */
+  }
+}
+
+export function playReplicatorTapClick(): void {
+  try {
+    const c = getAudioContext()
+    if (!c || c.state !== 'running') return
+    scheduleReplicatorClick(c, c.currentTime, 0.032, 1320, 0.024, 0.01)
+  } catch {
+    /* ignore blocked / unsupported audio */
+  }
+}
+
+/** Brighter “magnetic” tick — distinct from mining thuds and replicator UI clicks. */
+export function playDebrisCollectSound(): void {
+  try {
+    const c = getAudioContext()
+    if (!c || c.state !== 'running') return
+    scheduleReplicatorClick(c, c.currentTime, 0.038, 2480, 0.022, 0.006)
   } catch {
     /* ignore blocked / unsupported audio */
   }
@@ -327,6 +350,8 @@ type HooverSustainNodes = {
   ctx: AudioContext
   master: GainNode
   src: AudioBufferSourceNode
+  bp: BiquadFilterNode
+  startTime: number
 }
 
 let hooverSustainRef: HooverSustainNodes | null = null
@@ -373,7 +398,7 @@ export function startHooverSustain(): void {
 
     const bp = c.createBiquadFilter()
     bp.type = 'lowpass'
-    bp.frequency.value = 520
+    bp.frequency.value = 120
     bp.Q.value = 0.8
 
     const master = c.createGain()
@@ -385,7 +410,34 @@ export function startHooverSustain(): void {
     src.connect(bp).connect(master).connect(getSfxBusInput(c))
     src.start(t0)
 
-    hooverSustainRef = { ctx: c, master, src }
+    hooverSustainRef = { ctx: c, master, src, bp, startTime: t0 }
+
+    const updateCutoff = () => {
+      const ref = hooverSustainRef
+      if (!ref || ref.ctx !== c || ref.bp !== bp) return
+      const now = c.currentTime
+      const dt = now - ref.startTime
+      const nyquist = c.sampleRate * 0.5
+      const debug = getAudioMasterDebugSnapshot()
+      const base = Number.isFinite(debug.hooverLowpassBaseHz)
+        ? debug.hooverLowpassBaseHz
+        : 120
+      const depth = Math.max(0, debug.hooverLowpassLfoDepthHz)
+      const rate = Math.max(0, debug.hooverLowpassLfoRateHz)
+      const clampedBase = Math.min(nyquist, Math.max(20, base))
+      let cutoff = clampedBase
+      if (depth > 0 && rate > 0) {
+        const span = Math.min(nyquist - 20, Math.max(0, depth))
+        const wobble = Math.sin(dt * rate * 2 * Math.PI)
+        cutoff = clampedBase + span * wobble
+        cutoff = Math.min(nyquist, Math.max(20, cutoff))
+      }
+      ref.bp.frequency.setValueAtTime(cutoff, now)
+      // Keep updating while hoover sustain is active.
+      requestAnimationFrame(updateCutoff)
+    }
+    // Start LFO loop on next frame so we do not block the current call stack.
+    requestAnimationFrame(updateCutoff)
   } catch {
     hooverSustainRef = null
   }
@@ -494,20 +546,22 @@ export function playReplicatorConsumeClicks(tickCount: number): void {
 
 /** Loose fines: band-limited noise “crunch” (reads clearly on small speakers). */
 function playRegolithThud(c: AudioContext, now: number, popped: boolean): void {
-  const tailSec = popped ? 0.07 : 0.042
-  const peak = popped ? 0.2 : 0.12
+  const cfg = pickThudDebug.regolith
+  const tailSec = popped ? cfg.tailSecPopped : cfg.tailSecBase
+  const peak = popped ? cfg.peakPopped : cfg.peakBase
   const n = Math.ceil(c.sampleRate * tailSec)
   const buffer = c.createBuffer(1, n, c.sampleRate)
   const data = buffer.getChannelData(0)
   for (let i = 0; i < n; i++) {
-    data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (n * (popped ? 0.14 : 0.09)))
+    const shape = popped ? cfg.decayShapePopped : cfg.decayShapeBase
+    data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (n * shape))
   }
   const src = c.createBufferSource()
   src.buffer = buffer
   const bp = c.createBiquadFilter()
   bp.type = 'bandpass'
-  bp.frequency.value = popped ? 1650 : 2200
-  bp.Q.value = 0.65
+  bp.frequency.value = popped ? cfg.bandpassHzPopped : cfg.bandpassHzBase
+  bp.Q.value = cfg.bandpassQ
   const g = c.createGain()
   envelopeGain(g, now, peak, tailSec, 0.001)
   src.connect(bp).connect(g).connect(getSfxBusInput(c))
@@ -517,15 +571,16 @@ function playRegolithThud(c: AudioContext, now: number, popped: boolean): void {
 
 /** Crystalline fracture: saw through lowpass (bright body, duller than regolith noise). */
 function playSilicateThud(c: AudioContext, now: number, popped: boolean): void {
-  const tailSec = popped ? 0.13 : 0.075
-  const peak = popped ? 0.22 : 0.14
+  const cfg = pickThudDebug.silicate
+  const tailSec = popped ? cfg.tailSecPopped : cfg.tailSecBase
+  const peak = popped ? cfg.peakPopped : cfg.peakBase
   const osc = c.createOscillator()
   osc.type = 'sawtooth'
-  osc.frequency.value = popped ? 98 : 142
+  osc.frequency.value = popped ? cfg.oscHzPopped : cfg.oscHzBase
   const lp = c.createBiquadFilter()
   lp.type = 'lowpass'
-  lp.frequency.value = popped ? 520 : 780
-  lp.Q.value = 0.7
+  lp.frequency.value = popped ? cfg.lowpassHzPopped : cfg.lowpassHzBase
+  lp.Q.value = cfg.lowpassQ
   const g = c.createGain()
   envelopeGain(g, now, peak, tailSec, 0.003)
   osc.connect(lp).connect(g).connect(getSfxBusInput(c))
@@ -535,9 +590,10 @@ function playSilicateThud(c: AudioContext, now: number, popped: boolean): void {
 
 /** Metal “clang”: low fundamentals + harmonic (survives bad bass roll-off better than a lone sine). */
 function playMetalThud(c: AudioContext, now: number, popped: boolean): void {
-  const tailSec = popped ? 0.22 : 0.11
-  const peak = popped ? 0.26 : 0.16
-  const f0 = popped ? 62 : 88
+  const cfg = pickThudDebug.metal
+  const tailSec = popped ? cfg.tailSecPopped : cfg.tailSecBase
+  const peak = popped ? cfg.peakPopped : cfg.peakBase
+  const f0 = popped ? cfg.f0Popped : cfg.f0Base
 
   const osc0 = c.createOscillator()
   const osc1 = c.createOscillator()
@@ -548,11 +604,11 @@ function playMetalThud(c: AudioContext, now: number, popped: boolean): void {
 
   const lp = c.createBiquadFilter()
   lp.type = 'lowpass'
-  lp.frequency.value = popped ? 420 : 620
-  lp.Q.value = 1.1
+  lp.frequency.value = popped ? cfg.lowpassHzPopped : cfg.lowpassHzBase
+  lp.Q.value = cfg.lowpassQ
 
   const gHarm = c.createGain()
-  gHarm.gain.value = popped ? 0.38 : 0.22
+  gHarm.gain.value = popped ? cfg.harmonicGainPopped : cfg.harmonicGainBase
   const g = c.createGain()
   envelopeGain(g, now, peak, tailSec, 0.004)
 
@@ -638,5 +694,15 @@ export function onMiningHitFeedbackVisualOnly(
   popped: boolean,
 ): void {
   triggerMineShake(popped)
+  triggerMineRipple(rippleEl, clientX, clientY, viewport)
+}
+
+export function onDebrisCollectFeedback(
+  clientX: number,
+  clientY: number,
+  viewport: HTMLElement,
+  rippleEl: HTMLDivElement,
+): void {
+  playDebrisCollectSound()
   triggerMineRipple(rippleEl, clientX, clientY, viewport)
 }

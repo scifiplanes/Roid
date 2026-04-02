@@ -56,13 +56,14 @@ function updateDotInstances(
 
 export interface SatelliteDotsHandle {
   group: Group
-  /** Raycast targets for Inspect-tool picking (mining laser, excavating, scanner, dross). */
+  /** Raycast targets for Inspect-tool picking (mining, excavating, scanner, dross, cargo drone). */
   pickMeshes: readonly InstancedMesh[]
   setCounts: (
     orbital: number,
     excavating: number,
     scanner: number,
     drossCollector: number,
+    cargoDrone: number,
     orbitRadius: number,
   ) => void
   tick: (timeMs: number) => void
@@ -107,6 +108,14 @@ export function createSatelliteDotsGroup(): SatelliteDotsHandle {
     roughness: 0.42,
   })
 
+  const cargoMat = new MeshStandardMaterial({
+    color: new Color(0.72, 0.38, 0.92),
+    emissive: new Color(0.28, 0.08, 0.42),
+    emissiveIntensity: 0.62,
+    metalness: 0.2,
+    roughness: 0.38,
+  })
+
   const orbitalMesh = new InstancedMesh(geo, orbitalMat, MAX_DOTS)
   orbitalMesh.name = 'orbital-satellites'
   orbitalMesh.count = 0
@@ -131,14 +140,21 @@ export function createSatelliteDotsGroup(): SatelliteDotsHandle {
   drossMesh.visible = false
   drossMesh.frustumCulled = false
 
-  group.add(orbitalMesh, excavMesh, scannerMesh, drossMesh)
+  const cargoMesh = new InstancedMesh(geo, cargoMat, MAX_DOTS)
+  cargoMesh.name = 'cargo-drone-satellites'
+  cargoMesh.count = 0
+  cargoMesh.visible = false
+  cargoMesh.frustumCulled = false
 
-  const pickMeshes: readonly InstancedMesh[] = [orbitalMesh, excavMesh, scannerMesh, drossMesh]
+  group.add(orbitalMesh, excavMesh, scannerMesh, drossMesh, cargoMesh)
+
+  const pickMeshes: readonly InstancedMesh[] = [orbitalMesh, excavMesh, scannerMesh, drossMesh, cargoMesh]
 
   let orbitalN = 0
   let excavN = 0
   let scannerN = 0
   let drossN = 0
+  let cargoN = 0
   let baseRadius = 20
 
   return {
@@ -149,17 +165,20 @@ export function createSatelliteDotsGroup(): SatelliteDotsHandle {
       excavating: number,
       scanner: number,
       drossCollector: number,
+      cargoDrone: number,
       orbitRadius: number,
     ): void {
       orbitalN = orbital
       excavN = excavating
       scannerN = scanner
       drossN = drossCollector
+      cargoN = cargoDrone
       baseRadius = orbitRadius
       updateDotInstances(orbitalMesh, orbitalN, orbitRadius, 0)
       updateDotInstances(excavMesh, excavN, orbitRadius * 1.085, Math.PI * 0.31)
       updateDotInstances(scannerMesh, scannerN, orbitRadius * 1.17, Math.PI * 0.62)
       updateDotInstances(drossMesh, drossN, orbitRadius * 1.255, Math.PI * 0.93)
+      updateDotInstances(cargoMesh, cargoN, orbitRadius * 1.34, Math.PI * 1.24)
     },
     tick(timeMs: number): void {
       const t = timeMs * 0.00012
@@ -169,6 +188,7 @@ export function createSatelliteDotsGroup(): SatelliteDotsHandle {
       updateDotInstances(excavMesh, excavN, baseRadius * 1.085, Math.PI * 0.31 + t * 0.55)
       updateDotInstances(scannerMesh, scannerN, baseRadius * 1.17, Math.PI * 0.62 + t * 0.41)
       updateDotInstances(drossMesh, drossN, baseRadius * 1.255, Math.PI * 0.93 + t * 0.33)
+      updateDotInstances(cargoMesh, cargoN, baseRadius * 1.34, Math.PI * 1.24 + t * 0.29)
     },
     dispose(): void {
       geo.dispose()
@@ -176,6 +196,7 @@ export function createSatelliteDotsGroup(): SatelliteDotsHandle {
       excavMat.dispose()
       scannerMat.dispose()
       drossMat.dispose()
+      cargoMat.dispose()
     },
   }
 }

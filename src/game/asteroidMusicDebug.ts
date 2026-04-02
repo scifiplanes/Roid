@@ -875,7 +875,7 @@ export function ensureVoiceMacroJitterFields(debug: AsteroidMusicDebug): void {
   if (typeof debug.reeseLowpassEnvDepthHz !== 'number' || !Number.isFinite(debug.reeseLowpassEnvDepthHz)) {
     debug.reeseLowpassEnvDepthHz = 3500
   } else {
-    const maxDepth = Math.max(0, busHz - debug.reeseLowpassBaseHz - 10)
+    const maxDepth = Math.max(0, nyquistGuess - debug.reeseLowpassBaseHz)
     debug.reeseLowpassEnvDepthHz = clamp(debug.reeseLowpassEnvDepthHz, 0, maxDepth)
   }
   if (typeof debug.reesePitchSlideSec !== 'number' || !Number.isFinite(debug.reesePitchSlideSec)) {
