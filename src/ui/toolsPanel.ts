@@ -178,6 +178,11 @@ export interface ToolsPanelOptions {
   onAfterRefreshToolCosts?: () => void
   /** After `patchGameBalance` from the tools dock (e.g. depth lode opacity row). */
   onGameBalancePatch?: () => void
+  /**
+   * Debug → Starting tools (new asteroid / Regenerate): when set, return false to hide and block a tool.
+   * Main passes `(t) => debugUnlockAllTools || isToolAllowedByInitialDebugConfig(t)`.
+   */
+  isToolRosterAllowed?: (tool: PlayerTool) => boolean
 }
 
 type CostToolKind =
@@ -501,11 +506,14 @@ export function createToolsPanel(
     onAfterRefreshToolCosts,
     onGameBalancePatch,
     openSeedAssemblyModal,
+    isToolRosterAllowed,
   }: ToolsPanelOptions = {},
 ): {
   getSelectedTool: () => PlayerTool
   refreshToolCosts: () => void
   setSelectedTool: (tool: PlayerTool, options?: { skipBeforeToolChange?: boolean }) => void
+  /** If the current tool was removed from the debug roster, switch to the first still-allowed tool. */
+  ensureSelectedToolRoster: () => void
 } {
   const wrap = document.createElement('div')
   wrap.className = 'tools-overlay'
@@ -855,6 +863,14 @@ export function createToolsPanel(
   }
 
   function isToolHidden(tool: PlayerTool): boolean {
+    if (isToolRosterAllowed && !isToolRosterAllowed(tool)) return true
+    // Lifter / cargo have no `costTool` row, so they skip `refreshToolCosts` research styling; hide them
+    // until cleanup tier is **fully** unlocked (not "researching" toward tier 5), same as actual use gates.
+    if (tool === 'lifter' || tool === 'cargoDrone') {
+      const ph =
+        (getDrossCollectorToolUiPhase ?? getDrossCollectorDeployUiPhase)?.() ?? 'hidden'
+      if (ph !== 'unlocked') return true
+    }
     if (getStructureToolUiPhase) {
       if (
         tool === 'reactor' ||
@@ -892,6 +908,18 @@ export function createToolsPanel(
       if (phase === 'hidden') return true
     }
     return false
+  }
+
+  function firstRosterVisibleTool(): PlayerTool {
+    for (const def of TOOLS) {
+      if (!isToolHidden(def.id)) return def.id
+    }
+    return TOOLS[0]!.id
+  }
+
+  function ensureSelectedToolRoster(): void {
+    if (!isToolHidden(selected)) return
+    setSelectedTool(firstRosterVisibleTool(), { skipBeforeToolChange: true })
   }
 
   function researchPhaseForTool(
@@ -1407,6 +1435,13 @@ export function createToolsPanel(
     }
 
     for (const [toolId, ui] of costUi) {
+      if (isToolHidden(toolId)) {
+        clearGibberishFixedWidths(ui)
+        ui.button.hidden = true
+        ui.button.removeAttribute('aria-disabled')
+        ui.button.disabled = true
+        continue
+      }
       const phase = researchPhaseForTool(toolId, ui)
       if (phase !== null) {
         if (phase === 'hidden') {
@@ -1458,7 +1493,7 @@ export function createToolsPanel(
     syncDepthLodeOpacityRow()
 
     if (isToolHidden(selected)) {
-      setSelectedTool('pick', { skipBeforeToolChange: true })
+      setSelectedTool(firstRosterVisibleTool(), { skipBeforeToolChange: true })
     }
     syncSelectedToolCostLine()
     syncToolFilterRow()
@@ -1494,17 +1529,9 @@ export function createToolsPanel(
 
   function syncToolFilterRow(): void {
     for (const [toolId, btn] of buttons) {
-      if (btn.disabled && btn.hidden) continue
       const byFilter = toolMatchesActiveFilter(toolId)
-      // Do not override hidden state that comes from unlock logic; only further hide based on filter.
-      if (!byFilter) {
-        btn.hidden = true
-      } else {
-        // Only show if not already hidden due to unlock rules.
-        if (!isToolHidden(toolId)) {
-          btn.hidden = false
-        }
-      }
+      // Tools without a `costTool` never pass through `refreshToolCosts`; filter + unlock roster must set hidden here.
+      btn.hidden = !byFilter || isToolHidden(toolId)
     }
   }
 
@@ -1681,5 +1708,6 @@ export function createToolsPanel(
     getSelectedTool: () => selected,
     refreshToolCosts,
     setSelectedTool,
+    ensureSelectedToolRoster,
   }
 }

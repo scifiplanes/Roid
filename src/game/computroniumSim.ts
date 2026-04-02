@@ -50,13 +50,17 @@ export interface InitialToolDebugConfig {
   scourge: boolean
   locust: boolean
   miningDrone: boolean
+  /** Tier 5: PM flight tool (same research ladder as cleanup). */
+  lifter: boolean
+  /** Tier 5: cargo satellite fleet + PM → roots (same research ladder as cleanup). */
+  cargoDrone: boolean
   emCatapult: boolean
 }
 
 let debugInitialToolConfig: InitialToolDebugConfig = {
-  pick: false,
-  inspect: false,
-  hoover: false,
+  pick: true,
+  inspect: true,
+  hoover: true,
   replicator: false,
   seed: false,
   reactor: false,
@@ -73,6 +77,8 @@ let debugInitialToolConfig: InitialToolDebugConfig = {
   scourge: false,
   locust: false,
   miningDrone: false,
+  lifter: false,
+  cargoDrone: false,
   emCatapult: false,
 }
 
@@ -82,6 +88,11 @@ export function getDebugInitialToolConfig(): InitialToolDebugConfig {
 
 export function setDebugInitialToolConfig(next: InitialToolDebugConfig): void {
   debugInitialToolConfig = { ...next }
+}
+
+/** Debug → Starting tools: unchecked = tool hidden / not selectable (unless main’s unlock-all cheat is on). */
+export function isToolAllowedByInitialDebugConfig(tool: keyof InitialToolDebugConfig): boolean {
+  return debugInitialToolConfig[tool] === true
 }
 
 export function applyInitialToolDebugConfigToResearch(
@@ -98,7 +109,14 @@ export function applyInitialToolDebugConfigToResearch(
   if (cfg.excavatingLaser) tier = Math.max(tier ?? 2, 2) as 1 | 2 | 3 | 4 | 5 | 6
   if (cfg.scanner) tier = Math.max(tier ?? 3, 3) as 1 | 2 | 3 | 4 | 5 | 6
   if (cfg.depthScanner) tier = Math.max(tier ?? 4, 4) as 1 | 2 | 3 | 4 | 5 | 6
-  if (cfg.drossCollector || cfg.scourge || cfg.locust || cfg.miningDrone) {
+  if (
+    cfg.drossCollector ||
+    cfg.scourge ||
+    cfg.locust ||
+    cfg.miningDrone ||
+    cfg.lifter ||
+    cfg.cargoDrone
+  ) {
     tier = Math.max(tier ?? 5, 5) as 1 | 2 | 3 | 4 | 5 | 6
   }
   if (cfg.emCatapult) tier = Math.max(tier ?? 6, 6) as 1 | 2 | 3 | 4 | 5 | 6

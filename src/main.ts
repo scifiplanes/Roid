@@ -63,6 +63,7 @@ import {
   matterHudRootEntries,
   REFINED_MATERIAL_IDS_FOR_SCAN,
   RESOURCE_DEFS,
+  RESOURCE_IDS_ORDERED,
   ROOT_RESOURCE_IDS,
   type ResourceId,
   type RootResourceId,
@@ -84,6 +85,8 @@ import {
 import {
   applyInitialToolDebugConfigToResearch,
   countActiveComputronium,
+  getDebugInitialToolConfig,
+  isToolAllowedByInitialDebugConfig,
   getDepthScanToolUiPhase,
   getDrossCollectorDeployUiPhase,
   getEmCatapultToolUiPhase,
@@ -626,6 +629,7 @@ function depthOverlayViewChanged(): boolean {
 }
 
 const resourceTallies = createEmptyResourceTallies()
+const resourceTalliesFloatBaseline = createEmptyResourceTallies()
 const resourceTalliesBySource: ResourceTalliesBySource = createEmptyResourceTalliesBySource(
   createEmptyResourceTallies,
 )
@@ -692,6 +696,10 @@ discoveryPendingLayer.append(discoveryPendingSvg, discoveryPendingChips)
 const matterHud = document.createElement('div')
 matterHud.id = 'matter-hud'
 
+const matterHudGainLayer = document.createElement('div')
+matterHudGainLayer.className = 'matter-hud-gain-layer'
+matterHudGainLayer.setAttribute('aria-hidden', 'true')
+
 const pendingDiscoveries: DiscoveryOffer[] = []
 /** Filled in `syncDiscoveryHud` for O(1) lookup in `updateDiscoveryPendingAnchors`. */
 const discoveryPendingDomById = new Map<string, { wrap: HTMLElement; line: SVGLineElement }>()
@@ -717,7 +725,7 @@ matterHudMinBtn.addEventListener('click', (e) => {
   schedulePersistSettingsClient()
 })
 
-matterHudShell.append(matterHudMinBtn, matterHud)
+matterHudShell.append(matterHudMinBtn, matterHudGainLayer, matterHud)
 matterHudWrap.append(matterHudShell)
 viewport.appendChild(matterHudWrap)
 viewport.appendChild(discoveryPendingLayer)
@@ -966,6 +974,38 @@ function spawnDebrisPickupFloat(
   wrap.addEventListener('animationend', onEnd)
 }
 
+function syncMatterHudResourceGainFloats(): void {
+  const entries: { id: ResourceId; n: number }[] = []
+  for (const id of RESOURCE_IDS_ORDERED) {
+    const curr = resourceTallies[id] ?? 0
+    const prev = resourceTalliesFloatBaseline[id] ?? 0
+    const d = curr - prev
+    if (d > 0) entries.push({ id, n: d })
+  }
+  for (const id of RESOURCE_IDS_ORDERED) {
+    resourceTalliesFloatBaseline[id] = resourceTallies[id] ?? 0
+  }
+  if (entries.length === 0) return
+  const wrap = document.createElement('div')
+  wrap.className = 'matter-hud-gain-float'
+  wrap.setAttribute('aria-hidden', 'true')
+  for (let i = 0; i < entries.length; i++) {
+    const { id, n } = entries[i]!
+    const span = document.createElement('span')
+    span.className = 'matter-hud-gain-float-res'
+    span.style.color = resourceHudCssColorForId(id)
+    span.textContent = `${RESOURCE_DEFS[id].hudAbbrev} +${n}`
+    wrap.appendChild(span)
+    if (i < entries.length - 1) wrap.appendChild(document.createTextNode(', '))
+  }
+  matterHudGainLayer.appendChild(wrap)
+  const onEnd = (): void => {
+    wrap.removeEventListener('animationend', onEnd)
+    wrap.remove()
+  }
+  wrap.addEventListener('animationend', onEnd)
+}
+
 function appendMatterHudColoredResourceLine(
   frag: DocumentFragment,
   entries: readonly { id: ResourceId; n: number }[],
@@ -983,6 +1023,7 @@ function appendMatterHudColoredResourceLine(
 }
 
 function setResourceHud(): void {
+  syncMatterHudResourceGainFloats()
   const cap = computeEnergyCap(voxelCells, debugEnergyCapBonus)
   const frag = document.createDocumentFragment()
   appendMatterHudPlainLine(frag, formatCoreAssetFingerprint(currentAsset))
@@ -1098,6 +1139,7 @@ function resetEconomyAndDrossForNewRockBody(): void {
   resetReplicatorSimAccumulators()
   replicatorKillswitchEngaged = false
   Object.assign(resourceTallies, createEmptyResourceTallies())
+  Object.assign(resourceTalliesFloatBaseline, createEmptyResourceTallies())
   lastScanRefinedPreviewLine = null
   lastInspectHudLines = null
   debugEnergyCapBonus = 0
@@ -1112,6 +1154,9 @@ function resetEconomyAndDrossForNewRockBody(): void {
 }
 
 function resetAllResearchAndUnlocksForRegenerate(): void {
+  scourgeUnlocked = false
+  locustUnlocked = false
+  miningDroneUnlocked = false
   orbitalLaserUnlocked = false
   excavatingLaserUnlocked = false
   orbitalSatelliteCount = 0
@@ -1153,6 +1198,14 @@ function resetAllResearchAndUnlocksForRegenerate(): void {
   scannerSatelliteCount = laserUnlockApply.scannerSatelliteCount
   drossCollectorSatelliteCount = laserUnlockApply.drossCollectorSatelliteCount
   cargoDroneSatelliteCount = laserUnlockApply.cargoDroneSatelliteCount
+
+  const initialTools = getDebugInitialToolConfig()
+  if (drossCollectorUnlocked) {
+    scourgeUnlocked = initialTools.scourge
+    locustUnlocked = initialTools.locust
+    miningDroneUnlocked = initialTools.miningDrone
+  }
+
   selectedRefineryRoot = defaultRefineryRecipeSelection((r) =>
     isRefineryRecipeUnlocked(
       r,
@@ -1172,7 +1225,7 @@ function finalizeNewAsteroidPresentation(options: { zeroSatelliteDots: boolean }
   applySunFromState()
   randomizeAsteroidOrientation()
   replaceAsteroidMesh(voxelCells)
-  setSelectedTool('pick', { skipBeforeToolChange: true })
+  ensureSelectedToolRosterFromPanel()
   satelliteInspectModal.hide()
   if (options.zeroSatelliteDots) {
     satelliteDots.setCounts(0, 0, 0, 0, 0, orbitVisualRadius)
@@ -1206,8 +1259,6 @@ function emCatapultToNewAsteroid(): void {
   clampRefinerySelection()
   finalizeNewAsteroidPresentation({ zeroSatelliteDots: false })
 }
-
-let setSelectedTool: (tool: PlayerTool, options?: { skipBeforeToolChange?: boolean }) => void = () => {}
 
 let orbitalLaserUnlocked = false
 let excavatingLaserUnlocked = false
@@ -1410,6 +1461,7 @@ function decommissionSatelliteByKind(kind: SatelliteInspectKind, count: number =
 }
 
 function beforeToolChange(_from: PlayerTool, to: PlayerTool): boolean {
+  if (!debugUnlockAllTools && !isToolAllowedByInitialDebugConfig(to)) return false
   if (to === 'drossCollector') return true
   if (to === 'emCatapult') return canSelectEmCatapultTool()
   if (to === 'lifter') return debugUnlockAllTools || drossCollectorUnlocked
@@ -1509,6 +1561,9 @@ const gameStartTipsModal = createGameStartTipsModal(app, {
     saveGameStartTipsDismissed(true)
   },
 })
+
+/** Wired after `createToolsPanel` so Debug → Starting tools checkboxes refresh the dock immediately. */
+let onDebugInitialToolConfigChange: () => void = () => {}
 
 const { syncSunRotationSpeed, syncLightAngleSliders } = createSettingsMenu(app, {
   getReplicatorTransformDebugLines: () => {
@@ -1626,6 +1681,7 @@ const { syncSunRotationSpeed, syncLightAngleSliders } = createSettingsMenu(app, 
     invalidateRockTintCaches()
     reapplyAllRockColorsNoLaser()
   },
+  onDebugInitialToolConfigChange: () => onDebugInitialToolConfigChange(),
 })
 syncSunRotationSpeedUi = syncSunRotationSpeed
 
@@ -1678,9 +1734,10 @@ const refineryRecipesModal = createRefineryRecipesModal(app, {
 const {
   getSelectedTool,
   refreshToolCosts: refreshCosts,
-  setSelectedTool: setSelectedToolFromPanel,
+  ensureSelectedToolRoster: ensureSelectedToolRosterFromPanel,
 } = createToolsPanel(app, {
   beforeToolChange,
+  isToolRosterAllowed: (tool) => debugUnlockAllTools || isToolAllowedByInitialDebugConfig(tool),
   onToolChange(tool) {
     if (tool !== 'inspect') {
       lastInspectHudLines = null
@@ -1894,7 +1951,9 @@ const {
   })(),
 })
 refreshToolCosts = refreshCosts
-setSelectedTool = setSelectedToolFromPanel
+onDebugInitialToolConfigChange = () => {
+  refreshCosts()
+}
 
 function projectDiscoveryFoundAt(pos: VoxelPos) {
   return projectVoxelPosToClient(

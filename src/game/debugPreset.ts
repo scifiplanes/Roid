@@ -5,17 +5,23 @@ import {
   TOOLS_BAR_COLLAPSED_STORAGE_KEY,
 } from '../ui/uiLayoutPrefs'
 import { AUDIO_MASTER_DEBUG_STORAGE_KEY } from './audioMasterPersist'
+import { COLOR_SCHEME_STORAGE_KEY } from './colorSchemePrefs'
 import { DEBUG_PROJECT_AUTOSAVE_KEY } from './debugProjectAutosave'
 import { DISCOVERY_AUTO_RESOLVE_STORAGE_KEY } from './discoveryUiPrefs'
+import { FONT_STORAGE_KEY } from './fontPrefs'
 import { BALANCE_AUTO_SAVE_FILE_KEY, LOCAL_STORAGE_KEY } from './gameBalance'
 import {
   ASTEROID_MUSIC_LOCAL_STORAGE_KEY,
   MUSIC_AUTO_SAVE_FILE_KEY,
 } from './asteroidMusicPersist'
 import { MUSIC_VOLUME_STORAGE_KEY } from './musicVolume'
+import { PICK_THUD_DEBUG_STORAGE_KEY } from './pickThudPersist'
 import { OVERLAY_VISUALIZATION_STORAGE_KEY } from './overlayVisualizationPrefs'
 import { SCAN_VISUALIZATION_DEBUG_STORAGE_KEY } from './scanVisualizationPersist'
 import { SUN_LIGHT_ANGLES_STORAGE_KEY, SUN_LIGHT_DEBUG_STORAGE_KEY } from './settingsClientPersist'
+
+/** Debug subsection text filter; persisted per browser. */
+export const DEBUG_FILTER_STORAGE_KEY = 'roid:debugFilterQuery'
 
 /** Snapshot of browser-only debug/settings keys for sharing across machines or repos. */
 export const DEBUG_PRESET_VERSION = 1 as const
@@ -37,6 +43,10 @@ const PRESET_KEYS: readonly string[] = [
   OVERLAY_LEGEND_COLLAPSED_STORAGE_KEY,
   MATTER_HUD_COLLAPSED_STORAGE_KEY,
   MATTER_HUD_COMPACT_STORAGE_KEY,
+  COLOR_SCHEME_STORAGE_KEY,
+  FONT_STORAGE_KEY,
+  PICK_THUD_DEBUG_STORAGE_KEY,
+  DEBUG_FILTER_STORAGE_KEY,
 ]
 
 const presetKeySet = new Set(PRESET_KEYS)

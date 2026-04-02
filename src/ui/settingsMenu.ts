@@ -39,6 +39,7 @@ import { pickThudDebug } from '../game/pickThudDebug'
 import { schedulePersistPickThudDebug } from '../game/pickThudPersist'
 import {
   applyDebugPresetFromJsonString,
+  DEBUG_FILTER_STORAGE_KEY,
   exportDebugPresetJson,
 } from '../game/debugPreset'
 import {
@@ -99,6 +100,8 @@ export interface SettingsMenuOptions {
   onAudioMasterDebugChange?: () => void
   /** Live lines for in-progress replicator → structure timers (Debug panel). */
   getReplicatorTransformDebugLines?: () => string[]
+  /** After toggling Debug → Starting tools checkboxes; main refreshes the tools dock. */
+  onDebugInitialToolConfigChange?: () => void
 }
 
 export interface SettingsLightControlsApi {
@@ -119,8 +122,6 @@ type SliderRow = {
   /** Decimal places for the value readout (default 2). */
   valueDecimals?: number
 }
-
-const DEBUG_FILTER_STORAGE_KEY = 'roid:debugFilterQuery'
 
 const GAMEPLAY_BALANCE_SLIDERS: SliderRow[] = [
   { key: 'durabilityMult', label: 'Rock durability', min: 0.1, max: 4, step: 0.05 },
@@ -833,6 +834,7 @@ export function createSettingsMenu(
     audioMasterDebug,
     onAudioMasterDebugChange,
     getReplicatorTransformDebugLines,
+    onDebugInitialToolConfigChange,
   }: SettingsMenuOptions,
 ): SettingsLightControlsApi {
   const overlay = document.createElement('div')
@@ -1820,6 +1822,7 @@ export function createSettingsMenu(
       const cfg = getDebugInitialToolConfig()
       const nextCfg = setChecked(cfg, input.checked)
       setDebugInitialToolConfig(nextCfg)
+      onDebugInitialToolConfigChange?.()
     })
     parent.appendChild(row)
   }
@@ -1956,6 +1959,20 @@ export function createSettingsMenu(
     'settings-initial-tool-mining-drone',
     (cfg) => cfg.miningDrone,
     (cfg, value) => ({ ...cfg, miningDrone: value }),
+  )
+  appendToolCheckboxRow(
+    sectionGameBalance,
+    'Lifter (LF, tier 5) available',
+    'settings-initial-tool-lifter',
+    (cfg) => cfg.lifter,
+    (cfg, value) => ({ ...cfg, lifter: value }),
+  )
+  appendToolCheckboxRow(
+    sectionGameBalance,
+    'Cargo drone (CD, tier 5) available',
+    'settings-initial-tool-cargo-drone',
+    (cfg) => cfg.cargoDrone,
+    (cfg, value) => ({ ...cfg, cargoDrone: value }),
   )
   appendToolCheckboxRow(
     sectionGameBalance,
