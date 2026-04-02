@@ -6,6 +6,7 @@ import {
 } from './convertRockToProcessedMatter'
 import { clearReplicatorTransformState } from './energyAndStructures'
 import type { GameBalance } from './gameBalance'
+import { voxelHasCompositionIntel } from './inspectVoxel'
 import { clearDepthRevealState, clearSurfaceScanTint } from './scanVisualization'
 import { hpForVoxelKind, type VoxelCell } from './voxelState'
 
@@ -28,6 +29,68 @@ function buildPosIndex(cells: VoxelCell[]): Map<string, VoxelCell> {
     m.set(posKey(c.pos), c)
   }
   return m
+}
+
+function manhattan(a: VoxelPos, b: VoxelPos): number {
+  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y) + Math.abs(a.z - b.z)
+}
+
+function shuffleInPlace<T>(arr: T[]): void {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    const t = arr[i]!
+    arr[i] = arr[j]!
+    arr[j] = t
+  }
+}
+
+/** Rock cells at minimum Manhattan distance from `drone`, excluding `claimedTargets`. */
+function pickNearestRockTeleportTarget(
+  droneCell: VoxelCell,
+  cells: VoxelCell[],
+  claimedTargets: Set<string>,
+): VoxelCell | null {
+  let bestDist = Infinity
+  const atBest: VoxelCell[] = []
+  for (const c of cells) {
+    if (!ROCK_LITHOLOGY_KINDS.has(c.kind)) continue
+    const key = posKey(c.pos)
+    if (claimedTargets.has(key)) continue
+    const d = manhattan(droneCell.pos, c.pos)
+    if (d < bestDist) {
+      bestDist = d
+      atBest.length = 0
+      atBest.push(c)
+    } else if (d === bestDist) {
+      atBest.push(c)
+    }
+  }
+  if (atBest.length === 0) return null
+  return atBest[Math.floor(Math.random() * atBest.length)]!
+}
+
+function applyMiningDroneMove(
+  droneCell: VoxelCell,
+  pick: VoxelCell,
+  pmOptions: ConvertRockToPmOptions,
+): void {
+  const legible = voxelHasCompositionIntel(pick)
+  convertCellToProcessedMatterFromRockSnapshot(
+    droneCell,
+    legible
+      ? {
+          kind: pick.kind,
+          bulkComposition: pick.bulkComposition,
+          rareLodeStrength01: pick.rareLodeStrength01,
+        }
+      : {
+          kind: pick.kind,
+          bulkComposition: undefined,
+          rareLodeStrength01: undefined,
+        },
+    legible ? pmOptions : { ...pmOptions, onDiscovery: () => {} },
+  )
+  initMiningDroneCell(pick)
 }
 
 /**
@@ -79,12 +142,15 @@ export function stepMiningDrones(cells: VoxelCell[], options: StepMiningDronesOp
   let maxMoves = Math.max(0, Math.floor(balance.miningDroneMaxMovesPerTick))
   if (maxMoves <= 0) return false
 
-  const index = buildPosIndex(cells)
   const claimedTargets = new Set<string>()
   let changed = false
 
-  for (const droneCell of cells) {
-    if (droneCell.kind !== 'miningDrone') continue
+  const drones = cells.filter((c) => c.kind === 'miningDrone')
+  shuffleInPlace(drones)
+  const index = buildPosIndex(cells)
+
+  for (const droneCell of drones) {
+    if (!cells.includes(droneCell) || droneCell.kind !== 'miningDrone') continue
     if (maxMoves <= 0) break
 
     const candidates: VoxelCell[] = []
@@ -96,26 +162,21 @@ export function stepMiningDrones(cells: VoxelCell[], options: StepMiningDronesOp
       if (claimedTargets.has(key)) continue
       candidates.push(n)
     }
-    if (candidates.length === 0) continue
 
-    const pick = candidates[Math.floor(Math.random() * candidates.length)]!
+    let pick: VoxelCell | null =
+      candidates.length > 0 ? candidates[Math.floor(Math.random() * candidates.length)]! : null
+    if (pick === null) {
+      pick = pickNearestRockTeleportTarget(droneCell, cells, claimedTargets)
+    }
+    if (pick === null) continue
+
     const tKey = posKey(pick.pos)
     if (claimedTargets.has(tKey)) continue
     if (!ROCK_LITHOLOGY_KINDS.has(pick.kind)) continue
 
     claimedTargets.add(tKey)
 
-    convertCellToProcessedMatterFromRockSnapshot(
-      droneCell,
-      {
-        kind: pick.kind,
-        bulkComposition: pick.bulkComposition,
-        rareLodeStrength01: pick.rareLodeStrength01,
-      },
-      pmOptions,
-    )
-
-    initMiningDroneCell(pick)
+    applyMiningDroneMove(droneCell, pick, pmOptions)
     maxMoves -= 1
     changed = true
   }

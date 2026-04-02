@@ -162,7 +162,7 @@ import {
 } from './game/clickFeedback'
 import { gameBalance, initGameBalanceFromPersisted } from './game/gameBalance'
 import { perfMark, perfMeasure } from './game/perfMarks'
-import { applySfxReverbFromBalance } from './game/sfxReverbBus'
+import { applySfxReverbFromBalance, applySfxVolumeLinear } from './game/sfxReverbBus'
 import persistedSnapshot from './game/gameBalance.persisted.json' with { type: 'json' }
 import musicDebugSnapshot from './game/asteroidMusicDebug.persisted.json' with { type: 'json' }
 import settingsClientSnapshot from './game/settingsClient.persisted.json' with { type: 'json' }
@@ -179,6 +179,7 @@ import {
   createAsteroidAmbientMusic,
 } from './game/asteroidAmbientMusic'
 import { loadMusicVolumeLinear, saveMusicVolumeLinear } from './game/musicVolume'
+import { loadSfxVolumeLinear, saveSfxVolumeLinear } from './game/sfxVolume'
 import {
   loadOverlayVisualizationPrefs,
   saveOverlayVisualizationPrefs,
@@ -291,6 +292,8 @@ initGameBalanceFromPersisted(persistedSnapshot)
 seedSettingsClientLocalStorageFromBundleIfMissing(settingsClientSnapshot)
 
 let musicVolumeLinear = loadMusicVolumeLinear()
+let sfxVolumeLinear = loadSfxVolumeLinear()
+applySfxVolumeLinear(sfxVolumeLinear)
 const asteroidMusicDebug = createDefaultAsteroidMusicDebug()
 const sunLightDebug = createDefaultSunLightDebug()
 Object.assign(sunLightDebug, loadSunLightDebugPartialFromLocalStorage())
@@ -794,6 +797,7 @@ registerSettingsClientSnapshot(() => ({
   depthOverlayVisible,
   discoveryAutoResolve,
   musicVolumeLinear,
+  sfxVolumeLinear,
   matterHudCollapsed,
   matterHudCompact,
   colorScheme,
@@ -1647,6 +1651,13 @@ const { syncSunRotationSpeed, syncLightAngleSliders } = createSettingsMenu(app, 
     musicVolumeLinear = linear
     saveMusicVolumeLinear(linear)
     asteroidAmbientMusic.tryEnsureGraph()
+    schedulePersistSettingsClient()
+  },
+  initialSfxVolumeLinear: sfxVolumeLinear,
+  onSfxVolumeChange: (linear: number) => {
+    sfxVolumeLinear = linear
+    saveSfxVolumeLinear(linear)
+    applySfxVolumeLinear(linear)
     schedulePersistSettingsClient()
   },
   onDebugAddResources: () => {

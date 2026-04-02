@@ -3,6 +3,7 @@ import { createDefaultAudioMasterDebug } from './audioMasterDebug'
 import { AUDIO_MASTER_DEBUG_STORAGE_KEY } from './audioMasterPersist'
 import { DISCOVERY_AUTO_RESOLVE_STORAGE_KEY } from './discoveryUiPrefs'
 import { MUSIC_VOLUME_STORAGE_KEY } from './musicVolume'
+import { SFX_VOLUME_STORAGE_KEY } from './sfxVolume'
 import { OVERLAY_VISUALIZATION_STORAGE_KEY } from './overlayVisualizationPrefs'
 import { SCAN_VISUALIZATION_DEBUG_STORAGE_KEY } from './scanVisualizationPersist'
 import type { ScanVisualizationDebug } from './scanVisualizationDebug'
@@ -49,6 +50,7 @@ export interface SettingsClientPersistedV1 {
   }
   discoveryAutoResolve?: boolean
   musicVolumeLinear?: number
+  sfxVolumeLinear?: number
   toolsBarCollapsed?: boolean
   overlayLegendCollapsed?: boolean
   matterHudCollapsed?: boolean
@@ -67,6 +69,7 @@ export interface SettingsClientRuntimeSnapshot {
   depthOverlayVisible: boolean
   discoveryAutoResolve: boolean
   musicVolumeLinear: number
+  sfxVolumeLinear: number
   matterHudCollapsed: boolean
   matterHudCompact: boolean
   colorScheme: ColorSchemeId
@@ -93,6 +96,7 @@ export function buildSettingsClientPayload(s: SettingsClientRuntimeSnapshot): Se
     },
     discoveryAutoResolve: s.discoveryAutoResolve,
     musicVolumeLinear: s.musicVolumeLinear,
+    sfxVolumeLinear: s.sfxVolumeLinear,
     toolsBarCollapsed: loadToolsBarCollapsed(),
     overlayLegendCollapsed: loadOverlayLegendCollapsed(),
     matterHudCollapsed: s.matterHudCollapsed,
@@ -271,6 +275,11 @@ export function seedSettingsClientLocalStorageFromBundleIfMissing(imported: unkn
   const vol = imported.musicVolumeLinear
   if (typeof vol === 'number' && Number.isFinite(vol)) {
     seedStringIfAbsent(MUSIC_VOLUME_STORAGE_KEY, String(Math.min(1, Math.max(0, vol))))
+  }
+
+  const sfxVol = imported.sfxVolumeLinear
+  if (typeof sfxVol === 'number' && Number.isFinite(sfxVol)) {
+    seedStringIfAbsent(SFX_VOLUME_STORAGE_KEY, String(Math.min(1, Math.max(0, sfxVol))))
   }
 
   const tbc = imported.toolsBarCollapsed

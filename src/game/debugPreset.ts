@@ -15,6 +15,7 @@ import {
   MUSIC_AUTO_SAVE_FILE_KEY,
 } from './asteroidMusicPersist'
 import { MUSIC_VOLUME_STORAGE_KEY } from './musicVolume'
+import { SFX_VOLUME_STORAGE_KEY } from './sfxVolume'
 import { PICK_THUD_DEBUG_STORAGE_KEY } from './pickThudPersist'
 import { OVERLAY_VISUALIZATION_STORAGE_KEY } from './overlayVisualizationPrefs'
 import { SCAN_VISUALIZATION_DEBUG_STORAGE_KEY } from './scanVisualizationPersist'
@@ -39,6 +40,7 @@ const PRESET_KEYS: readonly string[] = [
   OVERLAY_VISUALIZATION_STORAGE_KEY,
   DISCOVERY_AUTO_RESOLVE_STORAGE_KEY,
   MUSIC_VOLUME_STORAGE_KEY,
+  SFX_VOLUME_STORAGE_KEY,
   TOOLS_BAR_COLLAPSED_STORAGE_KEY,
   OVERLAY_LEGEND_COLLAPSED_STORAGE_KEY,
   MATTER_HUD_COLLAPSED_STORAGE_KEY,

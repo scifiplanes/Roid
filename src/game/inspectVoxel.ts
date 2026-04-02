@@ -39,7 +39,9 @@ function pushStructureNotes(lines: string[], cell: VoxelCell, nowMs: number): vo
     lines.push(cell.computroniumDisabled === true ? 'Computronium: off' : 'Computronium: on')
   }
   if (kind === 'miningDrone') {
-    lines.push('Mining drone: steps into random neighbor rock; previous cell becomes processed matter')
+    lines.push(
+      'Mining drone: steps into random neighbor rock; leaves processed matter behind each step; entering scanned rock uses full composition (orbital-laser path); entering unscanned rock leaves generic PM (no discovery) so lifter/cargo still apply',
+    )
   }
   if (kind === 'replicator') {
     const target = cell.replicatorTransformTarget

@@ -398,7 +398,7 @@ const TOOLS: ReadonlyArray<{
     fKey: 'F18',
     label: 'Mining drone',
     title:
-      'Place a mining drone on rock. Each step it moves into a random neighboring rock voxel, leaving processed matter behind (tier 5 computronium research, same as Scourge/Locust).',
+      'Place a mining drone on rock. Each step it moves into a random neighboring rock voxel and leaves processed matter behind; scanned targets use full rock composition; unscanned targets leave generic PM (tier 5 computronium research, same as Scourge/Locust).',
     short: 'Rock → drone; travels → PM trail',
     costTool: 'miningDroneInfo',
   },

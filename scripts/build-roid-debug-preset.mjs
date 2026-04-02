@@ -208,6 +208,9 @@ if (typeof client.discoveryAutoResolve === 'boolean') {
 if (typeof client.musicVolumeLinear === 'number' && Number.isFinite(client.musicVolumeLinear)) {
   entries['roid:musicVolume'] = String(Math.min(1, Math.max(0, client.musicVolumeLinear)))
 }
+if (typeof client.sfxVolumeLinear === 'number' && Number.isFinite(client.sfxVolumeLinear)) {
+  entries['roid:sfxVolume'] = String(Math.min(1, Math.max(0, client.sfxVolumeLinear)))
+}
 if (typeof client.toolsBarCollapsed === 'boolean') {
   entries['roid:toolsBarCollapsed'] = JSON.stringify(client.toolsBarCollapsed)
 }

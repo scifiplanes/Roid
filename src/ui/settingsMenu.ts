@@ -77,6 +77,8 @@ export interface SettingsMenuOptions {
   onAsteroidMusicDebugChange?: () => void
   initialMusicVolumeLinear: number
   onMusicVolumeChange: (linear: number) => void
+  initialSfxVolumeLinear: number
+  onSfxVolumeChange: (linear: number) => void
   /** When true, new discoveries open the modal immediately; when false, queue as HUD icons (persisted). */
   initialDiscoveryAutoResolve?: boolean
   onDiscoveryAutoResolveChange?: (value: boolean) => void
@@ -818,6 +820,8 @@ export function createSettingsMenu(
     onAsteroidMusicDebugChange,
     initialMusicVolumeLinear,
     onMusicVolumeChange,
+    initialSfxVolumeLinear,
+    onSfxVolumeChange,
     initialDiscoveryAutoResolve = false,
     onDiscoveryAutoResolveChange,
     initialMatterHudCompact = true,
@@ -930,6 +934,30 @@ export function createSettingsMenu(
     onMusicVolumeChange(Number(musicVolInput.value) / 100)
   })
   musicVolRow.append(musicVolLabel, musicVolInput, musicVolValue)
+
+  const sfxVolRow = document.createElement('div')
+  sfxVolRow.className = 'settings-row'
+  const sfxVolLabel = document.createElement('label')
+  sfxVolLabel.className = 'settings-label'
+  sfxVolLabel.htmlFor = 'settings-sfx-volume'
+  sfxVolLabel.textContent = 'Sound effects volume'
+  const sfxVolInput = document.createElement('input')
+  sfxVolInput.id = 'settings-sfx-volume'
+  sfxVolInput.type = 'range'
+  sfxVolInput.min = '0'
+  sfxVolInput.max = '100'
+  sfxVolInput.step = '1'
+  sfxVolInput.value = String(
+    Math.round(Math.min(1, Math.max(0, initialSfxVolumeLinear)) * 100),
+  )
+  const sfxVolValue = document.createElement('span')
+  sfxVolValue.className = 'settings-value'
+  sfxVolValue.textContent = `${sfxVolInput.value}%`
+  sfxVolInput.addEventListener('input', () => {
+    sfxVolValue.textContent = `${sfxVolInput.value}%`
+    onSfxVolumeChange(Number(sfxVolInput.value) / 100)
+  })
+  sfxVolRow.append(sfxVolLabel, sfxVolInput, sfxVolValue)
 
   const discoveryAutoResolveRow = document.createElement('div')
   discoveryAutoResolveRow.className = 'settings-row'
@@ -4765,6 +4793,7 @@ export function createSettingsMenu(
     azRow,
     elRow,
     musicVolRow,
+    sfxVolRow,
     discoveryAutoResolveRow,
     matterHudCompactRow,
     sandboxRow,

@@ -13,6 +13,7 @@
     "roid:overlayVisualization": "{\"surfaceScanOverlayVisible\":true,\"depthOverlayVisible\":false}",
     "roid:discoveryAutoResolve": "false",
     "roid:musicVolume": "1",
+    "roid:sfxVolume": "1",
     "roid:toolsBarCollapsed": "false",
     "roid:overlayLegendCollapsed": "false",
     "roid:matterHudCollapsed": "true",

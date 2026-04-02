@@ -9,6 +9,21 @@ let wetOutGain: GainNode | null = null
 let convolverNode: ConvolverNode | null = null
 let lastIrDur = -1
 let lastIrDecay = -1
+/** User SFX level (0–1); applied to the bus input before dry/wet split. */
+let lastSfxVolumeLinear = 1
+
+/**
+ * Sets gameplay SFX loudness (lasers, taps, hoover, etc.). Safe before the bus exists.
+ */
+export function applySfxVolumeLinear(linear: number): void {
+  const v = Math.min(1, Math.max(0, linear))
+  lastSfxVolumeLinear = v
+  const c = ctxRef
+  if (!c || !busInput) return
+  const t = c.currentTime
+  busInput.gain.cancelScheduledValues(t)
+  busInput.gain.setValueAtTime(v, t)
+}
 
 /**
  * Apply `gameBalance` wet levels and rebuild convolver IR when duration/decay change.
@@ -50,7 +65,7 @@ export function getSfxBusInput(c: AudioContext): GainNode {
   const wetOut = c.createGain()
 
   const input = c.createGain()
-  input.gain.value = 1
+  input.gain.value = lastSfxVolumeLinear
   input.connect(dry)
   input.connect(wetSend)
   wetSend.connect(convolver)
