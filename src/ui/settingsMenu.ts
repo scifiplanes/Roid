@@ -39,6 +39,7 @@ import { pickThudDebug } from '../game/pickThudDebug'
 import { schedulePersistPickThudDebug } from '../game/pickThudPersist'
 import {
   applyDebugPresetFromJsonString,
+  clearLocalStorageAndReload,
   DEBUG_FILTER_STORAGE_KEY,
   exportDebugPresetJson,
 } from '../game/debugPreset'
@@ -1275,6 +1276,25 @@ export function createSettingsMenu(
   presetStatus.setAttribute('aria-live', 'polite')
   presetRow.append(presetDownloadBtn, presetCopyBtn, presetFileInput, presetFileLabel, presetStatus)
 
+  const clearStorageRow = document.createElement('div')
+  clearStorageRow.className = 'settings-row settings-debug-row settings-save-row'
+  const clearStorageBtn = document.createElement('button')
+  clearStorageBtn.type = 'button'
+  clearStorageBtn.className = 'settings-secondary'
+  clearStorageBtn.textContent = 'Clear localStorage'
+  clearStorageRow.appendChild(clearStorageBtn)
+
+  clearStorageBtn.addEventListener('click', () => {
+    if (
+      !confirm(
+        'Clear all localStorage for this site and reload? This removes saved settings, progress, and discovery log for this origin.',
+      )
+    ) {
+      return
+    }
+    clearLocalStorageAndReload()
+  })
+
   let presetStatusClear: ReturnType<typeof setTimeout> | null = null
   function flashPresetStatus(message: string): void {
     if (presetStatusClear !== null) clearTimeout(presetStatusClear)
@@ -1536,7 +1556,7 @@ export function createSettingsMenu(
     if (onDebugClearLodeDisplay) appendCheatButton('Clear lode display', onDebugClearLodeDisplay)
     sectionPersist.appendChild(cheatRow)
   }
-  sectionPersist.append(debugHint, autoSaveRow, saveAllRow, saveRow, musicSaveRow, presetRow)
+  sectionPersist.append(debugHint, autoSaveRow, saveAllRow, saveRow, musicSaveRow, presetRow, clearStorageRow)
 
   function setAzimuthSliderDisabled(disabled: boolean): void {
     azimuthInput.disabled = disabled

@@ -113,3 +113,13 @@ export function applyDebugPresetFromJsonString(json: string): { ok: true } | { o
   }
   return applyDebugPresetFromParsed(parsed)
 }
+
+/** Wipes origin `localStorage` and reloads. Caller should confirm with the user first. */
+export function clearLocalStorageAndReload(): void {
+  try {
+    localStorage.clear()
+  } catch {
+    /* quota / private mode */
+  }
+  location.reload()
+}
