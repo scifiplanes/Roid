@@ -216,9 +216,15 @@ function mergeAudioFromUnknown(p: unknown): Partial<AudioMasterDebug> {
   return out
 }
 
-function seedStringIfAbsent(key: string, value: string): void {
+export type SettingsClientBundleWriteMode = 'ifAbsent' | 'overwrite'
+
+function putLocalStorageForBundleMode(
+  mode: SettingsClientBundleWriteMode,
+  key: string,
+  value: string,
+): void {
   try {
-    if (localStorage.getItem(key) !== null) return
+    if (mode === 'ifAbsent' && localStorage.getItem(key) !== null) return
     localStorage.setItem(key, value)
   } catch {
     /* ignore */
@@ -226,16 +232,21 @@ function seedStringIfAbsent(key: string, value: string): void {
 }
 
 /**
- * First-run / fresh browser: copy bundled repo defaults into `localStorage` when a key is absent.
- * Order elsewhere remains defaults ← bundled JSON ← localStorage (local wins once set).
+ * Copy bundled `settingsClient.persisted.json` fields into `localStorage`.
+ * `ifAbsent`: first-run seed only (local wins once set).
+ * `overwrite`: replace values (used when a new production deploy applies project defaults).
  */
-export function seedSettingsClientLocalStorageFromBundleIfMissing(imported: unknown): void {
+export function writeSettingsClientBundleToLocalStorage(
+  imported: unknown,
+  mode: SettingsClientBundleWriteMode,
+): void {
   if (!isRecord(imported) || imported.v !== SETTINGS_CLIENT_PERSIST_VERSION) return
 
   const az = imported.sunAzimuthDeg
   const el = imported.sunElevationDeg
   if (typeof az === 'number' && typeof el === 'number' && Number.isFinite(az) && Number.isFinite(el)) {
-    seedStringIfAbsent(
+    putLocalStorageForBundleMode(
+      mode,
       SUN_LIGHT_ANGLES_STORAGE_KEY,
       JSON.stringify({
         azimuthDeg: clampSunAngleDeg(az),
@@ -247,25 +258,25 @@ export function seedSettingsClientLocalStorageFromBundleIfMissing(imported: unkn
   const sunDbg = mergeSunLightDebugFromUnknown(imported.sunLightDebug)
   if (Object.keys(sunDbg).length > 0) {
     const merged = { ...createStaticSunLightDebugForPersistenceMerge(), ...sunDbg }
-    seedStringIfAbsent(SUN_LIGHT_DEBUG_STORAGE_KEY, JSON.stringify(merged))
+    putLocalStorageForBundleMode(mode, SUN_LIGHT_DEBUG_STORAGE_KEY, JSON.stringify(merged))
   }
 
   const scanM = mergeScanFromUnknown(imported.scanVisualizationDebug)
   if (Object.keys(scanM).length > 0) {
     const merged = { ...createDefaultScanVisualizationDebug(), ...scanM }
-    seedStringIfAbsent(SCAN_VISUALIZATION_DEBUG_STORAGE_KEY, JSON.stringify(merged))
+    putLocalStorageForBundleMode(mode, SCAN_VISUALIZATION_DEBUG_STORAGE_KEY, JSON.stringify(merged))
   }
 
   const starTintM = mergeLocalStarTintDebugFromUnknown(imported.localStarTintDebug)
   if (Object.keys(starTintM).length > 0) {
     const merged = { ...createDefaultLocalStarTintDebug(), ...starTintM }
-    seedStringIfAbsent(LOCAL_STAR_TINT_DEBUG_STORAGE_KEY, JSON.stringify(merged))
+    putLocalStorageForBundleMode(mode, LOCAL_STAR_TINT_DEBUG_STORAGE_KEY, JSON.stringify(merged))
   }
 
   const audioM = mergeAudioFromUnknown(imported.audioMasterDebug)
   if (Object.keys(audioM).length > 0) {
     const merged = { ...createDefaultAudioMasterDebug(), ...audioM }
-    seedStringIfAbsent(AUDIO_MASTER_DEBUG_STORAGE_KEY, JSON.stringify(merged))
+    putLocalStorageForBundleMode(mode, AUDIO_MASTER_DEBUG_STORAGE_KEY, JSON.stringify(merged))
   }
 
   const ov = imported.overlayVisualization
@@ -273,7 +284,8 @@ export function seedSettingsClientLocalStorageFromBundleIfMissing(imported: unkn
     const surface = ov.surfaceScanOverlayVisible
     const depth = ov.depthOverlayVisible
     if (typeof surface === 'boolean' || typeof depth === 'boolean') {
-      seedStringIfAbsent(
+      putLocalStorageForBundleMode(
+        mode,
         OVERLAY_VISUALIZATION_STORAGE_KEY,
         JSON.stringify({
           surfaceScanOverlayVisible:
@@ -286,53 +298,61 @@ export function seedSettingsClientLocalStorageFromBundleIfMissing(imported: unkn
 
   const disc = imported.discoveryAutoResolve
   if (typeof disc === 'boolean') {
-    seedStringIfAbsent(DISCOVERY_AUTO_RESOLVE_STORAGE_KEY, JSON.stringify(disc))
+    putLocalStorageForBundleMode(mode, DISCOVERY_AUTO_RESOLVE_STORAGE_KEY, JSON.stringify(disc))
   }
 
   const vol = imported.musicVolumeLinear
   if (typeof vol === 'number' && Number.isFinite(vol)) {
-    seedStringIfAbsent(MUSIC_VOLUME_STORAGE_KEY, String(Math.min(1, Math.max(0, vol))))
+    putLocalStorageForBundleMode(mode, MUSIC_VOLUME_STORAGE_KEY, String(Math.min(1, Math.max(0, vol))))
   }
 
   const sfxVol = imported.sfxVolumeLinear
   if (typeof sfxVol === 'number' && Number.isFinite(sfxVol)) {
-    seedStringIfAbsent(SFX_VOLUME_STORAGE_KEY, String(Math.min(1, Math.max(0, sfxVol))))
+    putLocalStorageForBundleMode(mode, SFX_VOLUME_STORAGE_KEY, String(Math.min(1, Math.max(0, sfxVol))))
   }
 
   const tbc = imported.toolsBarCollapsed
   if (typeof tbc === 'boolean') {
-    seedStringIfAbsent(TOOLS_BAR_COLLAPSED_STORAGE_KEY, JSON.stringify(tbc))
+    putLocalStorageForBundleMode(mode, TOOLS_BAR_COLLAPSED_STORAGE_KEY, JSON.stringify(tbc))
   }
 
   const olc = imported.overlayLegendCollapsed
   if (typeof olc === 'boolean') {
-    seedStringIfAbsent(OVERLAY_LEGEND_COLLAPSED_STORAGE_KEY, JSON.stringify(olc))
+    putLocalStorageForBundleMode(mode, OVERLAY_LEGEND_COLLAPSED_STORAGE_KEY, JSON.stringify(olc))
   }
 
   const mhc = imported.matterHudCollapsed
   if (typeof mhc === 'boolean') {
-    seedStringIfAbsent(MATTER_HUD_COLLAPSED_STORAGE_KEY, JSON.stringify(mhc))
+    putLocalStorageForBundleMode(mode, MATTER_HUD_COLLAPSED_STORAGE_KEY, JSON.stringify(mhc))
   }
 
   const mhcomp = imported.matterHudCompact
   if (typeof mhcomp === 'boolean') {
-    seedStringIfAbsent(MATTER_HUD_COMPACT_STORAGE_KEY, JSON.stringify(mhcomp))
+    putLocalStorageForBundleMode(mode, MATTER_HUD_COMPACT_STORAGE_KEY, JSON.stringify(mhcomp))
   }
 
   const cs = imported.colorScheme
   if (isColorSchemeId(cs)) {
-    seedStringIfAbsent(COLOR_SCHEME_STORAGE_KEY, cs)
+    putLocalStorageForBundleMode(mode, COLOR_SCHEME_STORAGE_KEY, cs)
   }
 
   const font = imported.fontId
   if (isFontId(font)) {
-    seedStringIfAbsent(FONT_STORAGE_KEY, font)
+    putLocalStorageForBundleMode(mode, FONT_STORAGE_KEY, font)
   }
 
   const gsm = imported.gameSpeedMult
   if (typeof gsm === 'number' && Number.isFinite(gsm)) {
-    seedStringIfAbsent(GAME_SPEED_MULT_STORAGE_KEY, String(clampGameSpeedMult(gsm)))
+    putLocalStorageForBundleMode(mode, GAME_SPEED_MULT_STORAGE_KEY, String(clampGameSpeedMult(gsm)))
   }
+}
+
+/**
+ * First-run / fresh browser: copy bundled repo defaults into `localStorage` when a key is absent.
+ * Order elsewhere remains defaults ← bundled JSON ← localStorage (local wins once set).
+ */
+export function seedSettingsClientLocalStorageFromBundleIfMissing(imported: unknown): void {
+  writeSettingsClientBundleToLocalStorage(imported, 'ifAbsent')
 }
 
 export function cancelScheduledSettingsClientPersist(): void {

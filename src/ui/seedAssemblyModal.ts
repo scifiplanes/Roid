@@ -13,7 +13,7 @@ import { getSeedColor } from '../game/seedColors'
 /** Shown under built-in Relic preset names so the three strains read differently at a glance. */
 const RELIC_PRESET_BLURBS: Partial<Record<string, string>> = {
   'relic:locuspore': 'Reactor + hub · Burst',
-  'relic:oxweed': 'Battery + computronium · Longlife',
+  'relic:oxweed': 'Structure chain + phosphates · Longlife',
   'relic:reaperseed': 'Advanced materials · Efficient',
 }
 

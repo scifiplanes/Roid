@@ -25,12 +25,14 @@ export const REACTOR_BUILD_COST: Partial<Record<ResourceId, number>> = {
   silicates: 3,
 }
 
+/** Roots only — volatiles from crust; silicate/metal-band roots from interior (no ice-line or refined surface ices). */
 export const BATTERY_BUILD_COST: Partial<Record<ResourceId, number>> = {
-  ices: 2,
-  hydrates: 2,
   volatiles: 2,
   metals: 2,
-  surfaceIces: 1,
+  silicates: 2,
+  oxides: 2,
+  refractories: 1,
+  sulfides: 1,
 }
 
 /** Mature replicator → Hub (consolidates local network into global root tallies). */
@@ -42,8 +44,8 @@ export const HUB_BUILD_COST: Partial<Record<ResourceId, number>> = {
 }
 
 /**
- * Root commodities required across reactor + hub + battery placement (excludes refined children such as `surfaceIces`).
- * Order: reactor-critical first, then hub-only roots, then battery roots — used for default Seed stacks and audits.
+ * Root commodities required across reactor + hub + battery placement (battery is roots-only).
+ * Order: reactor-critical first, then hub-only roots, then battery-only additions — used for default Seed stacks and audits.
  */
 export const STRUCTURE_CHAIN_ROOT_IDS_ORDERED: readonly RootResourceId[] = [
   'refractories',
@@ -51,8 +53,6 @@ export const STRUCTURE_CHAIN_ROOT_IDS_ORDERED: readonly RootResourceId[] = [
   'silicates',
   'sulfides',
   'oxides',
-  'ices',
-  'hydrates',
   'volatiles',
 ] as const
 
@@ -111,14 +111,16 @@ export const DEPTH_SCANNER_BUILD_COST: Partial<Record<ResourceId, number>> = {
   magnetiteWeathering: 1,
 }
 
+/** Halide line omitted so metal-rich interiors can pay from silicate/oxide/metal refinery outputs. */
 export const COMPUTRONIUM_BUILD_COST: Partial<Record<ResourceId, number>> = {
-  phosphates: 2,
-  halides: 2,
   metals: 3,
-  silicates: 2,
+  silicates: 3,
+  oxides: 2,
+  phosphates: 2,
+  refractories: 1,
   apatiteGrains: 1,
-  haliteVeins: 1,
-  fluorideSalts: 1,
+  feldspathicSilicates: 1,
+  spinelOxides: 1,
 }
 
 /** Per-use cost to arm one explosive charge (scaled by `gameBalance.toolCostMult`). */

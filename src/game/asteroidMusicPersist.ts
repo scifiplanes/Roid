@@ -444,8 +444,8 @@ function mergeTop(p: unknown): Partial<AsteroidMusicDebug> {
   return out
 }
 
-/** Deep-assign merged state into `target` (mutate). */
-export function initAsteroidMusicDebugFromPersisted(
+/** Merge defaults ← bundled JSON only into `target` (no `localStorage`). */
+export function applyAsteroidMusicImportedFileToTarget(
   importedFile: unknown,
   target: AsteroidMusicDebug,
 ): void {
@@ -467,6 +467,21 @@ export function initAsteroidMusicDebugFromPersisted(
   } else {
     Object.assign(target, base, { voices, voiceMacros })
   }
+  if (target.voiceMacros === undefined || target.voiceMacros === null) {
+    target.voiceMacros = voiceMacrosFromVoice(target.voices[0])
+  }
+  ensureAsteroidMusicVoicesArray(target)
+  sanitizeVoiceMacrosForApply(target)
+  target.scaleClampMode = parseScaleClampMode(target.scaleClampMode, 'major')
+  target.scaleCycleDirection = parseScaleCycleDirection(target.scaleCycleDirection, 'fifths')
+}
+
+/** Deep-assign merged state into `target` (mutate). */
+export function initAsteroidMusicDebugFromPersisted(
+  importedFile: unknown,
+  target: AsteroidMusicDebug,
+): void {
+  applyAsteroidMusicImportedFileToTarget(importedFile, target)
   try {
     const raw = localStorage.getItem(ASTEROID_MUSIC_LOCAL_STORAGE_KEY)
     if (raw) {
@@ -495,6 +510,12 @@ export function initAsteroidMusicDebugFromPersisted(
   sanitizeVoiceMacrosForApply(target)
   target.scaleClampMode = parseScaleClampMode(target.scaleClampMode, 'major')
   target.scaleCycleDirection = parseScaleCycleDirection(target.scaleCycleDirection, 'fifths')
+}
+
+export function buildAsteroidMusicDebugFromBundledSnapshot(importedFile: unknown): AsteroidMusicDebug {
+  const target = createDefaultAsteroidMusicDebug()
+  applyAsteroidMusicImportedFileToTarget(importedFile, target)
+  return target
 }
 
 export function writeAsteroidMusicDebugToLocalStorage(debug: AsteroidMusicDebug): void {

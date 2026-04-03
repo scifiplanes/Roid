@@ -872,6 +872,16 @@ function mergeBalance(
   return out
 }
 
+/** Defaults merged with bundled snapshot only (no `localStorage`); for deploy-time reset. */
+export function buildGameBalanceFromBundledSnapshot(importedFile: unknown): GameBalance {
+  let next: GameBalance = { ...defaultGameBalance }
+  if (importedFile !== null && typeof importedFile === 'object') {
+    next = mergeBalance(next, importedFile as Record<string, unknown>)
+  }
+  normalizeImpactCraterPairs(next)
+  return next
+}
+
 /** Merge defaults ← bundled JSON ← localStorage (if present). */
 export function initGameBalanceFromPersisted(importedFile: unknown): void {
   let next: GameBalance = { ...defaultGameBalance }

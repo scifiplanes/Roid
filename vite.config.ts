@@ -4,6 +4,20 @@ import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const pkgPath = path.join(__dirname, 'package.json')
+const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as { version?: string }
+
+function resolveDeployId(): string {
+  const fromEnv =
+    process.env.VITE_DEPLOY_ID ||
+    process.env.VERCEL_GIT_COMMIT_SHA ||
+    process.env.CF_PAGES_COMMIT_SHA ||
+    process.env.GITHUB_SHA ||
+    process.env.CI_COMMIT_SHA
+  if (fromEnv && String(fromEnv).trim() !== '') return String(fromEnv).trim()
+  return String(pkg.version ?? '0.0.0')
+}
+
 const balancePath = path.join(__dirname, 'src/game/gameBalance.persisted.json')
 const musicDebugPath = path.join(__dirname, 'src/game/asteroidMusicDebug.persisted.json')
 const settingsClientPath = path.join(__dirname, 'src/game/settingsClient.persisted.json')
@@ -42,6 +56,9 @@ function isValidSettingsClientV1(obj: unknown): boolean {
 }
 
 export default defineConfig({
+  define: {
+    'import.meta.env.VITE_DEPLOY_ID': JSON.stringify(resolveDeployId()),
+  },
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts'],

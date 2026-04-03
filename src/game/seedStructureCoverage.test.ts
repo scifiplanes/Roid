@@ -61,18 +61,20 @@ describe('seed recipes for structure chain', () => {
 })
 
 describe('defaultSeedRecipeStackForMaxStacks', () => {
-  it('includes full structure chain for stacks >= 8', () => {
-    const full = defaultSeedRecipeStackForMaxStacks(8)
-    expect(full).toEqual([...STRUCTURE_CHAIN_ROOT_IDS_ORDERED])
+  it('returns first maxStacks roots when maxStacks is at most chain length', () => {
+    const chain = [...STRUCTURE_CHAIN_ROOT_IDS_ORDERED]
+    expect(defaultSeedRecipeStackForMaxStacks(chain.length)).toEqual(chain)
+    expect(defaultSeedRecipeStackForMaxStacks(chain.length - 1)).toEqual(chain.slice(0, chain.length - 1))
   })
 
   it('pads with regolithMass when maxStacks exceeds chain length', () => {
-    expect(defaultSeedRecipeStackForMaxStacks(9)).toEqual([...STRUCTURE_CHAIN_ROOT_IDS_ORDERED, 'regolithMass'])
-    expect(defaultSeedRecipeStackForMaxStacks(10)).toEqual([
-      ...STRUCTURE_CHAIN_ROOT_IDS_ORDERED,
-      'regolithMass',
-      'regolithMass',
-    ])
+    const chain = [...STRUCTURE_CHAIN_ROOT_IDS_ORDERED]
+    const pad = (n: number) => Array.from({ length: n }, () => 'regolithMass' as const)
+    expect(defaultSeedRecipeStackForMaxStacks(chain.length + 1)).toEqual([...chain, ...pad(1)])
+    expect(defaultSeedRecipeStackForMaxStacks(chain.length + 2)).toEqual([...chain, ...pad(2)])
+    expect(defaultSeedRecipeStackForMaxStacks(8)).toEqual([...chain, ...pad(8 - chain.length)])
+    expect(defaultSeedRecipeStackForMaxStacks(9)).toEqual([...chain, ...pad(9 - chain.length)])
+    expect(defaultSeedRecipeStackForMaxStacks(10)).toEqual([...chain, ...pad(10 - chain.length)])
   })
 
   it('matches SEED_DEFS defaultRecipeStack for each seed type', () => {

@@ -283,7 +283,7 @@ import {
   resumeAudioContextSync,
   setAudioSessionPlayback,
 } from './game/audioContext'
-import { autoLoadBundledDebugPreset } from './game/autoLoadDebugPreset'
+import { maybeApplyBundledProjectDefaultsOnProductionStartup } from './game/applyBundledDefaultsOnNewDeploy'
 import {
   loadSunAnglesFromLocalStorage,
   loadSunLightDebugPartialFromLocalStorage,
@@ -312,7 +312,11 @@ import { createEmptyResourceTalliesBySource, type ResourceTalliesBySource } from
 import type { CoreAsset } from './game/coreAssets'
 import { deriveWreckProfile } from './game/wreckGenProfile'
 
-await autoLoadBundledDebugPreset()
+maybeApplyBundledProjectDefaultsOnProductionStartup(
+  persistedSnapshot,
+  musicDebugSnapshot,
+  settingsClientSnapshot,
+)
 
 initGameBalanceFromPersisted(persistedSnapshot)
 seedSettingsClientLocalStorageFromBundleIfMissing(settingsClientSnapshot)
@@ -1796,6 +1800,11 @@ function finalizeNewAsteroidPresentation(options: { zeroSatelliteDots: boolean }
   invalidateVoxelPosIndexMap()
   setResourceHud()
   starTintComposer.setTintFromSeed(currentSeed)
+  const rolledSun = randomSunAnglesForAsteroid()
+  sunAzimuthDeg = rolledSun.azimuthDeg
+  sunElevationDeg = rolledSun.elevationDeg
+  writeSunAnglesToLocalStorage(sunAzimuthDeg, sunElevationDeg)
+  schedulePersistSettingsClient()
   applySunFromState()
   randomizeAsteroidOrientation()
   replaceAsteroidMesh(voxelCells)

@@ -1,7 +1,7 @@
 {
   "v": 1,
-  "sunAzimuthDeg": 207.62418119158883,
-  "sunElevationDeg": -70,
+  "sunAzimuthDeg": 45.62045028022408,
+  "sunElevationDeg": -38.804059144588344,
   "sunLightDebug": {
     "rotateSunAzimuth": true,
     "rotationDegPerSec": 1.52,
@@ -47,7 +47,7 @@
     "depthOverlayVisible": false
   },
   "discoveryAutoResolve": false,
-  "musicVolumeLinear": 0.9,
+  "musicVolumeLinear": 0.89,
   "sfxVolumeLinear": 0.25,
   "toolsBarCollapsed": false,
   "overlayLegendCollapsed": false,
