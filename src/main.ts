@@ -3659,9 +3659,8 @@ function tryDrillAt(clientX: number, clientY: number): void {
   const center = (gridSize - 1) / 2
   const regime = currentAsteroidProfile().regime
   toRemoveIdx.sort((a, b) => b - a)
-  for (const i of toRemoveIdx) {
-    const cell = voxelCells[i]!
-    tryDiscoveryAt(cell.pos)
+  const removedCells = toRemoveIdx.map((i) => voxelCells[i]!)
+  for (const cell of removedCells) {
     spawnDrossFromRemovedCell(drossState, cell, gameBalance)
     const lp = {
       x: (cell.pos.x - center) * voxelSize,
@@ -3686,12 +3685,18 @@ function tryDrillAt(clientX: number, clientY: number): void {
         asteroidRegime: regime,
       },
     )
+  }
+  for (const i of toRemoveIdx) {
     voxelCells.splice(i, 1)
   }
+  invalidateVoxelPosIndexMap()
   bumpMusicToolTapActivity()
   setResourceHud()
   markRockInstanceColorsDirty()
   replaceAsteroidMesh(voxelCells)
+  for (const cell of removedCells) {
+    tryDiscoveryAt(cell.pos)
+  }
 }
 
 function tryPickAt(clientX: number, clientY: number): void {

@@ -18,7 +18,7 @@
   "explosiveChargeEnergyPerArm": 3.2,
   "impactCraterRangeMult": 3,
   "impactCraterRadiusMinVoxels": 0.5,
-  "impactCraterRadiusMaxVoxels": 9.5,
+  "impactCraterRadiusMaxVoxels": 20.5,
   "impactCraterCountMin": 2,
   "impactCraterCountMax": 64,
   "hubPullMult": 1,
@@ -117,5 +117,5 @@
   "lifterFlightSpeed": 4.2,
   "cargoDroneMatterUnitsPerSecPerSat": 0.22,
   "cargoDronePullMult": 1,
-  "drillVoxelsPerUse": 3
+  "drillVoxelsPerUse": 6
 }
