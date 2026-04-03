@@ -18,7 +18,6 @@ const NEIGHBOR_OFFSETS: ReadonlyArray<readonly [number, number, number]> = [
 
 function canScourgeConsume(cell: VoxelCell): boolean {
   if (cell.scourgeActive) return false
-  if (cell.kind === 'replicator') return false
   if (cell.kind === 'reactor') return false
   if (cell.kind === 'battery') return false
   if (cell.kind === 'hub') return false

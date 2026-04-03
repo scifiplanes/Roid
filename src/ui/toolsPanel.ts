@@ -382,8 +382,8 @@ const TOOLS: ReadonlyArray<{
     fKey: 'F16',
     label: 'Scourge',
     title:
-      'Place a Scourge seed on rock. Seeds spread flood-fill style, consuming neighboring rock into cleanup dross mass while Debug → balance Scourge settings cap per-tick conversions.',
-    short: 'Place Scourge seed; rock → dross',
+      'Place a Scourge seed. Seeds spread flood-fill style, consuming neighboring rock and mature replicators into cleanup dross mass while Debug → balance Scourge settings cap per-tick conversions.',
+    short: 'Place Scourge seed; rock & replicators → dross',
     costTool: 'scourgeInfo',
   },
   {
@@ -391,8 +391,8 @@ const TOOLS: ReadonlyArray<{
     fKey: 'F17',
     label: 'Locust',
     title:
-      'Place a Locust seed on rock. Locust behaves like Scourge but replicates along the front, growing a thicker cleanup wave as it advances.',
-    short: 'Place Locust seed; front-replicating rock → dross',
+      'Place a Locust seed. Locust behaves like Scourge but replicates along the front, growing a thicker cleanup wave as it advances; neighbors can be rock or mature replicators.',
+    short: 'Place Locust seed; front through rock & replicators → dross',
     costTool: 'locustInfo',
   },
   {

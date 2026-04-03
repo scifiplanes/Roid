@@ -667,7 +667,33 @@ export function createToolHoldRingElement(): HTMLDivElement {
   return el
 }
 
+/** Large expanding rings behind the hold ring while hoover / laser sustain is active. */
+export function createToolHoldSustainRipplesElement(): HTMLDivElement {
+  const el = document.createElement('div')
+  el.id = 'tool-hold-sustain-ripples'
+  el.setAttribute('aria-hidden', 'true')
+  el.hidden = true
+  return el
+}
+
 export function updateToolHoldRing(
+  el: HTMLDivElement,
+  visible: boolean,
+  clientX: number,
+  clientY: number,
+  viewport: HTMLElement,
+): void {
+  if (!visible) {
+    el.hidden = true
+    return
+  }
+  const r = viewport.getBoundingClientRect()
+  el.style.left = `${clientX - r.left}px`
+  el.style.top = `${clientY - r.top}px`
+  el.hidden = false
+}
+
+export function updateToolHoldSustainRipples(
   el: HTMLDivElement,
   visible: boolean,
   clientX: number,
@@ -689,10 +715,12 @@ export function triggerMineRipple(
   clientX: number,
   clientY: number,
   viewport: HTMLElement,
+  options?: { sustainLarge?: boolean },
 ): void {
   const r = viewport.getBoundingClientRect()
   el.style.left = `${clientX - r.left}px`
   el.style.top = `${clientY - r.top}px`
+  el.classList.toggle('mine-ripple--sustain-large', options?.sustainLarge === true)
   el.classList.remove('mine-ripple-active')
   void el.offsetWidth
   el.classList.add('mine-ripple-active')
@@ -720,7 +748,7 @@ export function onMiningHitFeedbackVisualOnly(
   popped: boolean,
 ): void {
   triggerMineShake(popped)
-  triggerMineRipple(rippleEl, clientX, clientY, viewport)
+  triggerMineRipple(rippleEl, clientX, clientY, viewport, { sustainLarge: true })
 }
 
 export function onDebrisCollectFeedback(

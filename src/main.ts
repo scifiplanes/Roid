@@ -142,6 +142,7 @@ import {
   applyFrameShake,
   createMineRippleElement,
   createToolHoldRingElement,
+  createToolHoldSustainRipplesElement,
   onDebrisCollectFeedback,
   onMiningHitFeedback,
   onMiningHitFeedbackVisualOnly,
@@ -161,6 +162,7 @@ import {
   playDiscoveryFalseSignal,
   undoFrameShake,
   updateToolHoldRing,
+  updateToolHoldSustainRipples,
 } from './game/clickFeedback'
 import { gameBalance, initGameBalanceFromPersisted } from './game/gameBalance'
 import { perfMark, perfMeasure } from './game/perfMarks'
@@ -749,6 +751,9 @@ viewport.appendChild(discoveryPendingLayer)
 
 const pickRipple = createMineRippleElement()
 viewport.appendChild(pickRipple)
+
+const toolHoldSustainRipples = createToolHoldSustainRipplesElement()
+viewport.appendChild(toolHoldSustainRipples)
 
 const toolHoldRing = createToolHoldRingElement()
 viewport.appendChild(toolHoldRing)
@@ -2301,8 +2306,10 @@ function syncPressHoldToolFeedback(): void {
   }
 
   if (ring) {
+    updateToolHoldSustainRipples(toolHoldSustainRipples, true, ring.x, ring.y, viewport)
     updateToolHoldRing(toolHoldRing, true, ring.x, ring.y, viewport)
   } else {
+    updateToolHoldSustainRipples(toolHoldSustainRipples, false, 0, 0, viewport)
     updateToolHoldRing(toolHoldRing, false, 0, 0, viewport)
   }
 }
