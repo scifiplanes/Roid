@@ -3,10 +3,19 @@ import { SEED_DEFS, getSeedDef } from '../game/seedDefs'
 import { RESOURCE_DEFS, type ResourceId } from '../game/resources'
 import {
   getAvailableSeedRecipesForSeed,
+  isSeedRecipeUnlocked,
+  SEED_RECIPE_DEFS,
   type SeedRecipeAvailabilityState,
 } from '../game/seedRecipes'
 import type { SeedRecipeSlot, SeedSlotKind } from '../game/seedInventory'
 import { getSeedColor } from '../game/seedColors'
+
+/** Shown under built-in Relic preset names so the three strains read differently at a glance. */
+const RELIC_PRESET_BLURBS: Partial<Record<string, string>> = {
+  'relic:locuspore': 'Reactor + hub · Burst',
+  'relic:oxweed': 'Battery + computronium · Longlife',
+  'relic:reaperseed': 'Advanced materials · Efficient',
+}
 
 export interface SeedAssemblySelection {
   seedTypeId: SeedId
@@ -329,7 +338,17 @@ export function createSeedAssemblyModal(
         const labelSpan = document.createElement('span')
         labelSpan.className = 'seed-assembly-presets-name'
         labelSpan.textContent = preset.name
-        btn.append(iconSpan, labelSpan)
+        const textWrap = document.createElement('span')
+        textWrap.className = 'seed-assembly-presets-tile-text'
+        textWrap.append(labelSpan)
+        const relicBlurb = preset.id.startsWith('relic:') ? RELIC_PRESET_BLURBS[preset.id] : undefined
+        if (relicBlurb) {
+          const blurbSpan = document.createElement('span')
+          blurbSpan.className = 'seed-assembly-presets-blurb'
+          blurbSpan.textContent = relicBlurb
+          textWrap.append(blurbSpan)
+        }
+        btn.append(iconSpan, textWrap)
         const isSelected = preset.id === currentPresetId
         btn.classList.toggle('seed-assembly-presets-tile--active', isSelected)
         btn.setAttribute('aria-pressed', isSelected ? 'true' : 'false')
@@ -466,10 +485,23 @@ export function createSeedAssemblyModal(
       recipeSelect.className = 'seed-assembly-stack-select'
       recipeSelect.setAttribute('aria-label', `Recipe slot ${i + 1}`)
 
-      for (const id of unlockedResources) {
+      // Include the slot's current recipe even when computronium has not unlocked it yet (e.g. Relic presets).
+      const recipeIdsForRow: ResourceId[] = [...unlockedResources]
+      if (
+        slot.kind === 'recipe' &&
+        slot.resourceId &&
+        SEED_RECIPE_DEFS[slot.resourceId] &&
+        !recipeIdsForRow.includes(slot.resourceId)
+      ) {
+        recipeIdsForRow.push(slot.resourceId)
+      }
+
+      for (const id of recipeIdsForRow) {
         const opt = document.createElement('option')
         opt.value = id
-        opt.textContent = RESOURCE_DEFS[id].displayName
+        const label = RESOURCE_DEFS[id]?.displayName ?? id
+        const lockedByResearch = !isSeedRecipeUnlocked(id, def.id, availability)
+        opt.textContent = lockedByResearch ? `${label} (research)` : label
         if (slot.kind === 'recipe' && slot.resourceId === id) opt.selected = true
         recipeSelect.appendChild(opt)
       }

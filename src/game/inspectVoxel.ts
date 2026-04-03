@@ -1,15 +1,43 @@
 import { cellParticipatesInDepthReveal } from './depthScannerSim'
 import { compositeDensityMidpointGcm3 } from './compositionYields'
 import { formatScanRefinedPreviewLine } from './scanVisualization'
+import { RESOURCE_DEFS, RESOURCE_IDS_ORDERED, type ResourceId } from './resources'
+import { SEED_DEFS } from './seedDefs'
+import type { SeedRecipeSlot } from './seedInventory'
 import type { VoxelCell } from './voxelState'
 import { hpForVoxelKind } from './voxelState'
 import type { VoxelKind } from './voxelKinds'
 import { getKindDef } from './voxelKinds'
 
+const MAX_SEED_PROGRAM_CHARS = 92
+
+function formatPartialStoreLine(store: Partial<Record<ResourceId, number>> | undefined): string | null {
+  if (!store) return null
+  const parts: string[] = []
+  for (const id of RESOURCE_IDS_ORDERED) {
+    const raw = store[id]
+    if (raw === undefined || !Number.isFinite(raw)) continue
+    const n = Math.floor(raw)
+    if (n > 0) parts.push(`${RESOURCE_DEFS[id].hudAbbrev} ${n}`)
+  }
+  return parts.length > 0 ? parts.join(' · ') : null
+}
+
+function seedSlotAbbrev(slot: SeedRecipeSlot): string {
+  if (slot.kind === 'pause') return 'pause'
+  if (slot.kind === 'die') return 'die'
+  const rid = slot.resourceId
+  if (rid && RESOURCE_DEFS[rid]) return RESOURCE_DEFS[rid].hudAbbrev
+  return 'recipe'
+}
+
 const KIND_LABEL: Record<VoxelKind, string> = {
   regolith: 'Regolith',
   silicateRock: 'Silicate rock',
   metalRich: 'Metal-rich rock',
+  wreckSalvage: 'Wreck salvage',
+  wreckStructure: 'Wreck structure',
+  wreckDense: 'Wreck dense alloy',
   processedMatter: 'Processed matter',
   replicator: 'Replicator',
   reactor: 'Reactor',
@@ -57,6 +85,64 @@ function pushStructureNotes(lines: string[], cell: VoxelCell, nowMs: number): vo
     else lines.push('Replicator')
     if (cell.replicatorStrainId) {
       lines.push(`Strain: ${cell.replicatorStrainId}`)
+    }
+
+    const held = formatPartialStoreLine(cell.storedResources)
+    if (held) lines.push(`Held: ${held}`)
+    const drossLine = formatPartialStoreLine(cell.drossResources)
+    if (drossLine) lines.push(`Dross: ${drossLine}`)
+
+    const seed = cell.seedRuntime
+    if (seed) {
+      const seedName = SEED_DEFS[seed.seedTypeId]?.displayName ?? seed.seedTypeId
+      const lifeRem = seed.lifetimeRemainingSec
+      lines.push(
+        lifeRem > 0 ? `Seed: ${seedName} · ${Math.max(0, Math.floor(lifeRem))}s left` : `Seed: ${seedName} · ended`,
+      )
+
+      const slots = seed.slots
+      if (slots && slots.length > 0) {
+        const nSlots = slots.length
+        const idx = seed.currentSlotIndex
+        if (lifeRem <= 0 || idx === undefined || idx < 0 || idx >= nSlots) {
+          lines.push('Now: (idle)')
+        } else {
+          const slot = slots[idx]!
+          const parts: string[] = [`Now: slot ${idx + 1}/${nSlots}`]
+          if (slot.kind === 'recipe' && slot.resourceId && RESOURCE_DEFS[slot.resourceId]) {
+            parts.push(RESOURCE_DEFS[slot.resourceId].hudAbbrev)
+          } else if (slot.kind === 'pause') {
+            parts.push('pause')
+          } else if (slot.kind === 'die') {
+            parts.push('die')
+          }
+          const slotRem = seed.currentSlotRemainingSec
+          if (
+            lifeRem > 0 &&
+            slotRem !== undefined &&
+            Number.isFinite(slotRem) &&
+            slot.kind !== 'die'
+          ) {
+            parts.push(`${slotRem.toFixed(1)}s left in slot`)
+          }
+          lines.push(parts.join(' · '))
+        }
+
+        let program = slots.map(seedSlotAbbrev).join(' → ')
+        if (program.length > MAX_SEED_PROGRAM_CHARS) {
+          program = `${program.slice(0, MAX_SEED_PROGRAM_CHARS - 1)}…`
+        }
+        lines.push(`Program: ${program}`)
+      } else if (seed.activeRecipes.length > 0) {
+        const stack = seed.activeRecipes.map((id) => RESOURCE_DEFS[id].hudAbbrev).join(' · ')
+        lines.push(`Recipe stack: ${stack}`)
+      }
+    } else if (cell.replicatorTransformTarget === undefined) {
+      lines.push('No seed program')
+      const tintId = cell.replicatorRecipeResourceId
+      if (tintId && RESOURCE_DEFS[tintId]) {
+        lines.push(`Last recipe tint: ${RESOURCE_DEFS[tintId].hudAbbrev}`)
+      }
     }
   }
   if (cell.scourgeActive) {

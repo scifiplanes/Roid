@@ -48,6 +48,12 @@ import {
   patchMeshStandardMaterialScanEmissiveSuppress,
   setScanEmissiveSuppressAt,
 } from './scanEmissiveInstancing'
+import {
+  addConstructionPulseEmissiveAttribute,
+  flagConstructionPulseEmissiveNeedsUpdate,
+  patchMeshStandardMaterialConstructionPulseEmissive,
+  setConstructionPulseEmissiveAt,
+} from './constructionPulseEmissiveInstancing'
 
 export interface AsteroidMeshOptions {
   /** World-space edge length of each voxel cube. */
@@ -92,6 +98,12 @@ const _surfaceHeatmap = new Color()
 const _debugLodeHeatmap = new Color()
 const _depthSortInv = new Matrix4()
 const _depthSortCamLocal = new Vector3()
+const _dbgRepS0 = new Color()
+const _dbgRepS1 = new Color()
+const _dbgRepS2 = new Color()
+const _dbgRepS3 = new Color()
+const _dbgRepS4 = new Color()
+let __dbgRepPipeLastMs = 0
 /** Reused for depth-overlay back-to-front sort (avoid slice + O(n log n) world transforms in comparator). */
 const _depthSortDistSq: number[] = []
 const _depthSortOrder: number[] = []
@@ -132,22 +144,32 @@ function kindUsesBulkRockHint(kind: VoxelKind): boolean {
   return (
     kind === 'regolith' ||
     kind === 'silicateRock' ||
-    kind === 'metalRich'
+    kind === 'metalRich' ||
+    kind === 'wreckSalvage' ||
+    kind === 'wreckStructure' ||
+    kind === 'wreckDense'
   )
 }
 
-function replicatorPulseMul(cell: VoxelCell, nowMs: number): number {
-  let mul = 1
-
+/**
+ * Same timing as the former albedo pulse, mapped to ~0–1 for per-instance emissive strength
+ * (see `patchMeshStandardMaterialConstructionPulseEmissive`).
+ */
+export function replicatorConstructionPulseStrength(cell: VoxelCell, nowMs: number): number {
   const totalMs = cell.replicatorTransformTotalMs ?? 0
   const elapsedMs = cell.replicatorTransformElapsedMs ?? 0
-  if (totalMs > 1 && elapsedMs >= 0 && elapsedMs < totalMs) {
-    const prog = Math.min(1, Math.max(0, elapsedMs / totalMs))
-    const base = 1 + 0.18 * prog
-    const phase = nowMs * 0.008 + prog * Math.PI * 2
-    const wobble = 0.7 + 0.3 * (0.5 + 0.5 * Math.sin(phase))
-    mul *= base * wobble
-  }
+  if (totalMs <= 1 || elapsedMs < 0 || elapsedMs >= totalMs) return 0
+  const prog = Math.min(1, Math.max(0, elapsedMs / totalMs))
+  const base = 1 + 0.18 * prog
+  const phase = nowMs * 0.008 + prog * Math.PI * 2
+  const wobble = 0.7 + 0.3 * (0.5 + 0.5 * Math.sin(phase))
+  const combined = base * wobble
+  return Math.min(1.35, Math.max(0, (combined - 0.7) * 2.08))
+}
+
+/** Tap feedback on mature replicator albedo (construction timer uses emissive instead). */
+function replicatorPulseMul(cell: VoxelCell, nowMs: number): number {
+  let mul = 1
 
   const tapEnd = cell.replicatorTapPulseEndMs
   if (tapEnd !== undefined) {
@@ -163,7 +185,7 @@ function replicatorPulseMul(cell: VoxelCell, nowMs: number): number {
   return mul
 }
 
-/** Pulse, cannibal feed/feed HSL nudge, and local stock lerp — keep in sync with `reapplyRockInstanceColors` solid replicator path. */
+/** Tap pulse on albedo; cannibal feed HSL nudge; local stock lerp. Construction timer glow is emissive (see `replicatorConstructionPulseStrength`). */
 function applyMatureReplicatorSolidTintMods(cell: VoxelCell, out: Color, nowMs: number): void {
   out.multiplyScalar(replicatorPulseMul(cell, nowMs))
   if (isFeedingReplicator(cell)) {
@@ -321,7 +343,7 @@ export function sortDepthOverlayRockInstancesByViewDistance(
 }
 
 /**
- * Solid + eating replicators + emissive reactor (teal) + hub (yellow) + refinery (orange-red) + battery (blue, pulsed in main).
+ * Solid + eating replicators (ivory emissive) + reactor (teal) + hub (yellow) + refinery (orange-red) + battery (blue, pulsed in main).
  */
 export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptions): AsteroidRenderBundle {
   const {
@@ -349,7 +371,7 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
     color: baseColor,
     metalness: eatingM,
     roughness: 0.82,
-    emissive: new Color(0.08, 0.72, 0.64),
+    emissive: new Color(0.94, 0.91, 0.84),
     emissiveIntensity: 0.32,
   })
 
@@ -452,6 +474,7 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
   patchMeshStandardMaterialDepthOverlayAlphaMul(eatingMat)
   patchMeshStandardMaterialScanOverlayUnlit(solidMat)
   patchMeshStandardMaterialScanOverlayUnlit(eatingMat)
+  patchMeshStandardMaterialConstructionPulseEmissive(solidMat)
 
   function emissiveInstancedMesh(
     mat: MeshStandardMaterial,
@@ -517,6 +540,7 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
 
   addDepthOverlayAlphaMulAttribute(baseGeometry, ns)
   addScanOverlayUnlitAttribute(baseGeometry, ns)
+  addConstructionPulseEmissiveAttribute(baseGeometry, ns)
   const solid = new InstancedMesh(baseGeometry, solidMat, ns)
   solid.name = 'asteroid-solid'
   solid.instanceMatrix.setUsage(DynamicDrawUsage)
@@ -579,6 +603,7 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
     refinery.visible = false
     refineryStandby.visible = false
   } else {
+    const solidBuildNowMs = performance.now()
     for (let j = 0; j < solidIndices.length; j++) {
       const i = solidIndices[j]
       const cell = cells[i]
@@ -601,9 +626,14 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
         blendBulkRockHintOntoBase(_c, _bulkRockHint, scanVizForBuild.baseRockBulkHintLerp, _c)
       }
       if (kind === 'replicator') {
-        applyMatureReplicatorSolidTintMods(cell, _c, performance.now())
+        applyMatureReplicatorSolidTintMods(cell, _c, solidBuildNowMs)
       }
       solid.setColorAt(j, _c)
+      setConstructionPulseEmissiveAt(
+        solid,
+        j,
+        kind === 'replicator' ? replicatorConstructionPulseStrength(cell, solidBuildNowMs) : 0,
+      )
     }
     solid.count = solidIndices.length
 
@@ -858,6 +888,7 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
 
     solid.instanceMatrix.needsUpdate = true
     if (solid.instanceColor) solid.instanceColor.needsUpdate = true
+    flagConstructionPulseEmissiveNeedsUpdate(solid)
     eating.instanceMatrix.needsUpdate = true
     if (eating.instanceColor) eating.instanceColor.needsUpdate = true
     reactor.instanceMatrix.needsUpdate = true
@@ -987,6 +1018,37 @@ export function reapplyRockInstanceColors(
 
   const skipCell = (cellIndex: number): boolean =>
     onlyCellIndices !== null && !onlyCellIndices.has(cellIndex)
+
+  // #region agent log
+  let skippedRepInPartial = 0
+  const solidIdxForPartial = solid.userData.cellIndices as number[] | undefined
+  if (onlyCellIndices && solidIdxForPartial && solid.count > 0) {
+    for (let jj = 0; jj < solid.count; jj++) {
+      const ii = solidIdxForPartial[jj]!
+      if (cells[ii]?.kind === 'replicator' && !onlyCellIndices.has(ii)) skippedRepInPartial++
+    }
+    if (skippedRepInPartial > 0) {
+      fetch('http://127.0.0.1:7481/ingest/59523295-7b3c-4817-bc0e-c2fb63f1b767', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '601a65' },
+        body: JSON.stringify({
+          sessionId: '601a65',
+          runId: 'post-fix',
+          hypothesisId: 'H2',
+          location: 'buildAsteroidMesh.ts:reapplyRockInstanceColors:partial',
+          message: 'partial reapply skipped some replicator voxels',
+          data: {
+            onlySize: onlyCellIndices.size,
+            skippedRepInPartial,
+            depthOverlayActive,
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {})
+    }
+  }
+  let repTraceIdx: number | null = null
+  // #endregion
 
   function applyDepthOverlayRock(cell: VoxelCell, out: Color, cellIndex: number): void {
     // Infected fronts should cut through depth-overlay blending.
@@ -1144,6 +1206,9 @@ export function reapplyRockInstanceColors(
       if (skipCell(i)) continue
       const cell = cells[i]
       const { pos, kind } = cell
+      // #region agent log
+      if (kind === 'replicator' && repTraceIdx === null) repTraceIdx = i
+      // #endregion
       const rockDef = getKindDef(kind)
       let kindTint = rockDef.colorTint
       const h = (pos.x * 73 + pos.y * 137 + pos.z * 211) >>> 0
@@ -1162,6 +1227,9 @@ export function reapplyRockInstanceColors(
       } else if (kind === 'replicator') {
         const rgb = getReplicatorDisplayColor(cell)
         _c.setRGB(rgb.r, rgb.g, rgb.b)
+        // #region agent log
+        if (i === repTraceIdx) _dbgRepS0.copy(_c)
+        // #endregion
       } else if (kind === 'processedMatter') {
         _c.setRGB(0, 0, 0)
       } else {
@@ -1175,11 +1243,50 @@ export function reapplyRockInstanceColors(
       if (kind === 'replicator') {
         applyMatureReplicatorSolidTintMods(cell, _c, nowMs)
       }
+      // #region agent log
+      if (i === repTraceIdx) _dbgRepS1.copy(_c)
+      // #endregion
       applyDepthOverlayRock(cell, _c, i)
+      // #region agent log
+      if (i === repTraceIdx) _dbgRepS2.copy(_c)
+      // #endregion
       applyScannerTint(i, _c)
+      // #region agent log
+      if (i === repTraceIdx) _dbgRepS3.copy(_c)
+      // #endregion
       applyDiscoveryScanHint(i, _c)
       applyDebugLodeDisplay(i, cell, _c)
       applyLaserHighlight(i, _c)
+      // #region agent log
+      if (i === repTraceIdx) {
+        _dbgRepS4.copy(_c)
+        const t = performance.now()
+        if (t - __dbgRepPipeLastMs > 420) {
+          __dbgRepPipeLastMs = t
+          fetch('http://127.0.0.1:7481/ingest/59523295-7b3c-4817-bc0e-c2fb63f1b767', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '601a65' },
+            body: JSON.stringify({
+              sessionId: '601a65',
+              runId: 'post-fix',
+              hypothesisId: 'H1-H3',
+              location: 'buildAsteroidMesh.ts:reapplyRockInstanceColors:solid-pipeline',
+              message: 'first solid replicator color pipeline',
+              data: {
+                cellIndex: i,
+                afterBaseRgb: { r: _dbgRepS0.r, g: _dbgRepS0.g, b: _dbgRepS0.b },
+                afterMatureModsRgb: { r: _dbgRepS1.r, g: _dbgRepS1.g, b: _dbgRepS1.b },
+                afterDepthRgb: { r: _dbgRepS2.r, g: _dbgRepS2.g, b: _dbgRepS2.b },
+                afterScannerRgb: { r: _dbgRepS3.r, g: _dbgRepS3.g, b: _dbgRepS3.b },
+                finalAfterLaserRgb: { r: _dbgRepS4.r, g: _dbgRepS4.g, b: _dbgRepS4.b },
+                scanTint: scannerTints?.has(i) ?? false,
+              },
+              timestamp: Date.now(),
+            }),
+          }).catch(() => {})
+        }
+      }
+      // #endregion
       solid.setColorAt(j, _c)
       const discoveryHint = discoveryScanHintIndices?.has(i) ?? false
       setScanOverlayUnlitAt(solid, j, discoveryHint ? 1 : 0)
@@ -1190,10 +1297,27 @@ export function reapplyRockInstanceColors(
           ? Math.min(1 / Math.max(0.05, gameBalance.depthOverlayRockOpacity), 25)
           : computeDepthOverlayAlphaMulForCell(cell),
       )
+      setConstructionPulseEmissiveAt(
+        solid,
+        j,
+        kind === 'replicator' ? replicatorConstructionPulseStrength(cell, nowMs) : 0,
+      )
+    }
+    if (onlyCellIndices !== null) {
+      for (let j = 0; j < solid.count; j++) {
+        const i = solidIndices[j]!
+        const cell = cells[i]
+        setConstructionPulseEmissiveAt(
+          solid,
+          j,
+          cell.kind === 'replicator' ? replicatorConstructionPulseStrength(cell, nowMs) : 0,
+        )
+      }
     }
     if (solid.instanceColor) solid.instanceColor.needsUpdate = true
     flagDepthOverlayAlphaMulNeedsUpdate(solid)
     flagScanOverlayUnlitNeedsUpdate(solid)
+    flagConstructionPulseEmissiveNeedsUpdate(solid)
   }
 
   if (eating.visible && eating.count > 0) {

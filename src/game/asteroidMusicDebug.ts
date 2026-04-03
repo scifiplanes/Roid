@@ -236,6 +236,8 @@ export interface AsteroidMusicDebug {
   preReverbStereoDelayVolume: number
   /** Second parallel tap: delay time (ms); same max as tap 1 in engine. */
   preReverbStereoDelay2TimeMs: number
+  /** Feedback in tap 2 delay loop (0–1); independent of tap 1. */
+  preReverbStereoDelay2Feedback: number
   /** Second tap send (0 = tap off). */
   preReverbStereoDelay2Volume: number
   /** Peak delay-time wobble (ms); both taps; engine max 8000 (8s). */
@@ -1210,6 +1212,7 @@ export function createDefaultAsteroidMusicDebug(): AsteroidMusicDebug {
     preReverbStereoDelayLowpassHz: 10000,
     preReverbStereoDelayVolume: 0.3,
     preReverbStereoDelay2TimeMs: 3000,
+    preReverbStereoDelay2Feedback: 0.25,
     preReverbStereoDelay2Volume: 0,
     preReverbStereoDelayRateJitterDepthMs: 0,
     preReverbStereoDelayRateJitterSpeedHz: 0.016,

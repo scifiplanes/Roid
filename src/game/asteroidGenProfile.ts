@@ -97,10 +97,35 @@ function pickRegime(u: number): AsteroidRegime {
   return REGIME_ORDER[i]!
 }
 
+/** Voxel silhouette class (not rare-lode composition morphology). */
+export type AsteroidShapeClass = 'ellipsoid' | 'contactBinary' | 'contactTrinary'
+
 export interface AsteroidShapeParams {
   baseRadius: number
   noiseScale: number
   noiseAmplitude: number
+  /**
+   * Semi-axis multipliers vs `baseRadius`; geometric mean 1 (product = 1).
+   * Aligned to grid axes (oblate/prolate variety).
+   */
+  axisMulX: number
+  axisMulY: number
+  axisMulZ: number
+  shapeClass: AsteroidShapeClass
+  /** Secondary lobe center offset (voxel units) for `contactBinary`; primary at grid center. */
+  binaryOffsetX: number
+  binaryOffsetY: number
+  binaryOffsetZ: number
+  /** Scales secondary lobe semi-axes relative to primary. */
+  binarySecondaryScale: number
+  /**
+   * `contactTrinary`: three equal lobes in XY, 120° apart, centroid at grid center.
+   * Base rotation (rad) of the first lobe direction; radius is distance from center to each lobe center.
+   */
+  trinaryAngleRad: number
+  trinaryRadius: number
+  /** Per-lobe semi-axis scale vs primary axes (each of the three lobes). */
+  trinaryLobeAxisScale: number
 }
 
 /** Layer-3 continuous knobs (all in [0, 1)). */
@@ -160,6 +185,10 @@ const SALT_DIAL4 = 5
 const SALT_DIAL5 = 6
 const SALT_DIAL6 = 7
 const SALT_DISCOVERY_DENSITY = 0x44495343
+const SALT_CONTACT_BINARY = 0xcb10e771
+const SALT_TRINARY_PICK = 0x7c4a7d91
+const SALT_TRINARY_ANGLE = 0x8d1e9f2a
+const SALT_TRINARY_RSCALE = 0x9e2f0a3b
 
 function spectralRootBias(cls: SpectralClass): RootMultiplierMap {
   const o = unitRootBias()
@@ -375,10 +404,24 @@ function deriveShape(dials: AsteroidAnalogDials): AsteroidShapeParams {
   const rough = dials.shapeRoughness
   const noiseAmplitude = 1.75 + rough * 2.15
   const noiseScale = 0.105 + dials.noiseScaleT * 0.075 + rough * 0.025
+  const mx0 = 0.78 + dials.shapeRoughness * 0.44
+  const my0 = 0.78 + dials.noiseScaleT * 0.44
+  const mz0 = 1 / (mx0 * my0)
   return {
     baseRadius: bulk,
     noiseScale,
     noiseAmplitude,
+    axisMulX: mx0,
+    axisMulY: my0,
+    axisMulZ: mz0,
+    shapeClass: 'ellipsoid',
+    binaryOffsetX: 0,
+    binaryOffsetY: 0,
+    binaryOffsetZ: 0,
+    binarySecondaryScale: 1,
+    trinaryAngleRad: 0,
+    trinaryRadius: 0,
+    trinaryLobeAxisScale: 1,
   }
 }
 
@@ -431,10 +474,94 @@ function modulateShapeForSpectralRegime(
 ): AsteroidShapeParams {
   const rm = regimeShapeMult(regime)
   const sm = spectralShapeMult(spectralClass)
+  let mx = base.axisMulX
+  let my = base.axisMulY
+  switch (spectralClass) {
+    case 'C':
+    case 'D':
+      mx *= 1.05
+      my *= 1.05
+      break
+    case 'M':
+    case 'X':
+      mx *= 0.96
+      my *= 0.96
+      break
+    default:
+      break
+  }
+  const mz = 1 / (mx * my)
   return {
+    ...base,
     baseRadius: Math.max(8.5, base.baseRadius * rm.br * sm.br),
     noiseAmplitude: Math.max(0.35, base.noiseAmplitude * rm.amp * sm.amp),
     noiseScale: Math.max(0.055, base.noiseScale * rm.ns * sm.ns),
+    axisMulX: mx,
+    axisMulY: my,
+    axisMulZ: mz,
+  }
+}
+
+/**
+ * Silhouette: contact-binary (`contactBinaryRubble`), trinary (impact / family debris + seed slice), or ellipsoid.
+ */
+function applySilhouetteFromProfile(shape: AsteroidShapeParams, seed: number, regime: AsteroidRegime): AsteroidShapeParams {
+  if (regime === 'contactBinaryRubble') {
+    const u = float01FromSeed(seed, SALT_CONTACT_BINARY)
+    const v = float01FromSeed(seed, SALT_CONTACT_BINARY + 1)
+    const w = float01FromSeed(seed, SALT_CONTACT_BINARY + 2)
+    const theta = 2 * Math.PI * u
+    const z = 2 * v - 1
+    const r = Math.sqrt(Math.max(0, 1 - z * z))
+    const ox = r * Math.cos(theta)
+    const oy = r * Math.sin(theta)
+    const oz = z
+    const sep = 0.36 * shape.baseRadius
+    return {
+      ...shape,
+      shapeClass: 'contactBinary',
+      trinaryAngleRad: 0,
+      trinaryRadius: 0,
+      trinaryLobeAxisScale: 1,
+      binaryOffsetX: ox * sep,
+      binaryOffsetY: oy * sep,
+      binaryOffsetZ: oz * sep,
+      binarySecondaryScale: 0.78 + w * 0.14,
+    }
+  }
+
+  if (regime === 'impactShattered' || regime === 'collisionalFamilyDebris') {
+    if (float01FromSeed(seed, SALT_TRINARY_PICK) < 0.45) {
+      const ua = float01FromSeed(seed, SALT_TRINARY_ANGLE)
+      const ur = float01FromSeed(seed, SALT_TRINARY_RSCALE)
+      const ul = float01FromSeed(seed, SALT_TRINARY_RSCALE + 1)
+      const angle = ua * 2 * Math.PI
+      const radius = (0.3 + ur * 0.1) * shape.baseRadius
+      const lobeScale = 0.72 + ul * 0.14
+      return {
+        ...shape,
+        shapeClass: 'contactTrinary',
+        binaryOffsetX: 0,
+        binaryOffsetY: 0,
+        binaryOffsetZ: 0,
+        binarySecondaryScale: 1,
+        trinaryAngleRad: angle,
+        trinaryRadius: radius,
+        trinaryLobeAxisScale: lobeScale,
+      }
+    }
+  }
+
+  return {
+    ...shape,
+    shapeClass: 'ellipsoid',
+    binaryOffsetX: 0,
+    binaryOffsetY: 0,
+    binaryOffsetZ: 0,
+    binarySecondaryScale: 1,
+    trinaryAngleRad: 0,
+    trinaryRadius: 0,
+    trinaryLobeAxisScale: 1,
   }
 }
 
@@ -535,7 +662,11 @@ export function deriveAsteroidProfile(seed: number): AsteroidGenProfile {
     noiseScaleT: float01FromSeed(seed, SALT_DIAL6),
   }
 
-  const shape = modulateShapeForSpectralRegime(deriveShape(dials), spectralClass, regime)
+  const shape = applySilhouetteFromProfile(
+    modulateShapeForSpectralRegime(deriveShape(dials), spectralClass, regime),
+    seed,
+    regime,
+  )
 
   let rootTemplateBias = mergeRootBias(spectralRootBias(spectralClass), regimeRootBias(regime))
   rootTemplateBias = applySurfaceAlteration(rootTemplateBias, dials.surfaceAlteration)
@@ -566,7 +697,9 @@ export function formatProfileFingerprint(p: AsteroidGenProfile): string {
   const reg = REGIME_SHORT[p.regime]
   const r = p.shape.baseRadius.toFixed(1)
   const tail = (p.seed >>> 0).toString(16).slice(-4).padStart(4, '0')
-  return `${spec}-type · ${reg} · r=${r} · ${tail}`
+  const shapeTag =
+    p.shape.shapeClass === 'contactBinary' ? 'bin' : p.shape.shapeClass === 'contactTrinary' ? 'tri' : 'ell'
+  return `${spec}-type · ${reg} · ${shapeTag} · r=${r} · ${tail}`
 }
 
 export function spectralClassDisplayName(cls: SpectralClass): string {

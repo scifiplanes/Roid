@@ -8,6 +8,9 @@ import { OVERLAY_VISUALIZATION_STORAGE_KEY } from './overlayVisualizationPrefs'
 import { SCAN_VISUALIZATION_DEBUG_STORAGE_KEY } from './scanVisualizationPersist'
 import type { ScanVisualizationDebug } from './scanVisualizationDebug'
 import { createDefaultScanVisualizationDebug } from './scanVisualizationDebug'
+import { LOCAL_STAR_TINT_DEBUG_STORAGE_KEY, mergeLocalStarTintDebugFromUnknown } from './localStarTintPersist'
+import type { LocalStarTintDebug } from './localStarTintDebug'
+import { createDefaultLocalStarTintDebug } from './localStarTintDebug'
 import type { AsteroidMusicDebug } from './asteroidMusicDebug'
 import type { SunLightDebug } from './sunLightDebug'
 import { createStaticSunLightDebugForPersistenceMerge } from './sunLightDebug'
@@ -44,6 +47,7 @@ export interface SettingsClientPersistedV1 {
   sunElevationDeg?: number
   sunLightDebug?: Partial<SunLightDebug>
   scanVisualizationDebug?: Partial<ScanVisualizationDebug>
+  localStarTintDebug?: Partial<LocalStarTintDebug>
   audioMasterDebug?: Partial<AudioMasterDebug>
   overlayVisualization?: {
     surfaceScanOverlayVisible?: boolean
@@ -67,6 +71,7 @@ export interface SettingsClientRuntimeSnapshot {
   sunElevationDeg: number
   sunLightDebug: SunLightDebug
   scanVisualizationDebug: ScanVisualizationDebug
+  localStarTintDebug: LocalStarTintDebug
   audioMasterDebug: AudioMasterDebug
   surfaceScanOverlayVisible: boolean
   depthOverlayVisible: boolean
@@ -93,6 +98,7 @@ export function buildSettingsClientPayload(s: SettingsClientRuntimeSnapshot): Se
     sunElevationDeg: s.sunElevationDeg,
     sunLightDebug: { ...s.sunLightDebug },
     scanVisualizationDebug: { ...s.scanVisualizationDebug },
+    localStarTintDebug: { ...s.localStarTintDebug },
     audioMasterDebug: { ...s.audioMasterDebug },
     overlayVisualization: {
       surfaceScanOverlayVisible: s.surfaceScanOverlayVisible,
@@ -248,6 +254,12 @@ export function seedSettingsClientLocalStorageFromBundleIfMissing(imported: unkn
   if (Object.keys(scanM).length > 0) {
     const merged = { ...createDefaultScanVisualizationDebug(), ...scanM }
     seedStringIfAbsent(SCAN_VISUALIZATION_DEBUG_STORAGE_KEY, JSON.stringify(merged))
+  }
+
+  const starTintM = mergeLocalStarTintDebugFromUnknown(imported.localStarTintDebug)
+  if (Object.keys(starTintM).length > 0) {
+    const merged = { ...createDefaultLocalStarTintDebug(), ...starTintM }
+    seedStringIfAbsent(LOCAL_STAR_TINT_DEBUG_STORAGE_KEY, JSON.stringify(merged))
   }
 
   const audioM = mergeAudioFromUnknown(imported.audioMasterDebug)

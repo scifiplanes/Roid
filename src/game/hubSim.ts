@@ -88,11 +88,19 @@ function scoreForPull(cell: VoxelCell, dist: number): number {
   return u / (1 + HUB_DISTANCE_LAMBDA * dist)
 }
 
+/** Roots credited to global tallies by a hub this `stepHubs` call (for HUD float anchoring). */
+export interface HubRootGainBatch {
+  hubPos: VoxelPos
+  delta: Partial<Record<RootResourceId, number>>
+}
+
 export interface StepHubsResult {
   meshDirty: boolean
   tallyChanged: boolean
   /** True when a root unit was pulled from a mature replicator (local stock display). */
   replicatorStoreChanged: boolean
+  /** Per-hub root credits this tick (empty when no pulls). */
+  hubRootGains: HubRootGainBatch[]
 }
 
 export interface StepHubsOptions {
@@ -120,7 +128,7 @@ export function stepHubs(
   options?: StepHubsOptions,
 ): StepHubsResult {
   if (dtSec <= 0 || cells.length === 0) {
-    return { meshDirty: false, tallyChanged: false, replicatorStoreChanged: false }
+    return { meshDirty: false, tallyChanged: false, replicatorStoreChanged: false, hubRootGains: [] }
   }
 
   const nowMs = performance.now()
@@ -132,7 +140,7 @@ export function stepHubs(
     if (isHubProcessing(c)) activeHubs.push(c)
   }
   if (activeHubs.length === 0) {
-    return { meshDirty: false, tallyChanged: false, replicatorStoreChanged: false }
+    return { meshDirty: false, tallyChanged: false, replicatorStoreChanged: false, hubRootGains: [] }
   }
 
   const attemptsPerHub = Math.min(
@@ -140,16 +148,42 @@ export function stepHubs(
     Math.max(1, Math.ceil(dtSec * HUB_UNITS_PER_SEC * gameBalance.hubPullMult)),
   )
 
-  const maxEnergyThisTick =
+  // `simDt` shrinks with game speed; the raw cap can fall below one pull's cost (0.32), which
+  // blocks all hub activity at low speed / short frames. Always allow at least one pull worth of
+  // budget for the tick (still gated by `energyState` and stock).
+  const scaledHubEnergyCap =
     HUB_MAX_ENERGY_SPEND_PER_SEC * dtSec * gameBalance.hubMaxEnergySpendMult * activeHubs.length
+  const maxEnergyThisTick = Math.max(HUB_ENERGY_PER_UNIT, scaledHubEnergyCap)
   let energySpentHub = 0
 
   let meshDirty = false
   let tallyChanged = false
   let replicatorStoreChanged = false
 
+  const hubGainByKey = new Map<
+    number,
+    { hubPos: VoxelPos; delta: Partial<Record<RootResourceId, number>> }
+  >()
+
   const index = options?.posIndex ?? buildPosIndex(cells, gridSize)
   for (const hub of activeHubs) {
+    const hubKey = packVoxelKey(hub.pos.x, hub.pos.y, hub.pos.z, gridSize)
+    const mergeHubCredit = (credited: Partial<Record<RootResourceId, number>>): void => {
+      let entry = hubGainByKey.get(hubKey)
+      if (!entry) {
+        entry = {
+          hubPos: { x: hub.pos.x, y: hub.pos.y, z: hub.pos.z },
+          delta: {},
+        }
+        hubGainByKey.set(hubKey, entry)
+      }
+      for (const id of ROOT_RESOURCE_IDS) {
+        const v = credited[id]
+        if (v === undefined || v <= 0) continue
+        entry.delta[id] = (entry.delta[id] ?? 0) + v
+      }
+    }
+
     const distMap = buildDistanceMap(hub.pos, index, gridSize)
 
     for (let a = 0; a < attemptsPerHub; a++) {
@@ -194,6 +228,7 @@ export function stepHubs(
         if (options?.onRootTalliesFromPm) {
           options.onRootTalliesFromPm(best, credited)
         }
+        mergeHubCredit(credited)
         tallyChanged = true
         if (best.kind === 'processedMatter') {
           options?.onProcessedMatterUnitTaken?.(best)
@@ -227,10 +262,27 @@ export function stepHubs(
       }
       energySpentHub += spent
       tallies[rid] = (tallies[rid] ?? 0) + 1
+      mergeHubCredit({ [rid]: 1 })
       tallyChanged = true
       if (best.kind === 'replicator') replicatorStoreChanged = true
     }
   }
 
-  return { meshDirty, tallyChanged, replicatorStoreChanged }
+  const hubRootGains: HubRootGainBatch[] = []
+  for (const v of hubGainByKey.values()) {
+    let nonempty = false
+    for (const id of ROOT_RESOURCE_IDS) {
+      if ((v.delta[id] ?? 0) > 0) {
+        nonempty = true
+        break
+      }
+    }
+    if (!nonempty) continue
+    hubRootGains.push({
+      hubPos: { x: v.hubPos.x, y: v.hubPos.y, z: v.hubPos.z },
+      delta: { ...v.delta },
+    })
+  }
+
+  return { meshDirty, tallyChanged, replicatorStoreChanged, hubRootGains }
 }

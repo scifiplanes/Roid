@@ -3,14 +3,22 @@ import {
   Color,
   Float32BufferAttribute,
   Group,
+  InstancedBufferAttribute,
   InstancedMesh,
   Matrix4,
   MeshStandardMaterial,
+  Quaternion,
   Uint16BufferAttribute,
+  Vector3,
 } from 'three'
 import type { DebrisState } from '../game/debrisSim'
 
 const _m = new Matrix4()
+const _q = new Quaternion()
+const _p = new Vector3()
+const _s = new Vector3()
+const _c = new Color()
+const _baseIce = new Color(0.9, 0.92, 1)
 
 const EDGE = 0.12
 const MAX_DEBRIS = 128
@@ -52,7 +60,7 @@ export function createDebrisShardsGroup(): DebrisShardsHandle {
   geo.computeVertexNormals()
 
   const mat = new MeshStandardMaterial({
-    color: new Color(0.9, 0.92, 1),
+    color: new Color(1, 1, 1),
     metalness: 0.22,
     roughness: 0.4,
     emissive: new Color(0.32, 0.55, 1),
@@ -64,6 +72,7 @@ export function createDebrisShardsGroup(): DebrisShardsHandle {
   mesh.count = 0
   mesh.visible = false
   mesh.frustumCulled = false
+  mesh.instanceColor = new InstancedBufferAttribute(new Float32Array(MAX_DEBRIS * 3), 3)
   group.add(mesh)
 
   return {
@@ -76,14 +85,23 @@ export function createDebrisShardsGroup(): DebrisShardsHandle {
         mesh.visible = false
         return
       }
+      const ic = mesh.instanceColor
       for (let i = 0; i < n; i++) {
         const s = shards[i]!
-        _m.makeTranslation(s.pos.x, s.pos.y, s.pos.z)
+        _q.set(s.quat.x, s.quat.y, s.quat.z, s.quat.w)
+        _p.set(s.pos.x, s.pos.y, s.pos.z)
+        _s.set(s.scaleX, s.scaleY, s.scaleZ)
+        _m.compose(_p, _q, _s)
         mesh.setMatrixAt(i, _m)
+
+        _c.set(s.tintRgb.r, s.tintRgb.g, s.tintRgb.b)
+        _c.lerp(_baseIce, 0.38)
+        mesh.setColorAt(i, _c)
       }
       mesh.count = n
       mesh.visible = true
       mesh.instanceMatrix.needsUpdate = true
+      if (ic) ic.needsUpdate = true
     },
     dispose(): void {
       geo.dispose()
@@ -91,4 +109,3 @@ export function createDebrisShardsGroup(): DebrisShardsHandle {
     },
   }
 }
-

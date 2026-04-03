@@ -15,6 +15,9 @@ export const ROCK_LITHOLOGY_KINDS: ReadonlySet<VoxelKind> = new Set([
   'regolith',
   'silicateRock',
   'metalRich',
+  'wreckSalvage',
+  'wreckStructure',
+  'wreckDense',
 ])
 
 export type CoreAssetOriginKind = 'asteroid' | 'wreck'

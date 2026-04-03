@@ -14,22 +14,22 @@ export function asteroidHasKind(cells: readonly VoxelCell[], kind: VoxelKind): b
   return false
 }
 
-/** F3 Reactor tool: requires at least one mature replicator voxel on the asteroid. */
+/** Reactor tool (5): requires at least one mature replicator voxel on the asteroid. */
 export function reactorToolUnlocked(cells: readonly VoxelCell[]): boolean {
   return asteroidHasKind(cells, 'replicator')
 }
 
-/** F5 Hub tool: requires at least one reactor on the asteroid. */
+/** Hub tool (7): requires at least one reactor on the asteroid. */
 export function hubToolUnlocked(cells: readonly VoxelCell[]): boolean {
   return asteroidHasKind(cells, 'reactor')
 }
 
-/** F6 Refinery tool: requires at least one hub on the asteroid. */
+/** Refinery tool (8): requires at least one hub on the asteroid. */
 export function refineryToolUnlocked(cells: readonly VoxelCell[]): boolean {
   return asteroidHasKind(cells, 'hub')
 }
 
-/** F4 Battery and F12 Computronium tools: require at least one refinery. */
+/** Battery (6) and Computronium (A) tools: require at least one refinery. */
 export function batteryToolUnlocked(cells: readonly VoxelCell[]): boolean {
   return asteroidHasKind(cells, 'refinery')
 }

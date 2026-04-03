@@ -105,6 +105,28 @@ function mergeAudioFromUnknown(p) {
   return out
 }
 
+function createDefaultLocalStarTintDebug() {
+  return {
+    excludedHueBandCenter: 0.345,
+    excludedHueBandWidth: 0.25,
+    starTintSaturationMin: 0.78,
+    starTintSaturationMax: 0.78,
+  }
+}
+
+function mergeLocalStarTintFromUnknown(p) {
+  if (!isRecord(p)) return {}
+  const base = createDefaultLocalStarTintDebug()
+  const out = {}
+  for (const key of Object.keys(base)) {
+    const v = p[key]
+    if (typeof v === 'number' && Number.isFinite(v)) {
+      out[key] = v
+    }
+  }
+  return out
+}
+
 const defaultPickThudDebug = {
   regolith: {
     tailSecBase: 0.042,
@@ -165,6 +187,12 @@ const mergedScan =
     ? { ...createDefaultScanVisualizationDebug(), ...scanM }
     : null
 
+const starTintM = mergeLocalStarTintFromUnknown(client.localStarTintDebug)
+const mergedStarTint =
+  Object.keys(starTintM).length > 0
+    ? { ...createDefaultLocalStarTintDebug(), ...starTintM }
+    : null
+
 const audioM = mergeAudioFromUnknown(client.audioMasterDebug)
 const mergedAudio =
   Object.keys(audioM).length > 0
@@ -190,6 +218,9 @@ if (mergedSun) {
 }
 if (mergedScan) {
   entries['roid:scanVisualizationDebug'] = JSON.stringify(mergedScan)
+}
+if (mergedStarTint) {
+  entries['roid:localStarTintDebug'] = JSON.stringify(mergedStarTint)
 }
 if (mergedAudio) {
   entries['roid:audioMasterDebug'] = JSON.stringify(mergedAudio)

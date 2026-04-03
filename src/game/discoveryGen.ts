@@ -9,6 +9,9 @@ export const DISCOVERY_LITHOLOGY_KINDS: ReadonlySet<VoxelKind> = new Set([
   'regolith',
   'silicateRock',
   'metalRich',
+  'wreckSalvage',
+  'wreckStructure',
+  'wreckDense',
 ])
 
 export type DiscoveryArchetype = 'windfall' | 'drain' | 'lore' | 'researchBypass'
@@ -132,6 +135,9 @@ const SUFFIXES = [
   'aligned with the belt',
   'outside the catalog',
   'in the shadow cone',
+  'in a hull fracture',
+  'along a sheared truss',
+  'in vacuum-welded scrap seams',
 ]
 
 const RESEARCH_FLAVOR = [

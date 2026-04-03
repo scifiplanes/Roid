@@ -1,11 +1,14 @@
 import { VOXEL_KIND_DEFS } from './voxelKinds'
 import { RESOURCE_DEFS, type ResourceId, type RootResourceId } from './resources'
 
-/** Lithology band depth weights: regolith shell → silicate mantle → metal-rich interior. */
+/** Lithology band depth weights: outer shell → mid → dense interior (asteroid and wreck analogs). */
 const BAND_DEPTH = {
   regolith: 0,
   silicateRock: 0.5,
   metalRich: 1,
+  wreckSalvage: 0,
+  wreckStructure: 0.5,
+  wreckDense: 1,
 } as const
 
 /**
@@ -22,7 +25,14 @@ const ROOT_DEPTH_FALLBACK: Partial<Record<RootResourceId, number>> = {
 export function usualOriginDepth01ForRoot(root: RootResourceId): number {
   let wSum = 0
   let depthSum = 0
-  for (const kind of ['regolith', 'silicateRock', 'metalRich'] as const) {
+  for (const kind of [
+    'regolith',
+    'silicateRock',
+    'metalRich',
+    'wreckSalvage',
+    'wreckStructure',
+    'wreckDense',
+  ] as const) {
     const y = VOXEL_KIND_DEFS[kind].yields[root] ?? 0
     if (y <= 0) continue
     depthSum += y * BAND_DEPTH[kind]

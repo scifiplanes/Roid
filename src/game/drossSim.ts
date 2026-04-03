@@ -195,7 +195,8 @@ export function stepDrossCollection(
 
 /**
  * Manual Hoover: drains dross within a voxel-space radius of `center`. Returns whether tallies
- * changed. Uses the same rate math as satellites, scaled by `drossHooverSatelliteEquiv`.
+ * changed. Uses the same rate math as satellites, scaled by `drossHooverSatelliteEquiv` and
+ * `drossHooverDrainMult`.
  */
 export function stepDrossHoover(
   dtSec: number,
@@ -211,6 +212,7 @@ export function stepDrossHoover(
     balance.drossCollectionRatePerSatellitePerSec *
     balance.drossCollectionMult *
     Math.max(0, balance.drossHooverSatelliteEquiv) *
+    Math.max(0, balance.drossHooverDrainMult) *
     dtSec
 
   if (maxDrain <= 0) return false

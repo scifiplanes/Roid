@@ -21,6 +21,7 @@ import {
 } from '../game/asteroidMusicDebug'
 import type { SunLightDebug } from '../game/sunLightDebug'
 import type { ScanVisualizationDebug } from '../game/scanVisualizationDebug'
+import type { LocalStarTintDebug } from '../game/localStarTintDebug'
 import type { AudioMasterDebug } from '../game/audioMasterDebug'
 import { cancelScheduledMusicPersist, persistAsteroidMusicDebugToProjectNow } from '../game/asteroidMusicPersist'
 import { getDebugProjectAutosave, setDebugProjectAutosave } from '../game/debugProjectAutosave'
@@ -104,6 +105,8 @@ export interface SettingsMenuOptions {
   onSunLightDebugChange?: () => void
   scanVisualizationDebug: ScanVisualizationDebug
   onScanVisualizationDebugChange?: () => void
+  localStarTintDebug: LocalStarTintDebug
+  onLocalStarTintDebugChange?: () => void
   /** Music-only post EQ + high-pass (persisted). */
   audioMasterDebug: AudioMasterDebug
   onAudioMasterDebugChange?: () => void
@@ -849,6 +852,8 @@ export function createSettingsMenu(
     onSunLightDebugChange,
     scanVisualizationDebug,
     onScanVisualizationDebugChange,
+    localStarTintDebug,
+    onLocalStarTintDebugChange,
     audioMasterDebug,
     onAudioMasterDebugChange,
     getReplicatorTransformDebugLines,
@@ -1035,7 +1040,7 @@ export function createSettingsMenu(
   maxPixelRatioRow.append(maxPixelRatioLabel, maxPixelRatioSelect)
 
   const sandboxRow = document.createElement('div')
-  sandboxRow.className = 'settings-row'
+  sandboxRow.className = 'settings-row settings-row--sandbox'
   const sandboxLabel = document.createElement('label')
   sandboxLabel.className = 'settings-checkbox-label'
   const sandboxInput = document.createElement('input')
@@ -1046,9 +1051,14 @@ export function createSettingsMenu(
   sandboxText.textContent = 'Sandbox mode (no resource/energy limits; unlocks everything)'
   sandboxLabel.append(sandboxInput, sandboxText)
   sandboxRow.appendChild(sandboxLabel)
+  function syncSandboxRowHighlight(): void {
+    sandboxRow.classList.toggle('settings-row--sandbox-on', sandboxInput.checked)
+  }
+  syncSandboxRowHighlight()
   sandboxInput.addEventListener('change', () => {
     setSandboxModeEnabled(sandboxInput.checked)
     notifySandboxModeListeners()
+    syncSandboxRowHighlight()
   })
 
   const fontRow = document.createElement('div')
@@ -1427,6 +1437,7 @@ export function createSettingsMenu(
   })
   const sectionKeyLight = createDebugSection('Key light', { id: 'debug-section-keylight' })
   const sectionScanDepth = createDebugSection('Scan & depth', { id: 'debug-section-scan' })
+  const sectionRendering = createDebugSection('Rendering', { id: 'debug-section-rendering' })
   const sectionDiscovery = createDebugSection('Discovery', { id: 'debug-section-discovery' })
   const sectionLaserSfx = createDebugSection('Laser & SFX audio', { id: 'debug-section-laser-sfx' })
   const sectionMusicMaster = createDebugSection('Music output (master)', {
@@ -1457,6 +1468,7 @@ export function createSettingsMenu(
     ...(sectionPerformance ? ([{ label: 'Perf', el: sectionPerformance }] as const) : []),
     { label: 'Lodes', el: sectionLodeDebug },
     { label: 'Light', el: sectionKeyLight },
+    { label: 'Render', el: sectionRendering },
     { label: 'Scan', el: sectionScanDepth },
     { label: 'Discovery', el: sectionDiscovery },
     { label: 'SFX', el: sectionLaserSfx },
@@ -1571,6 +1583,7 @@ export function createSettingsMenu(
     ...(sectionPerformance ? [sectionPerformance] : []),
     sectionLodeDebug,
     sectionKeyLight,
+    sectionRendering,
     sectionScanDepth,
     sectionDiscovery,
     sectionLaserSfx,
@@ -1760,6 +1773,86 @@ export function createSettingsMenu(
     sunLightDebug.rotationDegPerSec = Number(sunSpeedInput.value)
     sunSpeedValue.textContent = sunLightDebug.rotationDegPerSec.toFixed(2)
   })
+
+  const renderingHeading = document.createElement('h3')
+  renderingHeading.className = 'settings-debug-subheading'
+  renderingHeading.textContent = 'Local star tint (canvas post-process)'
+  sectionRendering.appendChild(renderingHeading)
+
+  type LocalStarTintNumKey = {
+    key: keyof LocalStarTintDebug
+    label: string
+    min: number
+    max: number
+    step: number
+    decimals?: number
+  }
+
+  const localStarTintSliders: LocalStarTintNumKey[] = [
+    {
+      key: 'excludedHueBandCenter',
+      label: 'Excluded hue band — center on wheel (0–1)',
+      min: 0,
+      max: 1,
+      step: 0.005,
+    },
+    {
+      key: 'excludedHueBandWidth',
+      label: 'Excluded hue band — width (0 = off)',
+      min: 0,
+      max: 1,
+      step: 0.005,
+    },
+    {
+      key: 'starTintSaturationMin',
+      label: 'Star tint HSL saturation — min',
+      min: 0,
+      max: 1,
+      step: 0.01,
+    },
+    {
+      key: 'starTintSaturationMax',
+      label: 'Star tint HSL saturation — max',
+      min: 0,
+      max: 1,
+      step: 0.01,
+    },
+  ]
+
+  for (const spec of localStarTintSliders) {
+    const row = document.createElement('div')
+    row.className = 'settings-row settings-debug-row'
+    const label = document.createElement('label')
+    label.className = 'settings-label'
+    label.htmlFor = `settings-local-star-${spec.key}`
+    label.textContent = spec.label
+    const input = document.createElement('input')
+    input.id = `settings-local-star-${spec.key}`
+    input.type = 'range'
+    input.min = String(spec.min)
+    input.max = String(spec.max)
+    input.step = String(spec.step)
+    const v = localStarTintDebug[spec.key] as number
+    input.value = String(v)
+    const valSpan = document.createElement('span')
+    valSpan.className = 'settings-value'
+    const dec = spec.decimals ?? 3
+    valSpan.textContent = v.toFixed(dec)
+    input.addEventListener('input', () => {
+      let n = Number(input.value)
+      if (spec.key === 'excludedHueBandCenter') {
+        n = ((n % 1) + 1) % 1
+      } else {
+        n = Math.min(1, Math.max(0, n))
+      }
+      ;(localStarTintDebug as unknown as Record<string, number>)[spec.key] = n
+      if (spec.key === 'excludedHueBandCenter') input.value = String(n)
+      valSpan.textContent = n.toFixed(dec)
+      onLocalStarTintDebugChange?.()
+    })
+    row.append(label, input, valSpan)
+    sectionRendering.appendChild(row)
+  }
 
   const scanVizHeading = document.createElement('h3')
   scanVizHeading.className = 'settings-debug-subheading'
@@ -1961,7 +2054,7 @@ export function createSettingsMenu(
   const startingToolsHint = document.createElement('p')
   startingToolsHint.className = 'settings-debug-hint'
   startingToolsHint.textContent =
-    'Unchecked boxes block those baseline tools (and Replicator/Seed when used with progression). Lasers, structures, explosives, and other computronium-gated tools are not hidden by these checkboxes; they follow in-game research.'
+    'Unchecked boxes block those baseline tools (Replicator after first root; Seed after first computronium when used with progression). Lasers, structures, explosives, and other computronium-gated tools are not hidden by these checkboxes; they follow in-game research.'
   sectionGameBalance.appendChild(startingToolsHint)
 
   function appendToolCheckboxRow(
@@ -1995,112 +2088,112 @@ export function createSettingsMenu(
 
   appendToolCheckboxRow(
     sectionGameBalance,
-    'Poke (F1) available',
+    'Pick (1) available',
     'settings-initial-tool-pick',
     (cfg) => cfg.pick,
     (cfg, value) => ({ ...cfg, pick: value }),
   )
   appendToolCheckboxRow(
     sectionGameBalance,
-    'Inspect (Ins) available',
+    'Inspect (3) available',
     'settings-initial-tool-inspect',
     (cfg) => cfg.inspect,
     (cfg, value) => ({ ...cfg, inspect: value }),
   )
   appendToolCheckboxRow(
     sectionGameBalance,
-    'Hoover (HV) available',
+    'Hoover (9) available',
     'settings-initial-tool-hoover',
     (cfg) => cfg.hoover,
     (cfg, value) => ({ ...cfg, hoover: value }),
   )
   appendToolCheckboxRow(
     sectionGameBalance,
-    'Replicator (F2) available',
+    'Replicator (4) available',
     'settings-initial-tool-replicator',
     (cfg) => cfg.replicator,
     (cfg, value) => ({ ...cfg, replicator: value }),
   )
   appendToolCheckboxRow(
     sectionGameBalance,
-    'Seed (F15) available',
+    'Seed (2) available',
     'settings-initial-tool-seed',
     (cfg) => cfg.seed,
     (cfg, value) => ({ ...cfg, seed: value }),
   )
   appendToolCheckboxRow(
     sectionGameBalance,
-    'Reactor (F3) available',
+    'Reactor (5) available',
     'settings-initial-tool-reactor',
     (cfg) => cfg.reactor,
     (cfg, value) => ({ ...cfg, reactor: value }),
   )
   appendToolCheckboxRow(
     sectionGameBalance,
-    'Battery (F4) available',
+    'Battery (6) available',
     'settings-initial-tool-battery',
     (cfg) => cfg.battery,
     (cfg, value) => ({ ...cfg, battery: value }),
   )
   appendToolCheckboxRow(
     sectionGameBalance,
-    'Hub (F5) available',
+    'Hub (7) available',
     'settings-initial-tool-hub',
     (cfg) => cfg.hub,
     (cfg, value) => ({ ...cfg, hub: value }),
   )
   appendToolCheckboxRow(
     sectionGameBalance,
-    'Refinery (F6) available',
+    'Refinery (8) available',
     'settings-initial-tool-refinery',
     (cfg) => cfg.refinery,
     (cfg, value) => ({ ...cfg, refinery: value }),
   )
   appendToolCheckboxRow(
     sectionGameBalance,
-    'Computronium (F12) available',
+    'Computronium (A) available',
     'settings-initial-tool-computronium',
     (cfg) => cfg.computronium,
     (cfg, value) => ({ ...cfg, computronium: value }),
   )
   appendToolCheckboxRow(
     sectionGameBalance,
-    'Orbital laser tier (F7 / mining laser)',
+    'Orbital laser tier (W / mining laser)',
     'settings-initial-tool-orbital',
     (cfg) => cfg.orbitalLaser,
     (cfg, value) => ({ ...cfg, orbitalLaser: value }),
   )
   appendToolCheckboxRow(
     sectionGameBalance,
-    'Excavating laser tier (F8)',
+    'Excavating laser tier (E)',
     'settings-initial-tool-excavating',
     (cfg) => cfg.excavatingLaser,
     (cfg, value) => ({ ...cfg, excavatingLaser: value }),
   )
   appendToolCheckboxRow(
     sectionGameBalance,
-    'Scanner laser tier (F9 gibberish → scanner, F10 explosive)',
+    'Scanner laser tier (R gibberish → scanner, T explosive)',
     'settings-initial-tool-scanner',
     (cfg) => cfg.scanner,
     (cfg, value) => ({ ...cfg, scanner: value }),
   )
   appendToolCheckboxRow(
     sectionGameBalance,
-    'Explosive charge (F10) available',
+    'Explosive charge (T) available',
     'settings-initial-tool-explosive',
     (cfg) => cfg.explosiveCharge,
     (cfg, value) => ({ ...cfg, explosiveCharge: value }),
   )
   appendToolCheckboxRow(
     sectionGameBalance,
-    'Depth scan tool (F11) available',
+    'Depth scan tool (Y) available',
     'settings-initial-tool-depth',
     (cfg) => cfg.depthScanner,
     (cfg, value) => ({ ...cfg, depthScanner: value }),
   )
   appendToolCheckboxRow(
     sectionGameBalance,
-    'Cleanup collector (F13 + deploy row) available',
+    'Sweeper collector (U + deploy row) available',
     'settings-initial-tool-dross',
     (cfg) => cfg.drossCollector,
     (cfg, value) => ({ ...cfg, drossCollector: value }),
@@ -2128,14 +2221,14 @@ export function createSettingsMenu(
   )
   appendToolCheckboxRow(
     sectionGameBalance,
-    'Lifter (LF, tier 5) available',
+    'Lifter (0, tier 5) available',
     'settings-initial-tool-lifter',
     (cfg) => cfg.lifter,
     (cfg, value) => ({ ...cfg, lifter: value }),
   )
   appendToolCheckboxRow(
     sectionGameBalance,
-    'Cargo drone (CD, tier 5) available',
+    'Cargo drone (Q, tier 5) available',
     'settings-initial-tool-cargo-drone',
     (cfg) => cfg.cargoDrone,
     (cfg, value) => ({ ...cfg, cargoDrone: value }),
@@ -2242,7 +2335,7 @@ export function createSettingsMenu(
 
   const pickAudioHeading = document.createElement('h3')
   pickAudioHeading.className = 'settings-debug-subheading'
-  pickAudioHeading.textContent = 'Mining tap (poke) audio'
+  pickAudioHeading.textContent = 'Mining tap (pick) audio'
   sectionLaserSfx.appendChild(pickAudioHeading)
 
   const pickAudioSpecs: PickAudioSliderSpec[] = [
@@ -4855,8 +4948,20 @@ export function createSettingsMenu(
       },
     },
     {
+      id: 'settings-music-pre-reverb-stereo-delay-2-feedback',
+      label: 'Bus — pre-reverb stereo delay tap 2 feedback (HPF in loop)',
+      min: 0,
+      max: 0.92,
+      step: 0.02,
+      decimals: 2,
+      read: () => asteroidMusicDebug.preReverbStereoDelay2Feedback,
+      write: (n) => {
+        asteroidMusicDebug.preReverbStereoDelay2Feedback = n
+      },
+    },
+    {
       id: 'settings-music-pre-reverb-stereo-delay-2-volume',
-      label: 'Bus — pre-reverb stereo delay tap 2 send (0 = tap off; shares feedback/HPF/LPF with tap 1)',
+      label: 'Bus — pre-reverb stereo delay tap 2 send (0 = tap off; shares HPF/LPF with tap 1)',
       min: 0,
       max: 1,
       step: 0.02,
@@ -5088,7 +5193,7 @@ export function createSettingsMenu(
   const musicBusPreReverbStereoDelayHint = document.createElement('p')
   musicBusPreReverbStereoDelayHint.className = 'settings-debug-hint'
   musicBusPreReverbStereoDelayHint.textContent =
-    'Stereo delay sits on the wet path after the bus lowpass and before the short reverb pre-delay and convolver. Feedback runs HPF then LPF (darken repeats). Direct wet is always mixed in; raise send to add delayed taps. Tap 2 is a second parallel L/R loop with a longer allowed time; it uses the same feedback and filter sliders as tap 1. Rate jitter adds slow delay-time wander per tap (separate LFOs, unsynced); the wander-speed slider is logarithmic toward the slow end; randomness modulates how much each wander rate drifts over time.'
+    'Stereo delay sits on the wet path after the bus lowpass and before the short reverb pre-delay and convolver. Feedback runs HPF then LPF (darken repeats). Direct wet is always mixed in; raise send to add delayed taps. Tap 2 is a second parallel L/R loop with its own delay time, send, and feedback amount; HPF/LPF sliders apply to both taps. Feedback jitter depth/rate are shared; modulation is independent per tap. Rate jitter adds slow delay-time wander per tap (separate LFOs, unsynced); the wander-speed slider is logarithmic toward the slow end; randomness modulates how much each wander rate drifts over time.'
   sectionAsteroidMusic.appendChild(musicBusPreReverbStereoDelayHint)
   for (const spec of musicBusPreReverbStereoDelaySpecs) {
     appendMusicSliderRow(sectionAsteroidMusic, spec)

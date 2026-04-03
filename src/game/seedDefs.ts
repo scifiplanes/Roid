@@ -1,3 +1,4 @@
+import { defaultSeedRecipeStackForMaxStacks } from './energyAndStructures'
 import type { ResourceId } from './resources'
 
 export type SeedId =
@@ -43,24 +44,24 @@ export const SEED_DEFS: Record<SeedId, SeedDef> = {
     id: 'basicSeed',
     displayName: 'Basic Seed',
     description:
-      'Entry-level programming for Replicators. Simple, short-lived scripts with a couple of steps.',
+      'Entry-level programming for Replicators. Short-lived scripts; default stack covers structure-chain roots.',
     lifetimeSec: 60,
     minLifetimeSec: 20,
     maxLifetimeSec: 120,
-    maxRecipeStacks: 2,
-    defaultRecipeStack: ['regolithMass'],
+    maxRecipeStacks: 8,
+    defaultRecipeStack: defaultSeedRecipeStackForMaxStacks(8),
     requiredComputroniumTier: 0,
   },
   efficientSeed: {
     id: 'efficientSeed',
     displayName: 'Efficient Seed',
     description:
-      'Improved routing and batching for Replicators. Moderate lifetime with a small multistep stack.',
+      'Improved routing and batching for Replicators. Moderate lifetime with a multistep stack.',
     lifetimeSec: 180,
     minLifetimeSec: 60,
     maxLifetimeSec: 360,
-    maxRecipeStacks: 4,
-    defaultRecipeStack: ['regolithMass', 'silicates'],
+    maxRecipeStacks: 8,
+    defaultRecipeStack: defaultSeedRecipeStackForMaxStacks(8),
     requiredComputroniumTier: 0,
   },
   longlifeSeed: {
@@ -71,8 +72,8 @@ export const SEED_DEFS: Record<SeedId, SeedDef> = {
     lifetimeSec: 420,
     minLifetimeSec: 120,
     maxLifetimeSec: 720,
-    maxRecipeStacks: 5,
-    defaultRecipeStack: ['regolithMass', 'silicates', 'metals'],
+    maxRecipeStacks: 8,
+    defaultRecipeStack: defaultSeedRecipeStackForMaxStacks(8),
     requiredComputroniumTier: 0,
   },
   burstSeed: {
@@ -83,8 +84,8 @@ export const SEED_DEFS: Record<SeedId, SeedDef> = {
     lifetimeSec: 60,
     minLifetimeSec: 15,
     maxLifetimeSec: 90,
-    maxRecipeStacks: 4,
-    defaultRecipeStack: ['metals', 'volatiles'],
+    maxRecipeStacks: 8,
+    defaultRecipeStack: defaultSeedRecipeStackForMaxStacks(8),
     requiredComputroniumTier: 0,
   },
   schedulerSeed: {
@@ -95,8 +96,8 @@ export const SEED_DEFS: Record<SeedId, SeedDef> = {
     lifetimeSec: 360,
     minLifetimeSec: 120,
     maxLifetimeSec: 600,
-    maxRecipeStacks: 7,
-    defaultRecipeStack: ['regolithMass', 'silicates', 'volatiles'],
+    maxRecipeStacks: 8,
+    defaultRecipeStack: defaultSeedRecipeStackForMaxStacks(8),
     requiredComputroniumTier: 4,
   },
   macroSeed: {
@@ -108,7 +109,7 @@ export const SEED_DEFS: Record<SeedId, SeedDef> = {
     minLifetimeSec: 240,
     maxLifetimeSec: 1200,
     maxRecipeStacks: 9,
-    defaultRecipeStack: ['regolithMass', 'silicates', 'metals', 'volatiles'],
+    defaultRecipeStack: defaultSeedRecipeStackForMaxStacks(9),
     requiredComputroniumTier: 5,
   },
   expertSeed: {
@@ -120,7 +121,7 @@ export const SEED_DEFS: Record<SeedId, SeedDef> = {
     minLifetimeSec: 300,
     maxLifetimeSec: 1500,
     maxRecipeStacks: 10,
-    defaultRecipeStack: ['regolithMass', 'silicates', 'metals', 'volatiles'],
+    defaultRecipeStack: defaultSeedRecipeStackForMaxStacks(10),
     requiredComputroniumTier: 6,
   },
 }

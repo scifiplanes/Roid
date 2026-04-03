@@ -1,6 +1,8 @@
 import type { ResourceId, RootResourceId } from './resources'
 import { ROOT_RESOURCE_IDS, addResourceYields } from './resources'
+import type { AsteroidRegime } from './asteroidGenProfile'
 import type { VoxelCell } from './voxelState'
+import { getResourceColor } from './resourceColors'
 
 export interface DebrisShard {
   id: number
@@ -16,6 +18,14 @@ export interface DebrisShard {
   bulk: Record<RootResourceId, number>
   /** Contextual reward granted on click or expiry. */
   reward: Partial<Record<ResourceId, number>>
+  /** Local-axis instance scale (hit radius uses max × base pick radius). */
+  scaleX: number
+  scaleY: number
+  scaleZ: number
+  /** Unit quaternion for shard orientation (world, asteroid-local). */
+  quat: { x: number; y: number; z: number; w: number }
+  /** Tint derived from dominant bulk root (instance color). */
+  tintRgb: { r: number; g: number; b: number }
 }
 
 export interface DebrisState {
@@ -44,6 +54,8 @@ export interface DebrisSpawnParams {
    */
   bonusUnits: number
   bonusChance: number
+  /** When set, biases shard visual archetype (chip / splinter / chunk). */
+  asteroidRegime?: AsteroidRegime
 }
 
 export interface DebrisRay {
@@ -101,6 +113,114 @@ function normalizeBulkFromCell(cell: VoxelCell): Record<RootResourceId, number> 
 function randomInRange(min: number, max: number): number {
   if (max <= min) return min
   return min + Math.random() * (max - min)
+}
+
+function float01FromShardKey(key: number, salt: number): number {
+  let n = key * 2246822519 + salt * 3266489917 + 668265263
+  n ^= n >>> 13
+  n = Math.imul(n, 1274126177)
+  n ^= n >>> 16
+  return (n >>> 0) / 4294967296
+}
+
+function dominantRootFromBulk(bulk: Record<RootResourceId, number>): RootResourceId {
+  let best: RootResourceId = ROOT_RESOURCE_IDS[0]!
+  let bestW = -1
+  for (const r of ROOT_RESOURCE_IDS) {
+    const w = clamp01(bulk[r] ?? 0)
+    if (w > bestW) {
+      bestW = w
+      best = r
+    }
+  }
+  return best
+}
+
+function regimeStyleSalt(reg: AsteroidRegime | undefined): number {
+  if (!reg) return 0
+  let h = 0
+  for (let i = 0; i < reg.length; i++) h = Math.imul(h, 31) + reg.charCodeAt(i)!
+  return h & 0xffff
+}
+
+function splinterBiasForRegime(reg: AsteroidRegime | undefined): number {
+  if (!reg) return 0.34
+  switch (reg) {
+    case 'impactShattered':
+    case 'collisionalFamilyDebris':
+      return 0.56
+    case 'competentMonolith':
+      return 0.14
+    case 'contactBinaryRubble':
+      return 0.4
+    default:
+      return 0.34
+  }
+}
+
+/** Deterministic orientation + non-uniform scale from shard id, cell, and asteroid regime. */
+function computeShardVisualMorph(
+  id: number,
+  pos: { x: number; y: number; z: number },
+  bulk: Record<RootResourceId, number>,
+  regime: AsteroidRegime | undefined,
+): {
+  scaleX: number
+  scaleY: number
+  scaleZ: number
+  quat: DebrisShard['quat']
+  tintRgb: { r: number; g: number; b: number }
+} {
+  const { x: cx, y: cy, z: cz } = pos
+  const key = id * 1315423911 + cx * 7919 + cy * 7937 + cz * 7949
+
+  const u0 = float01FromShardKey(key, 1)
+  const u1 = float01FromShardKey(key, 2)
+  const u2 = float01FromShardKey(key, 3)
+  const u3 = float01FromShardKey(key, 4)
+  const uStyle = float01FromShardKey(key, 5 + regimeStyleSalt(regime))
+
+  const base = 0.62 + u0 * 0.76
+  const t0 = splinterBiasForRegime(regime)
+  const t1 = t0 + 0.22
+  let scaleX = base
+  let scaleY = base
+  let scaleZ = base
+  if (uStyle < t0) {
+    scaleX = base * 0.42
+    scaleY = base * 1.02
+    scaleZ = base * 1.4
+  } else if (uStyle < t1) {
+    const c = base * 1.16
+    scaleX = c
+    scaleY = c
+    scaleZ = c
+  } else {
+    const c = base * 0.9
+    scaleX = c
+    scaleY = c
+    scaleZ = c
+  }
+
+  const theta = 2 * Math.PI * u1
+  const z = 2 * u2 - 1
+  const r = Math.sqrt(Math.max(0, 1 - z * z))
+  const ax = r * Math.cos(theta)
+  const ay = r * Math.sin(theta)
+  const ang = 2 * Math.PI * u3
+  const half = ang * 0.5
+  const s = Math.sin(half)
+  const c = Math.cos(half)
+  const len = Math.hypot(ax, ay, z) || 1
+  const quat: DebrisShard['quat'] = {
+    x: (ax / len) * s,
+    y: (ay / len) * s,
+    z: (z / len) * s,
+    w: c,
+  }
+
+  const tintRgb = getResourceColor(dominantRootFromBulk(bulk))
+  return { scaleX, scaleY, scaleZ, quat, tintRgb }
 }
 
 function randomUnitVectorHemisphere(): { x: number; y: number; z: number } {
@@ -177,6 +297,7 @@ export function spawnDebrisFromRemovedCell(
   const lifetimeMs = randomInRange(params.lifetimeMs.min, params.lifetimeMs.max)
 
   const id = state.nextId++
+  const morph = computeShardVisualMorph(id, cell.pos, bulk, params.asteroidRegime)
   state.shards.push({
     id,
     pos: { x: localPos.x, y: localPos.y, z: localPos.z },
@@ -185,6 +306,11 @@ export function spawnDebrisFromRemovedCell(
     maxLifetimeMs: lifetimeMs,
     bulk,
     reward,
+    scaleX: morph.scaleX,
+    scaleY: morph.scaleY,
+    scaleZ: morph.scaleZ,
+    quat: morph.quat,
+    tintRgb: morph.tintRgb,
   })
 }
 
@@ -208,14 +334,15 @@ export function stepDebris(state: DebrisState, nowMs: number, dtMs: number): voi
 export function raycastDebris(
   state: DebrisState,
   ray: DebrisRay,
-  radius: number,
+  baseRadius: number,
 ): DebrisHit | null {
   const shards = state.shards
-  if (shards.length === 0 || radius <= 0) return null
+  if (shards.length === 0 || baseRadius <= 0) return null
   const { origin, dir, maxDist } = ray
-  const r2 = radius * radius
   let best: DebrisHit | null = null
   for (const s of shards) {
+    const effR = baseRadius * Math.max(s.scaleX, s.scaleY, s.scaleZ)
+    const r2 = effR * effR
     const px = s.pos.x - origin.x
     const py = s.pos.y - origin.y
     const pz = s.pos.z - origin.z

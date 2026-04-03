@@ -18,6 +18,7 @@ import { MUSIC_VOLUME_STORAGE_KEY } from './musicVolume'
 import { SFX_VOLUME_STORAGE_KEY } from './sfxVolume'
 import { PICK_THUD_DEBUG_STORAGE_KEY } from './pickThudPersist'
 import { OVERLAY_VISUALIZATION_STORAGE_KEY } from './overlayVisualizationPrefs'
+import { LOCAL_STAR_TINT_DEBUG_STORAGE_KEY } from './localStarTintPersist'
 import { SCAN_VISUALIZATION_DEBUG_STORAGE_KEY } from './scanVisualizationPersist'
 import { GAME_SPEED_MULT_STORAGE_KEY } from './gameSpeedDebug'
 import { SUN_LIGHT_ANGLES_STORAGE_KEY, SUN_LIGHT_DEBUG_STORAGE_KEY } from './settingsClientPersist'
@@ -37,6 +38,7 @@ const PRESET_KEYS: readonly string[] = [
   SUN_LIGHT_ANGLES_STORAGE_KEY,
   SUN_LIGHT_DEBUG_STORAGE_KEY,
   SCAN_VISUALIZATION_DEBUG_STORAGE_KEY,
+  LOCAL_STAR_TINT_DEBUG_STORAGE_KEY,
   AUDIO_MASTER_DEBUG_STORAGE_KEY,
   OVERLAY_VISUALIZATION_STORAGE_KEY,
   DISCOVERY_AUTO_RESOLVE_STORAGE_KEY,

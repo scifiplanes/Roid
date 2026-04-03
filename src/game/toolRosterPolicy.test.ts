@@ -50,6 +50,7 @@ describe('toolRosterPolicy', () => {
         debugUnlockAllTools: false,
         isToolAllowedByInitialDebugConfig: allow,
         resourceTallies: {},
+        hasComputroniumVoxel: false,
       }),
     ).toBe(true)
   })
@@ -61,6 +62,7 @@ describe('toolRosterPolicy', () => {
         debugUnlockAllTools: false,
         isToolAllowedByInitialDebugConfig: allow,
         resourceTallies: {},
+        hasComputroniumVoxel: false,
       }),
     ).toBe(false)
     expect(
@@ -68,6 +70,27 @@ describe('toolRosterPolicy', () => {
         debugUnlockAllTools: false,
         isToolAllowedByInitialDebugConfig: allow,
         resourceTallies: { silicates: 1 },
+        hasComputroniumVoxel: false,
+      }),
+    ).toBe(true)
+  })
+
+  it('blocks seed until first computronium voxel when debug allows seed and roots exist', () => {
+    const allow = (t: keyof InitialToolDebugConfig) => cfg({ seed: true })[t] === true
+    expect(
+      isGameplayToolRosterAllowed('seed', {
+        debugUnlockAllTools: false,
+        isToolAllowedByInitialDebugConfig: allow,
+        resourceTallies: { silicates: 1 },
+        hasComputroniumVoxel: false,
+      }),
+    ).toBe(false)
+    expect(
+      isGameplayToolRosterAllowed('seed', {
+        debugUnlockAllTools: false,
+        isToolAllowedByInitialDebugConfig: allow,
+        resourceTallies: { silicates: 1 },
+        hasComputroniumVoxel: true,
       }),
     ).toBe(true)
   })

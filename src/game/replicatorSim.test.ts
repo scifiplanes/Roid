@@ -72,4 +72,79 @@ describe('stepReplicators', () => {
     expect(r.meshDirty).toBe(true)
     expect(eating.kind).toBe('replicator')
   })
+
+  it('spread inherits strain + seed program to neighbor eating rock', () => {
+    const neighbor = cell({ x: 14, y: 12, z: 12 }, 'regolith', { hpRemaining: 4 })
+    const eating = cell({ x: 13, y: 12, z: 12 }, 'regolith', {
+      replicatorEating: true,
+      hpRemaining: 1,
+      replicatorStrainId: 'TestStrain',
+      seedRuntime: {
+        seedTypeId: 'basicSeed',
+        lifetimeTotalSec: 120,
+        lifetimeRemainingSec: 120,
+        activeRecipes: ['metals'],
+        slots: [{ kind: 'recipe', resourceId: 'metals', durationSec: 10 }],
+        currentSlotIndex: 0,
+        currentSlotRemainingSec: 10,
+      },
+      replicatorRecipeResourceId: 'metals',
+    })
+    const cells = [eating, neighbor]
+    rebuildReplicatorSimHotLists(cells)
+    const index = buildPosIndex(cells, gridSize)
+    stepReplicators(5000, cells, { neighborIndex: index, gridSize })
+    expect(eating.kind).toBe('replicator')
+    expect(neighbor.replicatorEating).toBe(true)
+    expect(neighbor.replicatorStrainId).toBe('TestStrain')
+    expect(neighbor.seedRuntime?.seedTypeId).toBe('basicSeed')
+    expect(neighbor.seedRuntime?.lifetimeRemainingSec).toBe(120)
+    expect(neighbor.seedRuntime?.currentSlotIndex).toBe(0)
+    expect(neighbor.replicatorRecipeResourceId).toBe('metals')
+  })
+
+  it('loops the slot program when seed lifetime outlasts one full pass (min lifetime vs short stack)', () => {
+    const mature = cell({ x: 20, y: 20, z: 20 }, 'replicator', {
+      hpRemaining: 1,
+      seedRuntime: {
+        seedTypeId: 'basicSeed',
+        lifetimeTotalSec: 30,
+        lifetimeRemainingSec: 30,
+        activeRecipes: ['metals', 'silicates'],
+        slots: [
+          { kind: 'recipe', resourceId: 'metals', durationSec: 5 },
+          { kind: 'recipe', resourceId: 'silicates', durationSec: 5 },
+        ],
+        currentSlotIndex: 0,
+        currentSlotRemainingSec: 5,
+      },
+    })
+    rebuildReplicatorSimHotLists([mature])
+    const index = buildPosIndex([mature], gridSize)
+    stepReplicators(10_000, [mature], { neighborIndex: index, gridSize })
+    expect(mature.seedRuntime?.currentSlotIndex).toBe(0)
+    expect(mature.seedRuntime?.lifetimeRemainingSec).toBeCloseTo(20, 5)
+  })
+
+  it('die slot terminates the seed (no loop after die)', () => {
+    const mature = cell({ x: 21, y: 21, z: 21 }, 'replicator', {
+      hpRemaining: 1,
+      seedRuntime: {
+        seedTypeId: 'basicSeed',
+        lifetimeTotalSec: 60,
+        lifetimeRemainingSec: 60,
+        activeRecipes: ['metals'],
+        slots: [
+          { kind: 'recipe', resourceId: 'metals', durationSec: 1 },
+          { kind: 'die', durationSec: 1 },
+        ],
+        currentSlotIndex: 0,
+        currentSlotRemainingSec: 1,
+      },
+    })
+    rebuildReplicatorSimHotLists([mature])
+    const index = buildPosIndex([mature], gridSize)
+    stepReplicators(3000, [mature], { neighborIndex: index, gridSize })
+    expect(mature.seedRuntime?.lifetimeRemainingSec).toBe(0)
+  })
 })

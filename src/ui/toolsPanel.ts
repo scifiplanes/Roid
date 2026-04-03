@@ -5,6 +5,7 @@ import {
   getScaledDepthScannerBuildCost,
   getScaledExplosiveChargeArmCost,
   getScaledHubBuildCost,
+  getScaledMiningDronePlaceCost,
   getScaledReactorBuildCost,
   getScaledRefineryBuildCost,
   getScaledReplicatorPlaceCost,
@@ -44,40 +45,41 @@ export type PlayerTool =
   | 'computronium'
   | 'emCatapult'
 
-type ToolCategoryId =
-  | 'all'
+/** Filter tabs (excludes `all`). Tools can appear in multiple tabs. */
+type ToolFilterTabId =
   | 'basic'
-  | 'structures'
+  | 'nodes'
+  | 'nanites'
+  | 'drones'
   | 'lasers'
-  | 'scanningDepth'
-  | 'cleanup'
+  | 'scanning'
   | 'travel'
 
-type ToolFilterId = ToolCategoryId
+type ToolFilterId = 'all' | ToolFilterTabId
 
-const TOOL_CATEGORY: Readonly<Record<PlayerTool, ToolCategoryId>> = {
-  pick: 'basic',
-  inspect: 'basic',
-  hoover: 'basic',
-  lifter: 'basic',
-  cargoDrone: 'basic',
-  replicator: 'structures',
-  seed: 'structures',
-  reactor: 'structures',
-  battery: 'structures',
-  hub: 'structures',
-  refinery: 'structures',
-  computronium: 'scanningDepth',
-  orbitalLaser: 'lasers',
-  excavatingLaser: 'lasers',
-  scanner: 'scanningDepth',
-  explosiveCharge: 'lasers',
-  depthScanner: 'scanningDepth',
-  drossCollector: 'cleanup',
-  scourge: 'cleanup',
-  locust: 'cleanup',
-  miningDrone: 'cleanup',
-  emCatapult: 'travel',
+const TOOL_FILTER_TABS: Readonly<Record<PlayerTool, readonly ToolFilterTabId[]>> = {
+  pick: ['basic'],
+  inspect: ['basic'],
+  hoover: ['basic'],
+  lifter: ['drones'],
+  cargoDrone: ['drones'],
+  replicator: ['nanites'],
+  seed: ['nanites'],
+  reactor: ['nodes'],
+  battery: ['nodes'],
+  hub: ['nodes'],
+  refinery: ['nodes'],
+  computronium: ['nodes'],
+  orbitalLaser: ['lasers'],
+  excavatingLaser: ['lasers'],
+  scanner: ['scanning'],
+  explosiveCharge: ['lasers'],
+  depthScanner: ['scanning'],
+  drossCollector: ['drones'],
+  scourge: ['nanites', 'drones'],
+  locust: ['nanites'],
+  miningDrone: ['nanites', 'drones'],
+  emCatapult: ['travel'],
 }
 
 export interface LaserSatelliteRowSnapshot {
@@ -142,17 +144,17 @@ export interface ToolsPanelOptions {
   onDecommissionSatellite?: (kind: SatelliteDeployKind, count: number) => void
   /** Tier-5 cleanup collector deploy row: visibility matches computronium ladder. */
   getDrossCollectorDeployUiPhase?: () => LaserToolUiPhase
-  /** Main-row Cleanup tool (F13): same phase as deploy row; defaults to deploy phase if omitted. */
+  /** Main-row Sweeper tool: same phase as deploy row; defaults to deploy phase if omitted. */
   getDrossCollectorToolUiPhase?: () => LaserToolUiPhase
   /** If set, unaffordable resource costs dim the tool (`aria-disabled`) and the status line notes unmet requirements. */
   canAffordResourceCost?: (cost: Partial<Record<ResourceId, number>>) => boolean
-  /** Laser tools (F7–F9): hidden until research starts, gibberish labels while unlocking. */
+  /** Laser tools: hidden until research starts, gibberish labels while unlocking. */
   getLaserToolUiPhase?: (tool: LaserToolId) => LaserToolUiPhase
-  /** Depth scan (F11): fourth computronium tier; same hidden / researching / unlocked pattern as lasers. */
+  /** Depth scan: fourth computronium tier; same hidden / researching / unlocked pattern as lasers. */
   getDepthScanToolUiPhase?: () => LaserToolUiPhase
-  /** F3–F6 / F4 / F12: hidden until prerequisite structures exist on the asteroid. */
+  /** Structure tools: hidden until prerequisite structures exist on the asteroid. */
   getStructureToolUiPhase?: (tool: StructureToolId) => 'hidden' | 'unlocked'
-  /** F10: same phase as mining laser (computronium tier 1). */
+  /** Explosive charge: same phase as mining laser (computronium tier 1). */
   getExplosiveChargeToolUiPhase?: () => LaserToolUiPhase
   /** Tier 6: EM Catapult (new asteroid, keep research). */
   getEmCatapultToolUiPhase?: () => LaserToolUiPhase
@@ -179,7 +181,7 @@ export interface ToolsPanelOptions {
   /** After `patchGameBalance` from the tools dock (e.g. depth lode opacity row). */
   onGameBalancePatch?: () => void
   /**
-   * Roster allow: phase-gated tools use gameplay only; pick/inspect/hoover/replicator/seed use Debug + milestones.
+   * Roster allow: phase-gated tools use gameplay only; pick/inspect/hoover use Debug; replicator after first root; seed after first root + computronium voxel.
    * Main wires {@link isGameplayToolRosterAllowed}.
    */
   isToolRosterAllowed?: (tool: PlayerTool) => boolean
@@ -213,10 +215,11 @@ const TOOL_FILTERS: ReadonlyArray<{
 }> = [
   { id: 'all', label: 'All' },
   { id: 'basic', label: 'Basics' },
-  { id: 'structures', label: 'Structures' },
+  { id: 'nodes', label: 'Nodes' },
+  { id: 'nanites', label: 'Nanites' },
+  { id: 'drones', label: 'Drones' },
   { id: 'lasers', label: 'Lasers' },
-  { id: 'scanningDepth', label: 'Scanning/Depth' },
-  { id: 'cleanup', label: 'Cleanup' },
+  { id: 'scanning', label: 'Scanning' },
   { id: 'travel', label: 'Travel' },
 ]
 
@@ -232,14 +235,14 @@ const TOOLS: ReadonlyArray<{
 }> = [
   {
     id: 'pick',
-    fKey: 'F1',
-    label: 'Poke',
-    title: 'Poke rocks.',
-    short: 'Poke rocks.',
+    fKey: '1',
+    label: 'Pick',
+    title: 'Pick rocks.',
+    short: 'Pick rocks.',
   },
   {
     id: 'seed',
-    fKey: 'F15',
+    fKey: '2',
     label: 'Seed',
     title:
       'Program Replicators with Seeds. Select a Seed stack, then place Replicators that follow that programming until their Seed lifetime expires.',
@@ -248,7 +251,7 @@ const TOOLS: ReadonlyArray<{
   },
   {
     id: 'inspect',
-    fKey: 'Ins',
+    fKey: '3',
     label: 'Inspect',
     title:
       'Show info in top menu. Click a voxel for position, kind, and state; orbit markers open satellite info. Bulk/refined composition only after surface scan or depth reveal on that cell',
@@ -256,7 +259,7 @@ const TOOLS: ReadonlyArray<{
   },
   {
     id: 'replicator',
-    fKey: 'F2',
+    fKey: '4',
     label: 'Replicator',
     title: 'Convert rocks into stored resources and itself',
     short: 'Rocks → stored resources; spreads',
@@ -264,7 +267,7 @@ const TOOLS: ReadonlyArray<{
   },
   {
     id: 'reactor',
-    fKey: 'F3',
+    fKey: '5',
     label: 'Reactor',
     title: 'Generate energy. Convert a mature replicator into a reactor',
     short: 'Replicator → reactor; generates energy',
@@ -272,7 +275,7 @@ const TOOLS: ReadonlyArray<{
   },
   {
     id: 'battery',
-    fKey: 'F4',
+    fKey: '6',
     label: 'Battery',
     title: 'Convert a mature replicator into a battery; increases energy storage cap',
     short: 'Replicator → battery; raises energy cap',
@@ -280,7 +283,7 @@ const TOOLS: ReadonlyArray<{
   },
   {
     id: 'hub',
-    fKey: 'F5',
+    fKey: '7',
     label: 'Hub',
     title:
       'Collects resources. Convert a mature replicator into a hub, or click an existing hub to toggle it on/off (standby saves energy). Pulls local stock into global root tallies.',
@@ -289,7 +292,7 @@ const TOOLS: ReadonlyArray<{
   },
   {
     id: 'refinery',
-    fKey: 'F6',
+    fKey: '8',
     label: 'Refinery',
     title:
       'Process resources. Convert a mature replicator into a refinery, or click an existing refinery to toggle it on/off. Processes global root resources into second-order resources.',
@@ -298,14 +301,14 @@ const TOOLS: ReadonlyArray<{
   },
   {
     id: 'hoover',
-    fKey: 'HV',
+    fKey: '9',
     label: 'Hoover',
     title: 'Hold on debris to vacuum dross into resources (no energy cost).',
     short: 'Vacuum local debris into resources',
   },
   {
     id: 'lifter',
-    fKey: 'LF',
+    fKey: '0',
     label: 'Lifter',
     title:
       'Click processed matter (mining laser) to charge; when ready it flies off and credits roots like a hub pull.',
@@ -313,7 +316,7 @@ const TOOLS: ReadonlyArray<{
   },
   {
     id: 'cargoDrone',
-    fKey: 'CD',
+    fKey: 'Q',
     label: 'Cargo drone',
     title:
       'Deploy cargo drones with + Cargo sat (mining laser tier). Orbit fleet automatically transfers processed matter into root tallies over time (after hubs on each tick).',
@@ -323,7 +326,7 @@ const TOOLS: ReadonlyArray<{
   },
   {
     id: 'orbitalLaser',
-    fKey: 'F7',
+    fKey: 'W',
     label: 'Laser',
     title:
       'Hold and drag on rock to make processed matter (uses energy); a hub consolidates it into roots, then refineries refine',
@@ -333,7 +336,7 @@ const TOOLS: ReadonlyArray<{
   },
   {
     id: 'excavatingLaser',
-    fKey: 'F8',
+    fKey: 'E',
     label: 'Dig laser',
     title: 'Hold and drag to destroy any voxel (uses energy); no resource drops',
     short: 'Drag to destroy voxels (uses energy)',
@@ -342,7 +345,7 @@ const TOOLS: ReadonlyArray<{
   },
   {
     id: 'scanner',
-    fKey: 'F9',
+    fKey: 'R',
     label: 'Scan',
     title:
       'Click rock to scan a voxel neighborhood (uses energy; radius in Debug → balance); persistent refined-material tint; eye menu toggles Surface scan overlay',
@@ -352,7 +355,7 @@ const TOOLS: ReadonlyArray<{
   },
   {
     id: 'explosiveCharge',
-    fKey: 'F10',
+    fKey: 'T',
     label: 'Charge',
     title:
       'Click any voxel to arm; blinks then explodes (blast radius in Debug → balance). Unlocks with computronium research tier 1 (same milestone as mining laser). Per arm: resources + energy',
@@ -361,7 +364,7 @@ const TOOLS: ReadonlyArray<{
   },
   {
     id: 'depthScanner',
-    fKey: 'F11',
+    fKey: 'Y',
     label: 'Depth scan',
     title:
       'Convert rock or processed matter into a depth scanner (resource cost); unlocks after computronium research tier 4 (scanner satellite tier first); passive interior reveal; eye menu → Depth overlay',
@@ -370,16 +373,16 @@ const TOOLS: ReadonlyArray<{
   },
   {
     id: 'drossCollector',
-    fKey: 'F13',
-    label: 'Cleanup',
+    fKey: 'U',
+    label: 'Sweeper',
     title:
-      'Computronium tier 5 unlocks cleanup collector satellites. Deploy with + Cleanup sat; collectors convert debris into resources. No voxel action on the asteroid.',
-    short: 'Cleanup satellites; debris → resources',
+      'Computronium tier 5 unlocks sweeper collector satellites. Deploy with + Sweeper sat; collectors convert debris into resources. No voxel action on the asteroid.',
+    short: 'Sweeper satellites; debris → resources',
     costTool: 'drossCollectorInfo',
   },
   {
     id: 'scourge',
-    fKey: 'F16',
+    fKey: 'I',
     label: 'Scourge',
     title:
       'Place a Scourge seed. Seeds spread flood-fill style, consuming neighboring rock and mature replicators into cleanup dross mass while Debug → balance Scourge settings cap per-tick conversions.',
@@ -388,7 +391,7 @@ const TOOLS: ReadonlyArray<{
   },
   {
     id: 'locust',
-    fKey: 'F17',
+    fKey: 'O',
     label: 'Locust',
     title:
       'Place a Locust seed. Locust behaves like Scourge but replicates along the front, growing a thicker cleanup wave as it advances; neighbors can be rock or mature replicators.',
@@ -397,7 +400,7 @@ const TOOLS: ReadonlyArray<{
   },
   {
     id: 'miningDrone',
-    fKey: 'F18',
+    fKey: 'P',
     label: 'Mining drone',
     title:
       'Place a mining drone on rock. Each step it moves into a random neighboring rock voxel and leaves processed matter behind; scanned targets use full rock composition; unscanned targets leave generic PM (tier 5 computronium research, same as Scourge/Locust).',
@@ -406,7 +409,7 @@ const TOOLS: ReadonlyArray<{
   },
   {
     id: 'computronium',
-    fKey: 'F12',
+    fKey: 'A',
     label: 'Computronium',
     title:
       'Convert a mature replicator into computronium (resource cost). Active computronium spends energy and unlocks laser tools over time. Click existing computronium to toggle off',
@@ -415,7 +418,7 @@ const TOOLS: ReadonlyArray<{
   },
   {
     id: 'emCatapult',
-    fKey: 'F14',
+    fKey: 'S',
     label: 'EM Catapult',
     title:
       'After computronium tier 6 (cleanup tier first): click the view to travel to a new procedural asteroid. Keeps research tiers, satellite unlocks, and deploy counts; resets resources, energy, and surface structures. Settings → Regenerate asteroid still resets everything.',
@@ -423,6 +426,60 @@ const TOOLS: ReadonlyArray<{
     costTool: 'emCatapultInfo',
   },
 ]
+
+/** Physical key codes (`KeyboardEvent.code`), same order as {@link TOOLS}. */
+const TOOL_HOTKEY_CODES: readonly string[] = [
+  'Digit1',
+  'Digit2',
+  'Digit3',
+  'Digit4',
+  'Digit5',
+  'Digit6',
+  'Digit7',
+  'Digit8',
+  'Digit9',
+  'Digit0',
+  'KeyQ',
+  'KeyW',
+  'KeyE',
+  'KeyR',
+  'KeyT',
+  'KeyY',
+  'KeyU',
+  'KeyI',
+  'KeyO',
+  'KeyP',
+  'KeyA',
+  'KeyS',
+]
+
+const NUMPAD_TO_MAIN_ROW: Readonly<Record<string, string>> = {
+  Numpad1: 'Digit1',
+  Numpad2: 'Digit2',
+  Numpad3: 'Digit3',
+  Numpad4: 'Digit4',
+  Numpad5: 'Digit5',
+  Numpad6: 'Digit6',
+  Numpad7: 'Digit7',
+  Numpad8: 'Digit8',
+  Numpad9: 'Digit9',
+  Numpad0: 'Digit0',
+}
+
+if (TOOLS.length !== TOOL_HOTKEY_CODES.length) {
+  throw new Error('TOOLS and TOOL_HOTKEY_CODES length mismatch')
+}
+
+const _playerToolByHotkeyCode = new Map<string, PlayerTool>()
+for (let i = 0; i < TOOLS.length; i++) {
+  _playerToolByHotkeyCode.set(TOOL_HOTKEY_CODES[i]!, TOOLS[i]!.id)
+}
+
+/** Map `KeyboardEvent.code` (after numpad → main-row alias) to the bound tool, if any. */
+export function getPlayerToolForHotkeyCode(code: string): PlayerTool | undefined {
+  const normalized = NUMPAD_TO_MAIN_ROW[code] ?? code
+  return _playerToolByHotkeyCode.get(normalized)
+}
 
 function costForTool(kind: CostToolKind): Partial<Record<ResourceId, number>> {
   if (kind === 'replicatorPlace') return getScaledReplicatorPlaceCost()
@@ -437,7 +494,7 @@ function costForTool(kind: CostToolKind): Partial<Record<ResourceId, number>> {
   if (kind === 'drossCollectorInfo') return {}
   if (kind === 'scourgeInfo') return {}
   if (kind === 'locustInfo') return {}
-  if (kind === 'miningDroneInfo') return {}
+  if (kind === 'miningDroneInfo') return getScaledMiningDronePlaceCost()
   if (kind === 'cargoDroneInfo') return {}
   if (kind === 'emCatapultInfo') return {}
   return {}
@@ -562,13 +619,6 @@ export function createToolsPanel(
 
   let selected: PlayerTool = initialTool
   const buttons = new Map<PlayerTool, HTMLButtonElement>()
-  const buttonCategories = new Map<
-    PlayerTool,
-    {
-      button: HTMLButtonElement
-      category: ToolCategoryId
-    }
-  >()
   const costUi = new Map<
     PlayerTool,
     {
@@ -613,7 +663,7 @@ export function createToolsPanel(
   const drossDeployBtn = document.createElement('button')
   drossDeployBtn.type = 'button'
   drossDeployBtn.className = 'tools-sat-btn'
-  drossDeployBtn.textContent = '+ Cleanup sat'
+  drossDeployBtn.textContent = '+ Sweeper sat'
 
   const cargoDeployBtn = document.createElement('button')
   cargoDeployBtn.type = 'button'
@@ -1130,7 +1180,7 @@ export function createToolsPanel(
     if (ui.kind === 'drossCollectorInfo') {
       ui.costSpan.textContent = 'Tier 5'
       setToolBlockedByAffordance(ui.button, false)
-      ui.button.title = `${ui.baseTitle} Unlocked: deploy collectors from + Cleanup sat.`
+      ui.button.title = `${ui.baseTitle} Unlocked: deploy collectors from + Sweeper sat.`
       ui.button.setAttribute('aria-label', ui.button.title)
       return
     }
@@ -1185,7 +1235,7 @@ export function createToolsPanel(
     orbital: 'Mining satellite',
     excavating: 'Dig laser satellite',
     scanner: 'Scanner satellite',
-    drossCollector: 'Cleanup collector satellite',
+    drossCollector: 'Sweeper collector satellite',
     cargoDrone: 'Cargo drone satellite',
   }
 
@@ -1383,7 +1433,7 @@ export function createToolsPanel(
       if (pendingSatelliteKind === 'drossCollector') pendingSatelliteKind = null
     } else if (drossPhase === 'unlocked') {
       drossDeployBtn.disabled = false
-      drossDeployBtn.title = `Select to deploy another cleanup collector satellite. Next deploy: ${d.deployCostLine}.`
+      drossDeployBtn.title = `Select to deploy another sweeper collector satellite. Next deploy: ${d.deployCostLine}.`
     } else {
       drossDeployBtn.disabled = true
       drossDeployBtn.title = ''
@@ -1552,17 +1602,7 @@ export function createToolsPanel(
 
   function toolMatchesActiveFilter(toolId: PlayerTool): boolean {
     if (activeFilter === 'all') return true
-    const meta = buttonCategories.get(toolId)
-    if (!meta) return true
-    return meta.category === activeFilter
-  }
-
-  function syncToolFilterRow(): void {
-    for (const [toolId, btn] of buttons) {
-      const byFilter = toolMatchesActiveFilter(toolId)
-      // Tools without a `costTool` never pass through `refreshToolCosts`; filter + unlock roster must set hidden here.
-      btn.hidden = !byFilter || isToolHidden(toolId)
-    }
+    return TOOL_FILTER_TABS[toolId].includes(activeFilter as ToolFilterTabId)
   }
 
   for (const def of TOOLS) {
@@ -1626,14 +1666,10 @@ export function createToolsPanel(
     }
 
     btn.setAttribute('aria-pressed', def.id === initialTool ? 'true' : 'false')
-    btn.setAttribute('aria-label', def.title)
+    btn.setAttribute('aria-label', `${def.label} (${def.fKey})`)
     if (def.id === initialTool) btn.classList.add('tools-tool-active')
     btn.addEventListener('click', () => setPressed(def.id))
     buttons.set(def.id, btn)
-    buttonCategories.set(def.id, {
-      button: btn,
-      category: TOOL_CATEGORY[def.id],
-    })
     row.appendChild(btn)
   }
 
@@ -1643,12 +1679,87 @@ export function createToolsPanel(
 
   const filterButtons = new Map<ToolFilterId, HTMLButtonElement>()
 
-  function syncActiveFilterUi(): void {
+  const FILTER_TAB_IDS: ToolFilterTabId[] = [
+    'basic',
+    'nodes',
+    'nanites',
+    'drones',
+    'lasers',
+    'scanning',
+    'travel',
+  ]
+
+  /** Tabs before structures/lasers/etc.; until a visible tool maps outside these, hide the filter row. */
+  const EARLY_ONLY_FILTER_TABS = new Set<ToolFilterTabId>(['basic', 'nanites'])
+
+  function syncToolFilterRow(): void {
+    let totalVisible = 0
+    let hasBeyondEarlyTabs = false
+    const countByCategory = new Map<ToolFilterTabId, number>()
+    for (const c of FILTER_TAB_IDS) countByCategory.set(c, 0)
+    for (const def of TOOLS) {
+      if (isToolHidden(def.id)) continue
+      totalVisible++
+      for (const fid of TOOL_FILTER_TABS[def.id]) {
+        countByCategory.set(fid, (countByCategory.get(fid) ?? 0) + 1)
+        if (!EARLY_ONLY_FILTER_TABS.has(fid)) hasBeyondEarlyTabs = true
+      }
+    }
+
+    let nonAllCategoriesWithTools = 0
+    for (const c of FILTER_TAB_IDS) {
+      if ((countByCategory.get(c) ?? 0) > 0) nonAllCategoriesWithTools++
+    }
+
+    const showFilterRow = nonAllCategoriesWithTools > 1 && hasBeyondEarlyTabs
+    filterRow.hidden = !showFilterRow
+    if (!showFilterRow) {
+      activeFilter = 'all'
+    }
+
+    const allBtn = filterButtons.get('all')
+    if (allBtn) allBtn.hidden = totalVisible === 0
+    for (const c of FILTER_TAB_IDS) {
+      const b = filterButtons.get(c)
+      if (b) b.hidden = (countByCategory.get(c) ?? 0) === 0
+    }
+
+    const activeBtn = filterButtons.get(activeFilter)
+    const activeCategoryCount =
+      activeFilter === 'all'
+        ? totalVisible
+        : (countByCategory.get(activeFilter as ToolFilterTabId) ?? 0)
+    if (
+      activeCategoryCount === 0 ||
+      (activeBtn?.hidden ?? false) ||
+      (activeFilter !== 'all' && (countByCategory.get(activeFilter as ToolFilterTabId) ?? 0) === 0)
+    ) {
+      if (allBtn && !allBtn.hidden) {
+        activeFilter = 'all'
+      } else {
+        for (const c of FILTER_TAB_IDS) {
+          if ((countByCategory.get(c) ?? 0) > 0) {
+            activeFilter = c
+            break
+          }
+        }
+      }
+    }
+
     for (const [id, btn] of filterButtons) {
       const on = id === activeFilter
       btn.classList.toggle('tools-filter-btn-active', on)
       btn.setAttribute('aria-pressed', on ? 'true' : 'false')
     }
+
+    for (const [toolId, btn] of buttons) {
+      const byFilter = toolMatchesActiveFilter(toolId)
+      // Tools without a `costTool` never pass through `refreshToolCosts`; filter + unlock roster must set hidden here.
+      btn.hidden = !byFilter || isToolHidden(toolId)
+    }
+  }
+
+  function syncActiveFilterUi(): void {
     syncToolFilterRow()
   }
 

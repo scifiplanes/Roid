@@ -37,6 +37,9 @@ const PASSIVE_PER_SEC: Partial<Record<ResourceId, number>> = {
 /** Hot path: only ids with a positive passive rate (avoid scanning full `RESOURCE_IDS_ORDERED`). */
 const PASSIVE_RESOURCE_IDS = Object.keys(PASSIVE_PER_SEC) as ResourceId[]
 
+let __dbgSeedSimLastMs = 0
+let __dbgSeedSimPausedLastMs = 0
+
 /** Mature `kind === 'replicator'` cells; rebuilt with spatial index (see `rebuildReplicatorSimHotLists`). */
 const matureReplicatorCells = new Set<VoxelCell>()
 /** Rock (non-mature) cells currently being eaten; same rebuild policy. */
@@ -125,7 +128,11 @@ function stepSeedRuntime(dtSec: number, cell: VoxelCell): boolean {
 
   // New per-slot program: honor pause/die/recipe slots when present.
   if (Array.isArray(seed.slots) && seed.slots.length > 0) {
-    if (seed.currentSlotIndex === undefined || seed.currentSlotIndex < 0) {
+    if (
+      seed.currentSlotIndex === undefined ||
+      seed.currentSlotIndex < 0 ||
+      seed.currentSlotIndex >= seed.slots.length
+    ) {
       seed.currentSlotIndex = 0
       const first = seed.slots[0]
       seed.currentSlotRemainingSec =
@@ -159,7 +166,7 @@ function stepSeedRuntime(dtSec: number, cell: VoxelCell): boolean {
 
       seed.currentSlotIndex! += 1
       if (seed.currentSlotIndex! >= seed.slots.length) {
-        break
+        seed.currentSlotIndex = 0
       }
       const next = seed.slots[seed.currentSlotIndex!]!
       seed.currentSlotRemainingSec =
@@ -169,8 +176,8 @@ function stepSeedRuntime(dtSec: number, cell: VoxelCell): boolean {
     }
 
       if (seed.lifetimeRemainingSec > 0 && seed.currentSlotIndex !== undefined) {
-        const activeSlot = seed.slots[seed.currentSlotIndex]!
-        if (activeSlot.kind === 'recipe' && activeSlot.resourceId) {
+        const activeSlot = seed.slots[seed.currentSlotIndex]
+        if (activeSlot && activeSlot.kind === 'recipe' && activeSlot.resourceId) {
           addYieldsToCellStore(cell, { [activeSlot.resourceId]: 1 })
           cell.replicatorRecipeResourceId = activeSlot.resourceId
           changed = true
@@ -187,6 +194,25 @@ function stepSeedRuntime(dtSec: number, cell: VoxelCell): boolean {
     changed = true
   }
   return changed
+}
+
+/** Independent seed program for a daughter cell (fresh lifetime, slot 0). */
+function cloneSeedRuntimeForSpread(src: SeedRuntimeState): SeedRuntimeState {
+  const slots = Array.isArray(src.slots) ? src.slots.map((s) => ({ ...s })) : undefined
+  const first = slots && slots.length > 0 ? slots[0] : undefined
+  const lifetimeTotalSec = src.lifetimeTotalSec
+  return {
+    seedTypeId: src.seedTypeId,
+    lifetimeTotalSec,
+    lifetimeRemainingSec: lifetimeTotalSec,
+    activeRecipes: src.activeRecipes.slice(),
+    slots,
+    currentSlotIndex: 0,
+    currentSlotRemainingSec:
+      first && typeof first.durationSec === 'number' && Number.isFinite(first.durationSec)
+        ? first.durationSec
+        : 0,
+  }
 }
 
 function canSpreadTo(cell: VoxelCell): boolean {
@@ -215,6 +241,15 @@ function spreadFromCell(origin: VoxelCell, index: ReplicatorNeighborIndex, gridS
     n.replicatorActive = true
     n.replicatorEating = true
     n.replicatorEatAccumulatorMs = 0
+    if (origin.replicatorStrainId !== undefined) {
+      n.replicatorStrainId = origin.replicatorStrainId
+    }
+    if (origin.seedRuntime) {
+      n.seedRuntime = cloneSeedRuntimeForSpread(origin.seedRuntime)
+    }
+    if (origin.replicatorRecipeResourceId !== undefined) {
+      n.replicatorRecipeResourceId = origin.replicatorRecipeResourceId
+    }
     eatingRockCells.add(n)
   }
 }
@@ -286,6 +321,27 @@ export function stepReplicators(
   options?: StepReplicatorsOptions,
 ): StepReplicatorsResult {
   if (options && options.replicatorPaused) {
+    // #region agent log
+    {
+      const t = performance.now()
+      if (t - __dbgSeedSimPausedLastMs > 700) {
+        __dbgSeedSimPausedLastMs = t
+        fetch('http://127.0.0.1:7481/ingest/59523295-7b3c-4817-bc0e-c2fb63f1b767', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '601a65' },
+          body: JSON.stringify({
+            sessionId: '601a65',
+            runId: 'recipe-debug',
+            hypothesisId: 'H5',
+            location: 'replicatorSim.ts:stepReplicators:paused',
+            message: 'replicator sim skipped (killswitch) — seed/recipe runtime does not advance',
+            data: { replicatorPaused: true },
+            timestamp: Date.now(),
+          }),
+        }).catch(() => {})
+      }
+    }
+    // #endregion
     return {
       meshDirty: false,
       eatingVisualDirty: false,
@@ -328,15 +384,66 @@ export function stepReplicators(
   let replicatorCannibalTicks = 0
 
   // Passive income and seeds only depend on mature replicators.
+  let dbgMatureWithSeed = 0
+  let dbgStepSeedYielded = 0
+  let dbgSampleAfter: VoxelCell | null = null
   if (dtSec > 0 && matureReplicators.length > 0) {
     for (const cell of matureReplicators) {
+      if (cell.seedRuntime) {
+        dbgMatureWithSeed++
+        if (!dbgSampleAfter) dbgSampleAfter = cell
+      }
       if (applyPassiveIncomePerCell(dtSec, cell)) {
         tallyChanged = true
       }
       if (stepSeedRuntime(dtSec, cell)) {
+        dbgStepSeedYielded++
         tallyChanged = true
       }
     }
+    // #region agent log
+    {
+      const t = performance.now()
+      if (t - __dbgSeedSimLastMs > 550) {
+        __dbgSeedSimLastMs = t
+        const c = dbgSampleAfter
+        const seed = c?.seedRuntime
+        let curSlotKind: string | null = null
+        if (seed && Array.isArray(seed.slots) && seed.slots.length > 0) {
+          const idx = Math.min(
+            seed.slots.length - 1,
+            Math.max(0, typeof seed.currentSlotIndex === 'number' ? seed.currentSlotIndex : 0),
+          )
+          const sl = seed.slots[idx]
+          if (sl) curSlotKind = String(sl.kind)
+        }
+        fetch('http://127.0.0.1:7481/ingest/59523295-7b3c-4817-bc0e-c2fb63f1b767', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '601a65' },
+          body: JSON.stringify({
+            sessionId: '601a65',
+            runId: 'recipe-debug',
+            hypothesisId: 'H6',
+            location: 'replicatorSim.ts:stepReplicators:seed-stats',
+            message: 'mature replicators seed runtime / stepSeedRuntime yields',
+            data: {
+              matureCount: matureReplicators.length,
+              matureWithSeedRuntime: dbgMatureWithSeed,
+              stepSeedRuntimeTallyChanges: dbgStepSeedYielded,
+              samplePos: c ? { x: c.pos.x, y: c.pos.y, z: c.pos.z } : null,
+              sampleLifetimeRem: seed?.lifetimeRemainingSec,
+              sampleSlotIdx: seed?.currentSlotIndex,
+              sampleSlotsLen: seed?.slots?.length ?? 0,
+              sampleCurSlotKind: curSlotKind,
+              sampleActiveRecipes0: seed?.activeRecipes?.[0] ?? null,
+              sampleRepRecipeField: c?.replicatorRecipeResourceId ?? null,
+            },
+            timestamp: Date.now(),
+          }),
+        }).catch(() => {})
+      }
+    }
+    // #endregion
   }
 
   const gridSize = options?.gridSize ?? 33

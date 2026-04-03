@@ -1,3 +1,4 @@
+import type { AsteroidRegime } from './asteroidGenProfile'
 import type { DrossState } from './drossSim'
 import { spawnDrossFromRemovedCell } from './drossSim'
 import type { DebrisState } from './debrisSim'
@@ -67,10 +68,11 @@ export interface StepLocustOptions {
   nowMs?: number
   gridSize?: number
   voxelSize?: number
+  asteroidRegime?: AsteroidRegime
 }
 
 export function stepLocust(cells: VoxelCell[], options: StepLocustOptions): boolean {
-  const { drossState, balance, debrisState, nowMs, gridSize, voxelSize } = options
+  const { drossState, balance, debrisState, nowMs, gridSize, voxelSize, asteroidRegime } = options
   if (!balance.locustEnabled) return false
   if (cells.length === 0) return false
 
@@ -122,6 +124,7 @@ export function stepLocust(cells: VoxelCell[], options: StepLocustOptions): bool
             rewardBaseUnits: 0.25,
             bonusUnits: 1,
             bonusChance: 0.08,
+            asteroidRegime,
           },
         )
       }

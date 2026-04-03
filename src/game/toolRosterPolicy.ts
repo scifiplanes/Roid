@@ -43,14 +43,23 @@ export interface ToolRosterPolicyInput {
   debugUnlockAllTools: boolean
   isToolAllowedByInitialDebugConfig: (tool: keyof InitialToolDebugConfig) => boolean
   resourceTallies: Readonly<Partial<Record<ResourceId, number>>>
+  /** At least one computronium voxel on the current asteroid (Seed tool only). */
+  hasComputroniumVoxel: boolean
 }
 
 /** Roster + tool-switch allow (matches tools dock and `beforeToolChange` first guard). */
 export function isGameplayToolRosterAllowed(tool: PlayerTool, p: ToolRosterPolicyInput): boolean {
   if (p.debugUnlockAllTools) return true
   if (isPhaseOnlyTool(tool)) return true
-  if (tool === 'replicator' || tool === 'seed') {
+  if (tool === 'replicator') {
     return p.isToolAllowedByInitialDebugConfig(tool) && hasAnyRootResource(p.resourceTallies)
+  }
+  if (tool === 'seed') {
+    return (
+      p.isToolAllowedByInitialDebugConfig(tool) &&
+      hasAnyRootResource(p.resourceTallies) &&
+      p.hasComputroniumVoxel
+    )
   }
   return p.isToolAllowedByInitialDebugConfig(tool)
 }

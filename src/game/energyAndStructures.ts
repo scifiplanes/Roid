@@ -3,7 +3,7 @@ import type { VoxelKind } from './voxelKinds'
 import { clearDepthRevealState, clearSurfaceScanTint } from './scanVisualization'
 import { gameBalance } from './gameBalance'
 import { getKindDef } from './voxelKinds'
-import { RESOURCE_IDS_ORDERED, type ResourceId } from './resources'
+import { RESOURCE_IDS_ORDERED, ROOT_RESOURCE_IDS, type ResourceId, type RootResourceId } from './resources'
 import { getSandboxModeEnabled } from './sandboxMode'
 
 /** Energy storage before any battery voxels exist. */
@@ -39,6 +39,47 @@ export const HUB_BUILD_COST: Partial<Record<ResourceId, number>> = {
   sulfides: 2,
   oxides: 2,
   metals: 1,
+}
+
+/**
+ * Root commodities required across reactor + hub + battery placement (excludes refined children such as `surfaceIces`).
+ * Order: reactor-critical first, then hub-only roots, then battery roots — used for default Seed stacks and audits.
+ */
+export const STRUCTURE_CHAIN_ROOT_IDS_ORDERED: readonly RootResourceId[] = [
+  'refractories',
+  'metals',
+  'silicates',
+  'sulfides',
+  'oxides',
+  'ices',
+  'hydrates',
+  'volatiles',
+] as const
+
+/** Union of root keys from reactor / hub / battery build costs (for tests and drift checks). */
+export function structureChainRootIdsFromBuildCosts(): RootResourceId[] {
+  const costs = [REACTOR_BUILD_COST, HUB_BUILD_COST, BATTERY_BUILD_COST]
+  const seen = new Set<RootResourceId>()
+  const rootSet = new Set<ResourceId>(ROOT_RESOURCE_IDS)
+  for (const c of costs) {
+    for (const k of Object.keys(c) as ResourceId[]) {
+      if (rootSet.has(k)) seen.add(k as RootResourceId)
+    }
+  }
+  return [...seen]
+}
+
+/**
+ * Default Seed recipe stack: structure-chain roots in order, then pad with `regolithMass` for replicator placement costs.
+ */
+export function defaultSeedRecipeStackForMaxStacks(maxStacks: number): ResourceId[] {
+  const chain = STRUCTURE_CHAIN_ROOT_IDS_ORDERED
+  if (maxStacks <= 0) return []
+  if (maxStacks <= chain.length) return [...chain.slice(0, maxStacks)]
+  const extra = maxStacks - chain.length
+  const out: ResourceId[] = [...chain]
+  for (let i = 0; i < extra; i++) out.push('regolithMass')
+  return out
 }
 
 /** Mature replicator → Refinery (global roots → second-order resources). */
@@ -87,6 +128,14 @@ export const EXPLOSIVE_CHARGE_ARM_COST: Partial<Record<ResourceId, number>> = {
   sulfides: 1,
   metals: 1,
   pyrrhotiteFraction: 1,
+}
+
+/** Per placement: mining drone voxel on rock (roots only; scaled by `gameBalance.toolCostMult`). */
+export const MINING_DRONE_PLACE_COST: Partial<Record<ResourceId, number>> = {
+  metals: 2,
+  silicates: 2,
+  volatiles: 1,
+  regolithMass: 1,
 }
 
 /**
@@ -215,6 +264,10 @@ export function getScaledExplosiveChargeArmCost(): Partial<Record<ResourceId, nu
   return scaleToolCost(EXPLOSIVE_CHARGE_ARM_COST)
 }
 
+export function getScaledMiningDronePlaceCost(): Partial<Record<ResourceId, number>> {
+  return scaleToolCost(MINING_DRONE_PLACE_COST)
+}
+
 export function getScaledOrbitalLaserUnlockCost(): Partial<Record<ResourceId, number>> {
   return scaleToolCost(ORBITAL_LASER_UNLOCK_COST)
 }
@@ -269,6 +322,9 @@ const DEPTH_SCANNER_ELIGIBLE_KINDS: ReadonlySet<VoxelKind> = new Set([
   'regolith',
   'silicateRock',
   'metalRich',
+  'wreckSalvage',
+  'wreckStructure',
+  'wreckDense',
   'processedMatter',
 ])
 

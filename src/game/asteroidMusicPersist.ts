@@ -328,7 +328,15 @@ function mergeTop(p: unknown): Partial<AsteroidMusicDebug> {
   num('preReverbStereoDelayLowpassHz', 200, 20000)
   num('preReverbStereoDelayVolume', 0, 1)
   num('preReverbStereoDelay2TimeMs', 1, 16000)
+  num('preReverbStereoDelay2Feedback', 0, 0.92)
   num('preReverbStereoDelay2Volume', 0, 1)
+  if (
+    !('preReverbStereoDelay2Feedback' in out) &&
+    typeof o.preReverbStereoDelayFeedback === 'number' &&
+    Number.isFinite(o.preReverbStereoDelayFeedback)
+  ) {
+    out.preReverbStereoDelay2Feedback = clamp(o.preReverbStereoDelayFeedback, 0, 0.92)
+  }
   num('preReverbStereoDelayRateJitterDepthMs', 0, 8000)
   num('preReverbStereoDelayRateJitterSpeedHz', 1e-8, 0.28)
   num('preReverbStereoDelayRateJitterRandomness', 0, 1)

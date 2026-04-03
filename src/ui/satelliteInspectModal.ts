@@ -25,7 +25,7 @@ const TITLE: Record<SatelliteInspectKind, string> = {
   orbital: 'Mining laser satellite',
   excavating: 'Dig laser satellite',
   scanner: 'Scanner satellite',
-  drossCollector: 'Cleanup collector satellite',
+  drossCollector: 'Sweeper collector satellite',
   cargoDrone: 'Cargo drone satellite',
 }
 

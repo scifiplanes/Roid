@@ -140,14 +140,16 @@ function sanitizeState(
       builtin: true,
       selection: {
         seedTypeId: 'burstSeed',
-        // Fast, relatively short-lived strain.
+        // Reactor + hub root coverage (burst timing).
         lifetimeSec: 60,
         slots: [
-          { kind: 'recipe', resourceId: 'regolithMass', durationSec: 20 },
-          { kind: 'recipe', resourceId: 'silicates', durationSec: 20 },
-          { kind: 'recipe', resourceId: 'metals', durationSec: 20 },
+          { kind: 'recipe', resourceId: 'refractories', durationSec: 12 },
+          { kind: 'recipe', resourceId: 'metals', durationSec: 12 },
+          { kind: 'recipe', resourceId: 'silicates', durationSec: 12 },
+          { kind: 'recipe', resourceId: 'sulfides', durationSec: 12 },
+          { kind: 'recipe', resourceId: 'oxides', durationSec: 12 },
         ],
-        recipeStack: ['regolithMass', 'silicates', 'metals'],
+        recipeStack: ['refractories', 'metals', 'silicates', 'sulfides', 'oxides'],
         strainId: 'Locuspore',
       },
     },
@@ -158,14 +160,18 @@ function sanitizeState(
       builtin: true,
       selection: {
         seedTypeId: 'longlifeSeed',
-        // Slow, long-running and efficient strain.
+        // Battery + computronium root coverage (long run).
         lifetimeSec: 420,
         slots: [
-          { kind: 'recipe', resourceId: 'regolithMass', durationSec: 120 },
-          { kind: 'recipe', resourceId: 'silicates', durationSec: 120 },
-          { kind: 'recipe', resourceId: 'metals', durationSec: 180 },
+          { kind: 'recipe', resourceId: 'ices', durationSec: 60 },
+          { kind: 'recipe', resourceId: 'hydrates', durationSec: 60 },
+          { kind: 'recipe', resourceId: 'volatiles', durationSec: 60 },
+          { kind: 'recipe', resourceId: 'metals', durationSec: 60 },
+          { kind: 'recipe', resourceId: 'phosphates', durationSec: 60 },
+          { kind: 'recipe', resourceId: 'halides', durationSec: 60 },
+          { kind: 'recipe', resourceId: 'silicates', durationSec: 60 },
         ],
-        recipeStack: ['regolithMass', 'silicates', 'metals'],
+        recipeStack: ['ices', 'hydrates', 'volatiles', 'metals', 'phosphates', 'halides', 'silicates'],
         strainId: 'Oxweed',
       },
     },
@@ -176,14 +182,28 @@ function sanitizeState(
       builtin: true,
       selection: {
         seedTypeId: 'efficientSeed',
-        // Fast and efficient strain with a shorter but intense run.
+        // Advanced / rare root families.
         lifetimeSec: 180,
         slots: [
-          { kind: 'recipe', resourceId: 'regolithMass', durationSec: 45 },
-          { kind: 'recipe', resourceId: 'silicates', durationSec: 45 },
-          { kind: 'recipe', resourceId: 'metals', durationSec: 90 },
+          { kind: 'recipe', resourceId: 'carbonaceous', durationSec: 22.5 },
+          { kind: 'recipe', resourceId: 'phosphates', durationSec: 22.5 },
+          { kind: 'recipe', resourceId: 'halides', durationSec: 22.5 },
+          { kind: 'recipe', resourceId: 'refractories', durationSec: 22.5 },
+          { kind: 'recipe', resourceId: 'sulfides', durationSec: 22.5 },
+          { kind: 'recipe', resourceId: 'oxides', durationSec: 22.5 },
+          { kind: 'recipe', resourceId: 'volatiles', durationSec: 22.5 },
+          { kind: 'recipe', resourceId: 'metals', durationSec: 22.5 },
         ],
-        recipeStack: ['regolithMass', 'silicates', 'metals'],
+        recipeStack: [
+          'carbonaceous',
+          'phosphates',
+          'halides',
+          'refractories',
+          'sulfides',
+          'oxides',
+          'volatiles',
+          'metals',
+        ],
         strainId: 'Reaperseed',
       },
     },
@@ -292,6 +312,8 @@ function sanitizeState(
     const name = (raw as SeedPreset).name
     const sel = (raw as SeedPreset).selection
     if (typeof id !== 'string' || !id) continue
+    // Built-in Relic presets always come from `relicPresets` below so recipe updates apply to existing saves.
+    if (id.startsWith('relic:')) continue
     if (typeof name !== 'string' || !name.trim()) continue
     if (!sel || typeof sel !== 'object') continue
     if (seenIds.has(id)) continue
@@ -324,8 +346,37 @@ function sanitizeState(
     seenIds.add(relic.id)
   }
 
+  let activeInput = input.activeSelection
+  const selId = input.selectedPresetId
+  if (typeof selId === 'string' && selId.startsWith('relic:')) {
+    const match = presets.find((p) => p.id === selId)
+    if (match) {
+      activeInput = {
+        seedTypeId: match.selection.seedTypeId,
+        lifetimeSec: match.selection.lifetimeSec,
+        slots: match.selection.slots.map((s) => ({ ...s })),
+        recipeStack: match.selection.recipeStack.slice(),
+        strainId: match.selection.strainId,
+      }
+    }
+  } else {
+    const strain = activeInput.strainId
+    if (strain === 'Locuspore' || strain === 'Oxweed' || strain === 'Reaperseed') {
+      const match = presets.find((p) => p.id.startsWith('relic:') && p.selection.strainId === strain)
+      if (match) {
+        activeInput = {
+          seedTypeId: match.selection.seedTypeId,
+          lifetimeSec: match.selection.lifetimeSec,
+          slots: match.selection.slots.map((s) => ({ ...s })),
+          recipeStack: match.selection.recipeStack.slice(),
+          strainId: match.selection.strainId,
+        }
+      }
+    }
+  }
+
   const activeSelectionSanitized =
-    sanitizeSelection(input.activeSelection) ??
+    sanitizeSelection(activeInput) ??
     sanitizeSelection({
       seedTypeId: 'basicSeed',
       lifetimeSec: SEED_DEFS['basicSeed'].lifetimeSec,

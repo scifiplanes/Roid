@@ -54,6 +54,16 @@ function envelopeGain(
   g.gain.exponentialRampToValueAtTime(0.0001, t0 + tailSec)
 }
 
+/** Same timing as `startOscillatorAtPhase` in asteroidAmbientMusic — random LFO start phase. */
+function startLfoAtRandomPhase(osc: OscillatorNode, ctx: BaseAudioContext): void {
+  const f = Math.max(1e-6, osc.frequency.value)
+  const phase01 = Math.random()
+  const p = phase01 - Math.floor(phase01)
+  const tRef = ctx.currentTime
+  const when = Math.max(0, tRef - p / f)
+  osc.start(when)
+}
+
 /** Short triangle tick through highpass — subtle mechanical click. */
 function scheduleReplicatorClick(
   c: AudioContext,
@@ -164,7 +174,7 @@ export function playOrbitalLaserZap(): void {
 
     const tail = Math.min(0.2, dur * 0.12 + 0.04)
     carrier.start(t0)
-    lfo.start(t0)
+    startLfoAtRandomPhase(lfo, c)
     carrier.stop(t0 + dur + tail)
     lfo.stop(t0 + dur + tail)
   } catch {
@@ -250,7 +260,7 @@ export function startOrbitalLaserSustain(): void {
     master.connect(getSfxBusInput(c))
 
     carrier.start(t0)
-    lfo.start(t0)
+    startLfoAtRandomPhase(lfo, c)
 
     orbitalLaserSustainRef = { ctx: c, master, carrier, lfo, vca }
   } catch {
@@ -338,7 +348,7 @@ export function startExcavatingLaserSustain(): void {
 
     src.connect(bp).connect(vca).connect(master).connect(getSfxBusInput(c))
     src.start(t0)
-    lfo.start(t0)
+    startLfoAtRandomPhase(lfo, c)
 
     excavatingLaserSustainRef = { ctx: c, master, src, lfo, vca }
   } catch {
@@ -412,6 +422,7 @@ export function startHooverSustain(): void {
 
     hooverSustainRef = { ctx: c, master, src, bp, startTime: t0 }
 
+    const hooverPhase0 = Math.random() * 2 * Math.PI
     const updateCutoff = () => {
       const ref = hooverSustainRef
       if (!ref || ref.ctx !== c || ref.bp !== bp) return
@@ -428,7 +439,7 @@ export function startHooverSustain(): void {
       let cutoff = clampedBase
       if (depth > 0 && rate > 0) {
         const span = Math.min(nyquist - 20, Math.max(0, depth))
-        const wobble = Math.sin(dt * rate * 2 * Math.PI)
+        const wobble = Math.sin(dt * rate * 2 * Math.PI + hooverPhase0)
         cutoff = clampedBase + span * wobble
         cutoff = Math.min(nyquist, Math.max(20, cutoff))
       }
@@ -636,10 +647,15 @@ export function playMineThud(popped: boolean, kind: VoxelKind): void {
         playRegolithThud(c, now, popped)
         break
       case 'silicateRock':
+      case 'wreckStructure':
         playSilicateThud(c, now, popped)
         break
       case 'metalRich':
+      case 'wreckDense':
         playMetalThud(c, now, popped)
+        break
+      case 'wreckSalvage':
+        playRegolithThud(c, now, popped)
         break
       case 'replicator':
       case 'reactor':

@@ -91,29 +91,24 @@ function startOscillatorAtPhase(osc: OscillatorNode, ctx: BaseAudioContext, phas
   osc.start(when)
 }
 
-const PHASE_SALT_CHORUS = 0xa11f0
+/** Uniform [0, 1) for LFO start phase (not seed-stable). */
+function randomLfoPhase01(): number {
+  return Math.random()
+}
+
 const PHASE_SALT_CARRIER = 0xca01e
-const PHASE_SALT_AMP_LFO = 0x4a01e
-const PHASE_SALT_SPEED_LFO = 0x51d40
-const PHASE_SALT_AMP_LFO2 = 0x5b02f
-const PHASE_SALT_SPEED_LFO2 = 0x62e41
-const PHASE_SALT_PAN_LFO = 0x6d053
-const PHASE_SALT_FAST_AMP_LFO = 0x7a164
-const PHASE_SALT_FAST_SPEED_LFO = 0x8b275
 /** Per-voice spread for pitch glide time constant (with `notePitchSlideJitterSec`). */
 const PHASE_SALT_PITCH_SLIDE = 0x91d00
-/** Bus lowpass LFO + speed LFO — not shared with per-voice tremolo salts. */
-const PHASE_SALT_BUS_FILTER_LFO = 0x7e164
-const PHASE_SALT_BUS_FILTER_SPEED_LFO = 0x8f275
-const PHASE_SALT_PRE_DLY_JIT1_LFO = 0x9a386
 const PHASE_SALT_PRE_DLY_JIT1_SPEED = 0xa0497
-const PHASE_SALT_PRE_DLY_JIT2_LFO = 0xb15a8
 const PHASE_SALT_PRE_DLY_JIT2_SPEED = 0xc26b9
 const PHASE_SALT_PRE_DLY_JIT2_RATE_MUL = 0xd37ca
 /** Macro jitter on pre-reverb stereo delay feedback amount. */
 const PHASE_SALT_PRE_FB_JIT = 0xe48ad
 /** Rate wobble for pre-reverb stereo delay feedback jitter. */
 const PHASE_SALT_PRE_FB_JIT_RATE = 0xf59be
+/** Tap 2: decorrelated feedback jitter (independent of tap 1). */
+const PHASE_SALT_PRE_FB_JIT_TAP2 = 0x106acf
+const PHASE_SALT_PRE_FB_JIT_RATE_TAP2 = 0x117bd0
 const PHASE_SALT_SCALE_CYCLE = 0xe48ec
 const PHASE_SALT_VOICE_LIFETIME = 0xf1a7d
 
@@ -146,6 +141,42 @@ function makeWetSatCurve(amount: number): Float32Array<ArrayBuffer> {
 function clamp01(n: number): number {
   if (!Number.isFinite(n)) return 0
   return Math.min(1, Math.max(0, n))
+}
+
+const PRE_FB_JIT_HZ_MIN = 1e-5
+const PRE_FB_JIT_HZ_MAX = 0.1
+
+/** Shared feedback-jitter sliders; `phaseSaltMain` / `phaseSaltRate` decorrelate tap 1 vs tap 2. */
+function effectivePreReverbDelayFeedback(
+  baseFb: number,
+  seed: number,
+  fbTime: number,
+  fbJitDepthRaw: number,
+  fbJitRateRaw: number,
+  fbJitRand: number,
+  phaseSaltMain: number,
+  phaseSaltRate: number,
+): number {
+  const base = Math.min(0.92, Math.max(0, baseFb))
+  if (base <= 0 || fbJitDepthRaw <= 0 || fbJitRateRaw <= 0 || fbTime <= 0) {
+    return base
+  }
+  const depth = clamp01(fbJitDepthRaw)
+  let fEff = Math.min(PRE_FB_JIT_HZ_MAX, Math.max(PRE_FB_JIT_HZ_MIN, fbJitRateRaw))
+  if (fbJitRand > 0) {
+    const fMod = 0.25 * fEff
+    const phaseMod =
+      2 * Math.PI * fMod * fbTime + 2 * Math.PI * phase01(seed, phaseSaltRate)
+    const wRate = Math.sin(phaseMod)
+    fEff = Math.min(
+      PRE_FB_JIT_HZ_MAX,
+      Math.max(PRE_FB_JIT_HZ_MIN, fEff * (1 + fbJitRand * wRate)),
+    )
+  }
+  const phase0 = 2 * Math.PI * phase01(seed, phaseSaltMain)
+  const w = Math.sin(2 * Math.PI * fEff * fbTime + phase0)
+  const mul = 1 + depth * w
+  return Math.min(0.92, Math.max(0, base * mul))
 }
 
 function busNum(d: AsteroidMusicDebug, key: keyof AsteroidMusicDebug, fallback: number): number {
@@ -629,33 +660,31 @@ export function createAsteroidAmbientMusic(options: {
     busFx.preReverbDelayL.delayTime.setValueAtTime(preStereoSec, t)
     busFx.preReverbDelayR.delayTime.setValueAtTime(preStereoSec, t)
     const basePreStereoFb = Math.min(0.92, Math.max(0, busNum(d, 'preReverbStereoDelayFeedback', 0.25)))
-    let preStereoFbEff = basePreStereoFb
+    const basePreStereoFb2 = Math.min(0.92, Math.max(0, busNum(d, 'preReverbStereoDelay2Feedback', 0.25)))
     const fbJitDepthRaw = busNum(d, 'preReverbStereoDelayFeedbackJitterDepth', 0)
     const fbJitRateRaw = busNum(d, 'preReverbStereoDelayFeedbackJitterHz', 0)
     const fbJitRand = clamp01(busNum(d, 'preReverbStereoDelayFeedbackJitterRandomness', 0))
     const fbTime = Number.isFinite(d.voiceMacroJitterTimeSec) ? d.voiceMacroJitterTimeSec : 0
-    const minFbJitHz = 1e-5
-    const maxFbJitHz = 0.1
-    if (basePreStereoFb > 0 && fbJitDepthRaw > 0 && fbJitRateRaw > 0 && fbTime > 0) {
-      const depth = clamp01(fbJitDepthRaw)
-      let fEff = Math.min(maxFbJitHz, Math.max(minFbJitHz, fbJitRateRaw))
-      if (fbJitRand > 0) {
-        const fMod = 0.25 * fEff
-        const phaseMod =
-          2 * Math.PI * fMod * fbTime +
-          2 * Math.PI * phase01(seed, PHASE_SALT_PRE_FB_JIT_RATE)
-        const wRate = Math.sin(phaseMod)
-        fEff = Math.min(
-          maxFbJitHz,
-          Math.max(minFbJitHz, fEff * (1 + fbJitRand * wRate)),
-        )
-      }
-      const phase0 =
-        2 * Math.PI * phase01(seed, PHASE_SALT_PRE_FB_JIT)
-      const w = Math.sin(2 * Math.PI * fEff * fbTime + phase0)
-      const mul = 1 + depth * w
-      preStereoFbEff = Math.min(0.92, Math.max(0, basePreStereoFb * mul))
-    }
+    const preStereoFbEff = effectivePreReverbDelayFeedback(
+      basePreStereoFb,
+      seed,
+      fbTime,
+      fbJitDepthRaw,
+      fbJitRateRaw,
+      fbJitRand,
+      PHASE_SALT_PRE_FB_JIT,
+      PHASE_SALT_PRE_FB_JIT_RATE,
+    )
+    const preStereo2FbEff = effectivePreReverbDelayFeedback(
+      basePreStereoFb2,
+      seed,
+      fbTime,
+      fbJitDepthRaw,
+      fbJitRateRaw,
+      fbJitRand,
+      PHASE_SALT_PRE_FB_JIT_TAP2,
+      PHASE_SALT_PRE_FB_JIT_RATE_TAP2,
+    )
     busFx.preReverbFbGainL.gain.setValueAtTime(preStereoFbEff, t)
     busFx.preReverbFbGainR.gain.setValueAtTime(preStereoFbEff, t)
     let preStereoHpf = Math.min(8000, Math.max(20, busNum(d, 'preReverbStereoDelayHighpassHz', 220)))
@@ -681,8 +710,8 @@ export function createAsteroidAmbientMusic(options: {
     busFx.preDlyJit2Depth.gain.setValueAtTime(peakJit2Sec, t)
     busFx.preReverbDelayL2.delayTime.setValueAtTime(preStereo2Sec, t)
     busFx.preReverbDelayR2.delayTime.setValueAtTime(preStereo2Sec, t)
-    busFx.preReverbFbGainL2.gain.setValueAtTime(preStereoFbEff, t)
-    busFx.preReverbFbGainR2.gain.setValueAtTime(preStereoFbEff, t)
+    busFx.preReverbFbGainL2.gain.setValueAtTime(preStereo2FbEff, t)
+    busFx.preReverbFbGainR2.gain.setValueAtTime(preStereo2FbEff, t)
     busFx.preReverbFbHpfL2.frequency.setValueAtTime(preStereoHpf, t)
     busFx.preReverbFbHpfR2.frequency.setValueAtTime(preStereoHpf, t)
     busFx.preReverbFbLpfL2.frequency.setValueAtTime(preStereoLpf, t)
@@ -1546,27 +1575,27 @@ export function createAsteroidAmbientMusic(options: {
       })
     }
 
-    startOscillatorAtPhase(chorusLfo, c, phase01(seed, PHASE_SALT_CHORUS))
+    startOscillatorAtPhase(chorusLfo, c, randomLfoPhase01())
     lpFreqBase.start()
-    startOscillatorAtPhase(filterLfo, c, phase01(seed, PHASE_SALT_BUS_FILTER_LFO))
-    startOscillatorAtPhase(filterSpeedLfo, c, phase01(seed, PHASE_SALT_BUS_FILTER_SPEED_LFO))
-    startOscillatorAtPhase(preDlyJit1Lfo, c, phase01(seed, PHASE_SALT_PRE_DLY_JIT1_LFO))
-    startOscillatorAtPhase(preDlyJit1SpeedLfo, c, phase01(seed, PHASE_SALT_PRE_DLY_JIT1_SPEED))
-    startOscillatorAtPhase(preDlyJit2Lfo, c, phase01(seed, PHASE_SALT_PRE_DLY_JIT2_LFO))
-    startOscillatorAtPhase(preDlyJit2SpeedLfo, c, phase01(seed, PHASE_SALT_PRE_DLY_JIT2_SPEED))
+    startOscillatorAtPhase(filterLfo, c, randomLfoPhase01())
+    startOscillatorAtPhase(filterSpeedLfo, c, randomLfoPhase01())
+    startOscillatorAtPhase(preDlyJit1Lfo, c, randomLfoPhase01())
+    startOscillatorAtPhase(preDlyJit1SpeedLfo, c, randomLfoPhase01())
+    startOscillatorAtPhase(preDlyJit2Lfo, c, randomLfoPhase01())
+    startOscillatorAtPhase(preDlyJit2SpeedLfo, c, randomLfoPhase01())
     for (let i = 0; i < ASTEROID_MUSIC_VOICE_COUNT; i++) {
       const v = voices[i]
       const vi = (i + 1) << 16
-      startOscillatorAtPhase(v.ampLfo, c, phase01(seed, vi ^ PHASE_SALT_AMP_LFO))
-      startOscillatorAtPhase(v.speedLfo, c, phase01(seed, vi ^ PHASE_SALT_SPEED_LFO))
-      startOscillatorAtPhase(v.ampLfo2, c, phase01(seed, vi ^ PHASE_SALT_AMP_LFO2))
-      startOscillatorAtPhase(v.speedLfo2, c, phase01(seed, vi ^ PHASE_SALT_SPEED_LFO2))
-      startOscillatorAtPhase(v.panLfo, c, phase01(seed, vi ^ PHASE_SALT_PAN_LFO))
-      startOscillatorAtPhase(v.fastAmpLfo, c, phase01(seed, vi ^ PHASE_SALT_FAST_AMP_LFO))
+      startOscillatorAtPhase(v.ampLfo, c, randomLfoPhase01())
+      startOscillatorAtPhase(v.speedLfo, c, randomLfoPhase01())
+      startOscillatorAtPhase(v.ampLfo2, c, randomLfoPhase01())
+      startOscillatorAtPhase(v.speedLfo2, c, randomLfoPhase01())
+      startOscillatorAtPhase(v.panLfo, c, randomLfoPhase01())
+      startOscillatorAtPhase(v.fastAmpLfo, c, randomLfoPhase01())
       startOscillatorAtPhase(
         v.fastAmpSpeedLfo,
         c,
-        phase01(seed, vi ^ PHASE_SALT_FAST_SPEED_LFO),
+        randomLfoPhase01(),
       )
       const carrierPhase = phase01(seed, vi ^ PHASE_SALT_CARRIER)
       startOscillatorAtPhase(v.carrier, c, carrierPhase)

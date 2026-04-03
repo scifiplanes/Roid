@@ -6,6 +6,12 @@ export type VoxelKind =
   | 'regolith'
   | 'silicateRock'
   | 'metalRich'
+  /** Wreck hull: coatings, volatiles, minimal fines — not asteroid regolith. */
+  | 'wreckSalvage'
+  /** Wreck mid-structure: truss, composites, mixed industrial bulk. */
+  | 'wreckStructure'
+  /** Wreck dense hardware: alloys, refractories. */
+  | 'wreckDense'
   | 'processedMatter'
   | 'replicator'
   | 'reactor'
@@ -25,15 +31,15 @@ export interface VoxelKindDef {
 }
 
 /**
- * Bright teal target while a replicator is still eating rock (emissive layer tints instance color).
+ * Ivory target while a replicator is still eating rock (emissive layer tints instance color).
  * Mature cells use `replicator.colorTint` instead.
  */
-export const REPLICATOR_PROCESSING_TINT = new Color(0.1, 0.88, 0.78)
+export const REPLICATOR_PROCESSING_TINT = new Color(0.98, 0.96, 0.9)
 
 /** Warmer endpoint when a mature replicator holds unconsolidated root stock (instance tint lerp). */
-export const REPLICATOR_STOCK_TINT = new Color(0.82, 0.62, 0.28)
+export const REPLICATOR_STOCK_TINT = new Color(0.92, 0.52, 0.18)
 /** Max lerp weight toward `REPLICATOR_STOCK_TINT` when `replicatorResourceFill01` is 1. */
-export const REPLICATOR_STOCK_TINT_LERP = 0.55
+export const REPLICATOR_STOCK_TINT_LERP = 0.42
 
 export const VOXEL_KIND_DEFS: Record<VoxelKind, VoxelKindDef> = {
   regolith: {
@@ -57,6 +63,28 @@ export const VOXEL_KIND_DEFS: Record<VoxelKind, VoxelKindDef> = {
     maxDurability: 4,
     yields: { metals: 5, silicates: 2, refractories: 1, oxides: 1 },
     colorTint: new Color(0.4, 0.41, 0.46),
+  },
+  wreckSalvage: {
+    maxDurability: 1,
+    yields: {
+      volatiles: 4,
+      carbonaceous: 3,
+      oxides: 2,
+      hydrates: 2,
+      ices: 2,
+      halides: 1,
+    },
+    colorTint: new Color(0.52, 0.5, 0.48),
+  },
+  wreckStructure: {
+    maxDurability: 2,
+    yields: { silicates: 4, metals: 2, sulfides: 2, oxides: 1, phosphates: 1 },
+    colorTint: new Color(0.44, 0.46, 0.5),
+  },
+  wreckDense: {
+    maxDurability: 4,
+    yields: { metals: 5, refractories: 3, silicates: 2, oxides: 1 },
+    colorTint: new Color(0.36, 0.4, 0.45),
   },
   processedMatter: {
     maxDurability: 1,

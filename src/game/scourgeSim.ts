@@ -1,3 +1,4 @@
+import type { AsteroidRegime } from './asteroidGenProfile'
 import type { DrossState } from './drossSim'
 import { spawnDrossFromRemovedCell } from './drossSim'
 import type { DebrisState } from './debrisSim'
@@ -68,6 +69,7 @@ export interface StepScourgeOptions {
   nowMs?: number
   gridSize?: number
   voxelSize?: number
+  asteroidRegime?: AsteroidRegime
 }
 
 export interface StepScourgeResult {
@@ -77,7 +79,7 @@ export interface StepScourgeResult {
 }
 
 export function stepScourge(cells: VoxelCell[], options: StepScourgeOptions): StepScourgeResult {
-  const { drossState, balance, debrisState, nowMs, gridSize, voxelSize } = options
+  const { drossState, balance, debrisState, nowMs, gridSize, voxelSize, asteroidRegime } = options
   if (!balance.scourgeEnabled || cells.length === 0) {
     return { changed: false, consumeTicks: 0 }
   }
@@ -132,6 +134,7 @@ export function stepScourge(cells: VoxelCell[], options: StepScourgeOptions): St
             rewardBaseUnits: 0.3,
             bonusUnits: 1,
             bonusChance: 0.1,
+            asteroidRegime,
           },
         )
       }

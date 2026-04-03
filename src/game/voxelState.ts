@@ -1,4 +1,5 @@
 import type { VoxelPos } from '../scene/asteroid/generateAsteroidVoxels'
+import type { CoreAssetKind } from './coreAssets'
 import type { ResourceSource } from './resources'
 import { float01FromSeed, type AsteroidGenProfile } from './asteroidGenProfile'
 import type { VoxelKind } from './voxelKinds'
@@ -183,6 +184,16 @@ function pickKind(
   return 'silicateRock'
 }
 
+/** Radial wreck bands: same hash/threshold shape as `pickKind` but fixed dials (no spectral profile). */
+function pickWreckKind(seed: number, pos: VoxelPos, crustProximity: number): VoxelKind {
+  const h = latticeHash(seed + 17, pos.x, pos.y, pos.z)
+  const regolithEdge = 0.76 + h * 0.12
+  const metalEdge = 0.42 - h * 0.14
+  if (crustProximity > regolithEdge) return 'wreckSalvage'
+  if (crustProximity < metalEdge) return 'wreckDense'
+  return 'wreckStructure'
+}
+
 export interface EnrichVoxelCellsParams {
   seed: number
   gridSize: number
@@ -192,6 +203,8 @@ export interface EnrichVoxelCellsParams {
   noiseAmplitude: number
   /** Spectral + regime + dials — lithology bands and bulk bias. */
   profile: AsteroidGenProfile
+  /** When `wreck`, assign wreck lithology and skip asteroid rare-lode enrichment. */
+  coreAssetKind?: CoreAssetKind
 }
 
 /**
@@ -200,6 +213,7 @@ export interface EnrichVoxelCellsParams {
  */
 export function enrichVoxelCells(positions: VoxelPos[], params: EnrichVoxelCellsParams): VoxelCell[] {
   const { seed, gridSize, baseRadius, noiseAmplitude, profile } = params
+  const coreAssetKind = params.coreAssetKind ?? 'asteroid'
   const center = (gridSize - 1) / 2
   const outerApprox = Math.max(baseRadius + noiseAmplitude, 1e-6)
 
@@ -208,7 +222,7 @@ export function enrichVoxelCells(positions: VoxelPos[], params: EnrichVoxelCells
   const ax = Math.sin(axisV) * Math.cos(axisU)
   const ay = Math.sin(axisV) * Math.sin(axisU)
   const az = Math.cos(axisV)
-  const anisoWeight = 0.1 * profile.pickKind.hashScale
+  const anisoWeight = 0.1 * (coreAssetKind === 'wreck' ? 1 : profile.pickKind.hashScale)
 
   const out: VoxelCell[] = []
   for (const pos of positions) {
@@ -220,16 +234,30 @@ export function enrichVoxelCells(positions: VoxelPos[], params: EnrichVoxelCells
     const aligned = dist > 1e-9 ? (dx * ax + dy * ay + dz * az) / dist : 0
     const crustProximity = Math.min(1, Math.max(0, radialCrust + anisoWeight * aligned))
 
+    if (coreAssetKind === 'wreck') {
+      const kind = pickWreckKind(seed, pos, crustProximity)
+      const def = getKindDef(kind)
+      const bulk = computeBulkComposition(seed, pos, kind, undefined)
+      out.push({
+        pos,
+        kind,
+        hpRemaining: initialRockHp(kind, def.maxDurability),
+        bulkComposition: bulk,
+        rareLodeStrength01: 0,
+      })
+      continue
+    }
+
     const kind = pickKind(seed, pos, crustProximity, profile)
     const def = getKindDef(kind)
     const baseBulk = computeBulkComposition(seed, pos, kind, profile)
-    const { bulk, rareLodeStrength01 } = applyRareLodeEnrichment(seed, pos, baseBulk, profile)
+    const enriched = applyRareLodeEnrichment(seed, pos, baseBulk, profile)
     out.push({
       pos,
       kind,
       hpRemaining: initialRockHp(kind, def.maxDurability),
-      bulkComposition: bulk,
-      rareLodeStrength01,
+      bulkComposition: enriched.bulk,
+      rareLodeStrength01: enriched.rareLodeStrength01,
     })
   }
   return out

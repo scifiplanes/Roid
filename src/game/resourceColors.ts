@@ -12,19 +12,21 @@ export interface ResourceRgb {
  * Hand-tuned palette for primary resources used as Seed recipes.
  * These are intended to be visually distinct when mapped onto replicator voxels.
  */
+let __dbgRepColorLastTs = 0
+
 const RESOURCE_COLORS: Partial<Record<ResourceId, ResourceRgb>> = {
-  regolithMass: { r: 0.82, g: 0.72, b: 0.58 }, // warm beige
-  silicates: { r: 0.6, g: 0.64, b: 0.88 }, // cool violet-blue
-  metals: { r: 0.96, g: 0.84, b: 0.34 }, // strong gold
-  volatiles: { r: 0.54, g: 0.9, b: 0.98 }, // bright cyan
-  sulfides: { r: 0.98, g: 0.8, b: 0.38 }, // warm amber
-  oxides: { r: 0.96, g: 0.5, b: 0.42 }, // vivid orange-red
-  carbonaceous: { r: 0.38, g: 0.9, b: 0.52 }, // bright green
-  hydrates: { r: 0.5, g: 0.9, b: 0.78 }, // aqua
-  ices: { r: 0.72, g: 0.9, b: 1.0 }, // pale ice blue
-  refractories: { r: 0.98, g: 0.64, b: 0.32 }, // hot orange
-  phosphates: { r: 0.96, g: 0.84, b: 0.52 }, // pastel yellow
-  halides: { r: 0.86, g: 0.7, b: 0.96 }, // lavender
+  regolithMass: { r: 1.0, g: 0.42, b: 0.58 }, // pink
+  silicates: { r: 0.06, g: 0.14, b: 0.58 }, // dark blue
+  metals: { r: 1.0, g: 0.46, b: 0.04 }, // orange
+  volatiles: { r: 0.1, g: 0.38, b: 1.0 }, // deep bright blue
+  sulfides: { r: 1.0, g: 0.56, b: 0.06 }, // orange (amber vs metals)
+  oxides: { r: 0.96, g: 0.1, b: 0.14 }, // red
+  carbonaceous: { r: 0.0, g: 0.78, b: 0.66 }, // saturated teal
+  hydrates: { r: 0.0, g: 0.72, b: 0.86 }, // saturated teal → aqua
+  ices: { r: 0.97, g: 0.98, b: 1.0 }, // white (cool ice)
+  refractories: { r: 0.82, g: 0.06, b: 0.18 }, // red (crimson vs oxides)
+  phosphates: { r: 1.0, g: 0.28, b: 0.62 }, // pink (magenta-rose vs regolith)
+  halides: { r: 0.58, g: 0.12, b: 0.98 }, // violet
 }
 
 /** Walk `parent` links until we hit a root that has an entry in `RESOURCE_COLORS`. */
@@ -59,8 +61,8 @@ function hashResourceIdToRgb(id: ResourceId): ResourceRgb {
     h = Math.imul(h, 16777619)
   }
   const hue = ((h >>> 0) % 360) / 360
-  const s = 0.52 + (((h >>> 8) & 0xff) / 255) * 0.35
-  const l = 0.48 + (((h >>> 16) & 0xff) / 255) * 0.22
+  const s = 0.68 + (((h >>> 8) & 0xff) / 255) * 0.28
+  const l = 0.44 + (((h >>> 16) & 0xff) / 255) * 0.2
   if (s <= 1e-6) return { r: l, g: l, b: l }
   const q = l < 0.5 ? l * (1 + s) : l + s - l * s
   const p = 2 * l - q
@@ -89,10 +91,10 @@ function scaleRgb(c: ResourceRgb, s: number): ResourceRgb {
   return { r: c.r * s, g: c.g * s, b: c.b * s }
 }
 
-/** Cool, muted overlay used to indicate paused replicator programs. */
-const PAUSE_TINT: ResourceRgb = { r: 0.56, g: 0.7, b: 0.9 }
+/** Cool overlay used to indicate paused replicator programs (reads clearly on saturated bases). */
+const PAUSE_TINT: ResourceRgb = { r: 0.42, g: 0.78, b: 1.0 }
 /** Warm overlay used to indicate dying / about-to-expire seeds. */
-const DYING_TINT: ResourceRgb = { r: 1, g: 0.52, b: 0.22 }
+const DYING_TINT: ResourceRgb = { r: 1, g: 0.45, b: 0.12 }
 
 /**
  * Returns the base display color for a replicator voxel, derived primarily from its
@@ -138,8 +140,9 @@ export function getReplicatorDisplayColor(cell: VoxelCell): ResourceRgb {
 
   const seed = cell.seedRuntime
   if (!seed) {
-    // Mature but unprogrammed / fully idle replicator: neutral, slightly dimmed.
-    return scaleRgb(neutral, 0.9)
+    // No live seed runtime: dimmed tint — use last-known recipe color when present (`replicatorRecipeResourceId`),
+    // not only the neutral kind tint (previously we always returned neutral here and dropped recipe display).
+    return scaleRgb(base, 0.9)
   }
 
   const lifetimeTotal = seed.lifetimeTotalSec
@@ -170,7 +173,7 @@ export function getReplicatorDisplayColor(cell: VoxelCell): ResourceRgb {
   // seed is running, use the same vivid recipe tint as a structured program — otherwise dim neutral.
   if (slotKind === null) {
     if (baseFromRecipe) {
-      return scaleRgb(base, 1.05)
+      return base
     }
     return scaleRgb(neutral, 0.9)
   }
@@ -190,7 +193,47 @@ export function getReplicatorDisplayColor(cell: VoxelCell): ResourceRgb {
     return scaleRgb(warm, dyingBySlot ? 1.25 : 1.12)
   }
 
-  // Active recipe: vivid resource color, gently brightened for visibility.
-  return scaleRgb(base, 1.05)
+  // Active recipe: vivid resource color (palette is already bright; avoid clipping past 1).
+  const out = base
+  // #region agent log
+  {
+    const t = Date.now()
+    if (cell.kind === 'replicator' && t - __dbgRepColorLastTs > 450) {
+      __dbgRepColorLastTs = t
+      const rid = activeReplicatorRecipeId(cell)
+      const seed = cell.seedRuntime
+      let slotKind: string | null = null
+      if (seed && Array.isArray(seed.slots) && seed.slots.length > 0) {
+        const rawIdx =
+          typeof seed.currentSlotIndex === 'number' && Number.isFinite(seed.currentSlotIndex)
+            ? seed.currentSlotIndex
+            : 0
+        const idx = Math.min(seed.slots.length - 1, Math.max(0, rawIdx))
+        const slot = seed.slots[idx]
+        if (slot) slotKind = String(slot.kind)
+      }
+      fetch('http://127.0.0.1:7481/ingest/59523295-7b3c-4817-bc0e-c2fb63f1b767', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '601a65' },
+        body: JSON.stringify({
+          sessionId: '601a65',
+          runId: 'post-fix',
+          hypothesisId: 'H4',
+          location: 'resourceColors.ts:getReplicatorDisplayColor',
+          message: 'replicator base display color',
+          data: {
+            repRecipeId: rid ?? null,
+            repRecipeField: cell.replicatorRecipeResourceId ?? null,
+            outRgb: { r: out.r, g: out.g, b: out.b },
+            hasSeed: !!seed,
+            slotKind,
+            curSlot: seed?.currentSlotIndex,
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {})
+    }
+  }
+  // #endregion
+  return out
 }
-

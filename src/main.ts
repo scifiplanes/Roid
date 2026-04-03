@@ -16,6 +16,7 @@ import {
   Vector3,
 } from 'three'
 import { KEY_LIGHT_INTENSITY_BASE, setupScene } from './scene/setupScene'
+import { createStarTintComposer } from './scene/starTintComposer'
 import { setSunFromAngles } from './scene/sunAngles'
 import { createOrbitControls } from './scene/controls'
 import {
@@ -72,6 +73,7 @@ import {
   canAfford,
   computeEnergyCap,
   getScaledExplosiveChargeArmCost,
+  getScaledMiningDronePlaceCost,
   getScaledReplicatorPlaceCost,
   getScaledSatelliteDeployCost,
   stepEnergy,
@@ -97,6 +99,7 @@ import {
   type RefineryRecipeUiState,
   type ResearchPhaseState,
 } from './game/computroniumSim'
+import { syncResearchFlagsFromPoints } from './game/computroniumResearchQueue'
 import { hasAnyRootResource, isGameplayToolRosterAllowed } from './game/toolRosterPolicy'
 import {
   applyDiscoveryAccept,
@@ -131,6 +134,7 @@ import { initMiningDroneCell, stepMiningDrones } from './game/miningDroneSim'
 import { spawnLocustAt, stepLocust } from './game/locustSim'
 import { pokeReplicator } from './game/replicatorSim'
 import {
+  asteroidHasKind,
   batteryToolUnlocked,
   computroniumToolUnlocked,
   getStructureToolUiPhase as structureToolPhaseFromCells,
@@ -232,6 +236,7 @@ import { createRefineryRecipesModal } from './ui/refineryRecipesModal'
 import { createSeedAssemblyModal, type SeedAssemblySelection } from './ui/seedAssemblyModal'
 import {
   createToolsPanel,
+  getPlayerToolForHotkeyCode,
   type LaserSatelliteRowSnapshot,
   type PlayerTool,
   type SatelliteDeployKind,
@@ -248,6 +253,11 @@ import {
   setScanVisualizationDebugGetter,
 } from './game/scanVisualization'
 import { createDefaultScanVisualizationDebug } from './game/scanVisualizationDebug'
+import { createDefaultLocalStarTintDebug } from './game/localStarTintDebug'
+import {
+  loadPersistedLocalStarTintDebug,
+  schedulePersistLocalStarTintDebug,
+} from './game/localStarTintPersist'
 import {
   rebuildReplicatorSimHotLists,
   resetReplicatorSimAccumulators,
@@ -314,6 +324,8 @@ Object.assign(sunLightDebug, loadSunLightDebugPartialFromLocalStorage())
 const scanVisualizationDebug = createDefaultScanVisualizationDebug()
 Object.assign(scanVisualizationDebug, loadPersistedScanVisualizationDebug())
 setScanVisualizationDebugGetter(() => scanVisualizationDebug)
+const localStarTintDebug = createDefaultLocalStarTintDebug()
+Object.assign(localStarTintDebug, loadPersistedLocalStarTintDebug())
 const audioMasterDebug = createDefaultAudioMasterDebug()
 Object.assign(audioMasterDebug, loadPersistedAudioMasterDebug())
 setAudioMasterDebugGetter(() => audioMasterDebug)
@@ -411,6 +423,7 @@ document.addEventListener('visibilitychange', () => {
 
 const { scene, camera, renderer, sun, stepStarfield } = setupScene(viewport)
 applyRendererPixelRatio(renderer)
+const starTintComposer = createStarTintComposer(renderer, scene, camera, () => localStarTintDebug)
 sun.intensity = KEY_LIGHT_INTENSITY_BASE * randomKeyLightIntensityFactorForAsteroid()
 
 const SUN_RADIUS = Math.hypot(8, 12, 10)
@@ -469,6 +482,7 @@ const gridSize = 33
 const voxelSize = 0.92
 
 let currentSeed = 42
+starTintComposer.setTintFromSeed(currentSeed)
 let computroniumResearchOrder: ComputroniumUnlockId[] = buildComputroniumResearchOrder(currentSeed)
 let currentAsset: CoreAsset = {
   id: 'core-asset',
@@ -517,6 +531,7 @@ function enrichCoreAssetVoxels(positions: VoxelPos[], kind: CoreAsset['kind']): 
     baseRadius: asteroidProfile.shape.baseRadius,
     noiseAmplitude: asteroidProfile.shape.noiseAmplitude,
     profile: asteroidProfile,
+    coreAssetKind: kind,
   })
   const originSource = kind === 'wreck' ? 'wreck' : 'asteroid'
   for (const cell of cells) {
@@ -653,6 +668,402 @@ function depthOverlayViewChanged(): boolean {
 
 const resourceTallies = createEmptyResourceTallies()
 const resourceTalliesFloatBaseline = createEmptyResourceTallies()
+/**
+ * PM→root credits since last matter HUD float sync (merged across ticks).
+ * Anchors gain floats at the relevant voxel (hub, PM cell, cargo pickup, lifter source, etc.).
+ */
+const pendingWorldAnchoredRootGainsByKey = new Map<
+  number,
+  { pos: VoxelPos; delta: Partial<Record<RootResourceId, number>> }
+>()
+
+/** Batched HUD gain floats: at most one combined flush per second to reduce overlap. */
+const MATTER_HUD_GAIN_FLOAT_MERGE_MS = 1000
+const pendingGainFloatMergeById = createEmptyResourceTallies()
+const pendingGainFloatAnchoredAccum = new Map<
+  number,
+  { pos: VoxelPos; delta: Partial<Record<RootResourceId, number>> }
+>()
+/** Hoover tool: screen-anchored root gains (merged for debounced flush). */
+let pendingGainFloatHooverPointer: {
+  clientX: number
+  clientY: number
+  delta: Partial<Record<RootResourceId, number>>
+} | null = null
+const HOVER_POINTER_GAIN_KEY = 0
+const pendingHooverPointerRootGainsMerge = new Map<
+  number,
+  { clientX: number; clientY: number; delta: Partial<Record<RootResourceId, number>> }
+>()
+/** Nudge floats so labels sit beside the cursor, not under it. */
+const HOOVER_GAIN_FLOAT_CLIENT_OFFSET_X = 10
+const HOOVER_GAIN_FLOAT_CLIENT_OFFSET_Y = -6
+let matterHudGainFloatFlushTimer: ReturnType<typeof setTimeout> | null = null
+
+function mergeAnchoredGainsMapIntoAccum(
+  from: Map<number, { pos: VoxelPos; delta: Partial<Record<RootResourceId, number>> }>,
+): void {
+  for (const [k, v] of from) {
+    const prev = pendingGainFloatAnchoredAccum.get(k)
+    if (!prev) {
+      pendingGainFloatAnchoredAccum.set(k, {
+        pos: { x: v.pos.x, y: v.pos.y, z: v.pos.z },
+        delta: { ...v.delta },
+      })
+    } else {
+      for (const id of ROOT_RESOURCE_IDS) {
+        const n = v.delta[id]
+        if (n === undefined || n <= 0) continue
+        prev.delta[id] = (prev.delta[id] ?? 0) + n
+      }
+    }
+  }
+  from.clear()
+}
+
+/**
+ * Credits can record voxel-anchored gains after the last `syncMatterHudResourceGainFloats` but before the
+ * debounced flush runs; those entries stay in `pendingWorldAnchoredRootGainsByKey` until pulled here.
+ */
+function pullPendingWorldAnchoredIntoGainFloatBatch(): void {
+  if (pendingWorldAnchoredRootGainsByKey.size === 0) return
+  for (const { delta } of pendingWorldAnchoredRootGainsByKey.values()) {
+    for (const id of ROOT_RESOURCE_IDS) {
+      const n = delta[id]
+      if (n === undefined || n <= 0) continue
+      pendingGainFloatMergeById[id] = (pendingGainFloatMergeById[id] ?? 0) + n
+    }
+  }
+  mergeAnchoredGainsMapIntoAccum(pendingWorldAnchoredRootGainsByKey)
+}
+
+function mergeHooverPointerGainsMapIntoAccum(
+  from: Map<number, { clientX: number; clientY: number; delta: Partial<Record<RootResourceId, number>> }>,
+): void {
+  if (from.size === 0) return
+  for (const v of from.values()) {
+    if (!pendingGainFloatHooverPointer) {
+      pendingGainFloatHooverPointer = {
+        clientX: v.clientX,
+        clientY: v.clientY,
+        delta: { ...v.delta },
+      }
+    } else {
+      pendingGainFloatHooverPointer.clientX = v.clientX
+      pendingGainFloatHooverPointer.clientY = v.clientY
+      for (const id of ROOT_RESOURCE_IDS) {
+        const n = v.delta[id]
+        if (n === undefined || n <= 0) continue
+        pendingGainFloatHooverPointer.delta[id] = (pendingGainFloatHooverPointer.delta[id] ?? 0) + n
+      }
+    }
+  }
+  from.clear()
+}
+
+function pullPendingHooverPointerIntoGainFloatBatch(): void {
+  if (pendingHooverPointerRootGainsMerge.size === 0) return
+  for (const { delta } of pendingHooverPointerRootGainsMerge.values()) {
+    for (const id of ROOT_RESOURCE_IDS) {
+      const n = delta[id]
+      if (n === undefined || n <= 0) continue
+      pendingGainFloatMergeById[id] = (pendingGainFloatMergeById[id] ?? 0) + n
+    }
+  }
+  mergeHooverPointerGainsMapIntoAccum(pendingHooverPointerRootGainsMerge)
+}
+
+function flushPendingMatterHudGainFloats(): void {
+  matterHudGainFloatFlushTimer = null
+  pullPendingWorldAnchoredIntoGainFloatBatch()
+  pullPendingHooverPointerIntoGainFloatBatch()
+
+  const totalEntries: { id: ResourceId; n: number }[] = []
+  for (const id of RESOURCE_IDS_ORDERED) {
+    const n = pendingGainFloatMergeById[id] ?? 0
+    if (n > 0) totalEntries.push({ id, n })
+  }
+  if (
+    totalEntries.length === 0 &&
+    pendingGainFloatAnchoredAccum.size === 0 &&
+    pendingGainFloatHooverPointer === null
+  ) {
+    return
+  }
+
+  const anchoredSumById = createEmptyResourceTallies()
+  let anchoredVoxelCount = 0
+  for (const { delta } of pendingGainFloatAnchoredAccum.values()) {
+    let any = false
+    for (const id of ROOT_RESOURCE_IDS) {
+      const v = delta[id]
+      if (v === undefined || v <= 0) continue
+      anchoredSumById[id] = (anchoredSumById[id] ?? 0) + v
+      any = true
+    }
+    if (any) anchoredVoxelCount += 1
+  }
+  if (pendingGainFloatHooverPointer) {
+    let any = false
+    for (const id of ROOT_RESOURCE_IDS) {
+      const v = pendingGainFloatHooverPointer.delta[id]
+      if (v === undefined || v <= 0) continue
+      anchoredSumById[id] = (anchoredSumById[id] ?? 0) + v
+      any = true
+    }
+    if (any) anchoredVoxelCount += 1
+  }
+
+  const remainder: { id: ResourceId; n: number }[] = []
+  for (const e of totalEntries) {
+    const anchoredPart = anchoredSumById[e.id] ?? 0
+    const rem = Math.max(0, e.n - anchoredPart)
+    if (rem > 0) remainder.push({ id: e.id, n: rem })
+  }
+
+  const remainderFloatCount = remainder.length > 0 ? 1 : 0
+  const wouldSpawnMultipleFloats = anchoredVoxelCount + remainderFloatCount > 1
+
+  // #region agent log
+  fetch('http://127.0.0.1:7481/ingest/59523295-7b3c-4817-bc0e-c2fb63f1b767', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'fd2cbb' },
+    body: JSON.stringify({
+      sessionId: 'fd2cbb',
+      location: 'main.ts:flushPendingMatterHudGainFloats',
+      message: 'gain_float_flush_plan',
+      data: {
+        wouldSpawnMultipleFloats,
+        anchoredVoxelCount,
+        hasRemainder: remainder.length > 0,
+        remainderIds: remainder.map((e) => e.id),
+        totalEntryIds: totalEntries.map((e) => e.id),
+      },
+      timestamp: Date.now(),
+      hypothesisId: 'H1',
+    }),
+  }).catch(() => {})
+  // #endregion
+
+  if (wouldSpawnMultipleFloats) {
+    // #region agent log
+    fetch('http://127.0.0.1:7481/ingest/59523295-7b3c-4817-bc0e-c2fb63f1b767', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'fd2cbb' },
+      body: JSON.stringify({
+        sessionId: 'fd2cbb',
+        location: 'main.ts:flushPendingMatterHudGainFloats',
+        message: 'append_gain_float',
+        data: {
+          placement: 'pointer',
+          reason: 'collapse_multi_float',
+          entries: totalEntries.map((e) => ({ id: e.id, n: e.n })),
+        },
+        timestamp: Date.now(),
+        hypothesisId: 'H1',
+      }),
+    }).catch(() => {})
+    // #endregion
+    appendMatterHudGainFloatDom(totalEntries, 'pointer', 0)
+  } else {
+    const canvasRect = renderer.domElement.getBoundingClientRect()
+    let gainFloatStagger = 0
+    for (const { pos, delta } of pendingGainFloatAnchoredAccum.values()) {
+      const anchoredEntries: { id: ResourceId; n: number }[] = []
+      for (const id of ROOT_RESOURCE_IDS) {
+        const n = delta[id]
+        if (n === undefined || n <= 0) continue
+        anchoredEntries.push({ id, n })
+      }
+      if (anchoredEntries.length === 0) continue
+
+      const { clientX, clientY, onScreen } = projectVoxelPosToClient(
+        pos,
+        gridSize,
+        voxelSize,
+        asteroidBundle.group,
+        camera,
+        canvasRect,
+      )
+      const idx = gainFloatStagger++
+      if (onScreen) {
+        // #region agent log
+        fetch('http://127.0.0.1:7481/ingest/59523295-7b3c-4817-bc0e-c2fb63f1b767', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'fd2cbb' },
+          body: JSON.stringify({
+            sessionId: 'fd2cbb',
+            location: 'main.ts:flushPendingMatterHudGainFloats',
+            message: 'append_gain_float',
+            data: {
+              placement: 'voxel_projected',
+              reason: 'anchored_on_screen',
+              pos: { x: pos.x, y: pos.y, z: pos.z },
+              clientX,
+              clientY,
+              entries: anchoredEntries.map((e) => ({ id: e.id, n: e.n })),
+            },
+            timestamp: Date.now(),
+            hypothesisId: 'H2',
+          }),
+        }).catch(() => {})
+        // #endregion
+        appendMatterHudGainFloatDom(anchoredEntries, { clientX, clientY }, idx)
+      } else {
+        // #region agent log
+        fetch('http://127.0.0.1:7481/ingest/59523295-7b3c-4817-bc0e-c2fb63f1b767', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'fd2cbb' },
+          body: JSON.stringify({
+            sessionId: 'fd2cbb',
+            location: 'main.ts:flushPendingMatterHudGainFloats',
+            message: 'append_gain_float',
+            data: {
+              placement: 'default_hud_strip',
+              reason: 'anchored_off_screen',
+              pos: { x: pos.x, y: pos.y, z: pos.z },
+              entries: anchoredEntries.map((e) => ({ id: e.id, n: e.n })),
+            },
+            timestamp: Date.now(),
+            hypothesisId: 'H2',
+          }),
+        }).catch(() => {})
+        // #endregion
+        appendMatterHudGainFloatDom(anchoredEntries, 'default', idx)
+      }
+    }
+
+    if (pendingGainFloatHooverPointer) {
+      const hp = pendingGainFloatHooverPointer
+      const hooverEntries: { id: ResourceId; n: number }[] = []
+      for (const id of ROOT_RESOURCE_IDS) {
+        const n = hp.delta[id]
+        if (n === undefined || n <= 0) continue
+        hooverEntries.push({ id, n })
+      }
+      if (hooverEntries.length > 0) {
+        const idx = gainFloatStagger++
+        appendMatterHudGainFloatDom(
+          hooverEntries,
+          {
+            clientX: hp.clientX + HOOVER_GAIN_FLOAT_CLIENT_OFFSET_X,
+            clientY: hp.clientY + HOOVER_GAIN_FLOAT_CLIENT_OFFSET_Y,
+          },
+          idx,
+        )
+      }
+    }
+
+    if (remainder.length > 0) {
+      // #region agent log
+      fetch('http://127.0.0.1:7481/ingest/59523295-7b3c-4817-bc0e-c2fb63f1b767', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'fd2cbb' },
+        body: JSON.stringify({
+          sessionId: 'fd2cbb',
+          location: 'main.ts:flushPendingMatterHudGainFloats',
+          message: 'append_gain_float',
+          data: {
+            placement: 'pointer',
+            reason: 'remainder_unanchored_or_refined',
+            entries: remainder.map((e) => ({ id: e.id, n: e.n })),
+          },
+          timestamp: Date.now(),
+          hypothesisId: 'H2',
+        }),
+      }).catch(() => {})
+      // #endregion
+      appendMatterHudGainFloatDom(remainder, 'pointer', gainFloatStagger++)
+    }
+  }
+
+  Object.assign(pendingGainFloatMergeById, createEmptyResourceTallies())
+  pendingGainFloatAnchoredAccum.clear()
+  pendingGainFloatHooverPointer = null
+}
+
+function schedulePendingMatterHudGainFloatFlush(): void {
+  if (matterHudGainFloatFlushTimer !== null) return
+  matterHudGainFloatFlushTimer = setTimeout(flushPendingMatterHudGainFloats, MATTER_HUD_GAIN_FLOAT_MERGE_MS)
+}
+
+function mergePendingHooverPointerRootGains(
+  clientX: number,
+  clientY: number,
+  delta: Partial<Record<RootResourceId, number>>,
+): void {
+  let nonempty = false
+  for (const id of ROOT_RESOURCE_IDS) {
+    if ((delta[id] ?? 0) > 0) {
+      nonempty = true
+      break
+    }
+  }
+  if (!nonempty) return
+  const prev = pendingHooverPointerRootGainsMerge.get(HOVER_POINTER_GAIN_KEY)
+  if (!prev) {
+    pendingHooverPointerRootGainsMerge.set(HOVER_POINTER_GAIN_KEY, {
+      clientX,
+      clientY,
+      delta: { ...delta },
+    })
+  } else {
+    prev.clientX = clientX
+    prev.clientY = clientY
+    for (const id of ROOT_RESOURCE_IDS) {
+      const v = delta[id]
+      if (v === undefined || v <= 0) continue
+      prev.delta[id] = (prev.delta[id] ?? 0) + v
+    }
+  }
+}
+
+function mergePendingWorldAnchoredRootGains(
+  pos: VoxelPos,
+  delta: Partial<Record<RootResourceId, number>>,
+  anchoredGainSource: 'lifter_discovery' | 'hub_pm' | 'cargo_drone',
+): void {
+  let nonempty = false
+  for (const id of ROOT_RESOURCE_IDS) {
+    if ((delta[id] ?? 0) > 0) {
+      nonempty = true
+      break
+    }
+  }
+  if (!nonempty) return
+  // #region agent log
+  fetch('http://127.0.0.1:7481/ingest/59523295-7b3c-4817-bc0e-c2fb63f1b767', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'fd2cbb' },
+    body: JSON.stringify({
+      sessionId: 'fd2cbb',
+      location: 'main.ts:mergePendingWorldAnchoredRootGains',
+      message: 'anchored_root_gain_queued',
+      data: {
+        anchoredGainSource,
+        pos: { x: pos.x, y: pos.y, z: pos.z },
+        deltaKeys: ROOT_RESOURCE_IDS.filter((id) => (delta[id] ?? 0) > 0),
+      },
+      timestamp: Date.now(),
+      hypothesisId: 'H5',
+    }),
+  }).catch(() => {})
+  // #endregion
+  const k = packVoxelKey(pos.x, pos.y, pos.z, gridSize)
+  const prev = pendingWorldAnchoredRootGainsByKey.get(k)
+  if (!prev) {
+    pendingWorldAnchoredRootGainsByKey.set(k, {
+      pos: { x: pos.x, y: pos.y, z: pos.z },
+      delta: { ...delta },
+    })
+  } else {
+    for (const id of ROOT_RESOURCE_IDS) {
+      const v = delta[id]
+      if (v === undefined || v <= 0) continue
+      prev.delta[id] = (prev.delta[id] ?? 0) + v
+    }
+  }
+}
 const resourceTalliesBySource: ResourceTalliesBySource = createEmptyResourceTalliesBySource(
   createEmptyResourceTallies,
 )
@@ -719,9 +1130,10 @@ discoveryPendingLayer.append(discoveryPendingSvg, discoveryPendingChips)
 const matterHud = document.createElement('div')
 matterHud.id = 'matter-hud'
 
-const matterHudGainLayer = document.createElement('div')
-matterHudGainLayer.className = 'matter-hud-gain-layer'
-matterHudGainLayer.setAttribute('aria-hidden', 'true')
+/** Full-screen layer so gain floats stack above tools dock / settings; `pointer-events: none` in CSS. */
+const resourceGainOverlay = document.createElement('div')
+resourceGainOverlay.className = 'resource-gain-overlay'
+resourceGainOverlay.setAttribute('aria-hidden', 'true')
 
 const pendingDiscoveries: DiscoveryOffer[] = []
 /** Filled in `syncDiscoveryHud` for O(1) lookup in `updateDiscoveryPendingAnchors`. */
@@ -748,10 +1160,11 @@ matterHudMinBtn.addEventListener('click', (e) => {
   schedulePersistSettingsClient()
 })
 
-matterHudShell.append(matterHudMinBtn, matterHudGainLayer, matterHud)
+matterHudShell.append(matterHudMinBtn, matterHud)
 matterHudWrap.append(matterHudShell)
 viewport.appendChild(matterHudWrap)
 viewport.appendChild(discoveryPendingLayer)
+app.appendChild(resourceGainOverlay)
 
 const pickRipple = createMineRippleElement()
 viewport.appendChild(pickRipple)
@@ -818,6 +1231,7 @@ registerSettingsClientSnapshot(() => ({
   sunElevationDeg,
   sunLightDebug,
   scanVisualizationDebug,
+  localStarTintDebug,
   audioMasterDebug,
   surfaceScanOverlayVisible,
   depthOverlayVisible,
@@ -1023,21 +1437,83 @@ function spawnDebrisPickupFloat(
   wrap.addEventListener('animationend', onEnd)
 }
 
-function syncMatterHudResourceGainFloats(): void {
-  const entries: { id: ResourceId; n: number }[] = []
-  for (const id of RESOURCE_IDS_ORDERED) {
-    const curr = resourceTallies[id] ?? 0
-    const prev = resourceTalliesFloatBaseline[id] ?? 0
-    const d = curr - prev
-    if (d > 0) entries.push({ id, n: d })
+/** Line spacing for simultaneous world-anchored gain floats (voxel / hoover); stacked upward. */
+const MATTER_HUD_GAIN_WORLD_STACK_PX = 15
+
+/**
+ * Screen-space spread for simultaneous **HUD-adjacent** floats (`default` / string `pointer`
+ * placements). Golden-angle spiral so labels fan out instead of stacking; radius grows so
+ * later messages clear wide resource lines.
+ * Stagger is applied via CSS variables in keyframes (margin fought the transform animation).
+ */
+function matterHudGainHudAdjacentStaggerOffsets(index: number): { dx: number; dy: number } {
+  if (index <= 0) return { dx: 0, dy: 0 }
+  const goldenAngle = 2.39996322972865332
+  const baseR = 48
+  const stepR = 56
+  const r = baseR + (index - 1) * stepR
+  const a = index * goldenAngle
+  return {
+    dx: Math.round(Math.cos(a) * r),
+    dy: Math.round(Math.sin(a) * r),
   }
-  for (const id of RESOURCE_IDS_ORDERED) {
-    resourceTalliesFloatBaseline[id] = resourceTallies[id] ?? 0
+}
+
+/** Vertical stack for simultaneous **world-anchored** floats (`{ clientX, clientY }`). */
+function matterHudGainWorldStaggerOffsets(index: number): { dx: number; dy: number } {
+  if (index <= 0) return { dx: 0, dy: 0 }
+  return { dx: 0, dy: -index * MATTER_HUD_GAIN_WORLD_STACK_PX }
+}
+
+/** Center-bottom of `#matter-hud`, or the shell when minimized — used for non-voxel gain floats (not canvas pointer). */
+function resourceMenuGainAnchorClient(): { x: number; y: number; usedShell: boolean } {
+  const hudRect = matterHud.getBoundingClientRect()
+  const shellRect = matterHudShell.getBoundingClientRect()
+  const usedShell = !(hudRect.width > 0 && hudRect.height > 0)
+  const menuRect = usedShell ? shellRect : hudRect
+  return {
+    x: menuRect.left + menuRect.width * 0.5,
+    y: menuRect.bottom,
+    usedShell,
   }
+}
+
+function appendMatterHudGainFloatDom(
+  entries: { id: ResourceId; n: number }[],
+  placement: 'default' | 'pointer' | { clientX: number; clientY: number },
+  staggerIndex = 0,
+): void {
   if (entries.length === 0) return
+  const hudAdjacent = placement === 'default' || placement === 'pointer'
+  const { dx, dy } = hudAdjacent
+    ? matterHudGainHudAdjacentStaggerOffsets(staggerIndex)
+    : matterHudGainWorldStaggerOffsets(staggerIndex)
   const wrap = document.createElement('div')
-  wrap.className = 'matter-hud-gain-float'
   wrap.setAttribute('aria-hidden', 'true')
+  wrap.style.setProperty('--gain-stagger-x', `${dx}px`)
+  wrap.style.setProperty('--gain-stagger-y', `${dy}px`)
+  wrap.style.animationDelay = `${Math.min(staggerIndex * 0.1, 0.9)}s`
+  wrap.style.zIndex = String(16 + staggerIndex)
+  const overlayRect = resourceGainOverlay.getBoundingClientRect()
+  if (placement === 'default') {
+    const { x: menuX, y: menuY } = resourceMenuGainAnchorClient()
+    wrap.className = 'matter-hud-gain-float matter-hud-gain-float--overlay-pinned'
+    if (!matterHudCompact) wrap.classList.add('matter-hud-gain-float--spacious')
+    wrap.style.left = `${menuX - overlayRect.left}px`
+    wrap.style.top = `${menuY - overlayRect.top}px`
+  } else if (placement === 'pointer') {
+    const { x: menuX, y: menuY } = resourceMenuGainAnchorClient()
+    wrap.className = 'matter-hud-gain-float matter-hud-gain-float--at-pointer'
+    if (!matterHudCompact) wrap.classList.add('matter-hud-gain-float--spacious')
+    wrap.style.left = `${menuX - overlayRect.left}px`
+    wrap.style.top = `${menuY - overlayRect.top}px`
+  } else {
+    wrap.className = 'matter-hud-gain-float matter-hud-gain-float--at-pointer'
+    if (!matterHudCompact) wrap.classList.add('matter-hud-gain-float--spacious')
+    wrap.classList.add('matter-hud-gain-float--entries-vertical')
+    wrap.style.left = `${placement.clientX - overlayRect.left}px`
+    wrap.style.top = `${placement.clientY - overlayRect.top}px`
+  }
   for (let i = 0; i < entries.length; i++) {
     const { id, n } = entries[i]!
     const span = document.createElement('span')
@@ -1045,14 +1521,55 @@ function syncMatterHudResourceGainFloats(): void {
     span.style.color = resourceHudCssColorForId(id)
     span.textContent = `${RESOURCE_DEFS[id].hudAbbrev} +${n}`
     wrap.appendChild(span)
-    if (i < entries.length - 1) wrap.appendChild(document.createTextNode(', '))
+    if (hudAdjacent && i < entries.length - 1) wrap.appendChild(document.createTextNode(', '))
   }
-  matterHudGainLayer.appendChild(wrap)
+  resourceGainOverlay.appendChild(wrap)
   const onEnd = (): void => {
     wrap.removeEventListener('animationend', onEnd)
     wrap.remove()
   }
   wrap.addEventListener('animationend', onEnd)
+}
+
+function syncMatterHudResourceGainFloats(): void {
+  const totalEntries: { id: ResourceId; n: number }[] = []
+  for (const id of RESOURCE_IDS_ORDERED) {
+    const curr = resourceTallies[id] ?? 0
+    const prev = resourceTalliesFloatBaseline[id] ?? 0
+    const d = curr - prev
+    if (d > 0) totalEntries.push({ id, n: d })
+  }
+  for (const id of RESOURCE_IDS_ORDERED) {
+    resourceTalliesFloatBaseline[id] = resourceTallies[id] ?? 0
+  }
+  if (totalEntries.length === 0) {
+    return
+  }
+
+  // #region agent log
+  fetch('http://127.0.0.1:7481/ingest/59523295-7b3c-4817-bc0e-c2fb63f1b767', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'fd2cbb' },
+    body: JSON.stringify({
+      sessionId: 'fd2cbb',
+      location: 'main.ts:syncMatterHudResourceGainFloats',
+      message: 'tally_delta_gain_detected',
+      data: {
+        entries: totalEntries.map((e) => ({ id: e.id, n: e.n })),
+        pendingAnchoredKeysBeforeMerge: pendingWorldAnchoredRootGainsByKey.size,
+      },
+      timestamp: Date.now(),
+      hypothesisId: 'H3',
+    }),
+  }).catch(() => {})
+  // #endregion
+
+  for (const e of totalEntries) {
+    pendingGainFloatMergeById[e.id] = (pendingGainFloatMergeById[e.id] ?? 0) + e.n
+  }
+  mergeAnchoredGainsMapIntoAccum(pendingWorldAnchoredRootGainsByKey)
+  mergeHooverPointerGainsMapIntoAccum(pendingHooverPointerRootGainsMerge)
+  schedulePendingMatterHudGainFloatFlush()
 }
 
 function appendMatterHudColoredResourceLine(
@@ -1203,6 +1720,15 @@ function resetEconomyAndDrossForNewRockBody(): void {
   replicatorKillswitchEngaged = false
   Object.assign(resourceTallies, createEmptyResourceTallies())
   Object.assign(resourceTalliesFloatBaseline, createEmptyResourceTallies())
+  pendingWorldAnchoredRootGainsByKey.clear()
+  pendingHooverPointerRootGainsMerge.clear()
+  pendingGainFloatHooverPointer = null
+  if (matterHudGainFloatFlushTimer !== null) {
+    clearTimeout(matterHudGainFloatFlushTimer)
+    matterHudGainFloatFlushTimer = null
+  }
+  Object.assign(pendingGainFloatMergeById, createEmptyResourceTallies())
+  pendingGainFloatAnchoredAccum.clear()
   lastScanRefinedPreviewLine = null
   lastInspectHudLines = null
   debugEnergyCapBonus = 0
@@ -1215,6 +1741,7 @@ function resetEconomyAndDrossForNewRockBody(): void {
   lifterFlights.length = 0
   lifterFlightsVisual.syncPositions([])
   notifiedRootForToolsDock = false
+  notifiedComputroniumForToolsDock = false
 }
 
 function resetAllResearchAndUnlocksForRegenerate(): void {
@@ -1264,6 +1791,7 @@ function resetAllResearchAndUnlocksForRegenerate(): void {
 function finalizeNewAsteroidPresentation(options: { zeroSatelliteDots: boolean }): void {
   invalidateVoxelPosIndexMap()
   setResourceHud()
+  starTintComposer.setTintFromSeed(currentSeed)
   applySunFromState()
   randomizeAsteroidOrientation()
   replaceAsteroidMesh(voxelCells)
@@ -1289,6 +1817,7 @@ function finalizeNewAsteroidPresentation(options: { zeroSatelliteDots: boolean }
 }
 
 function regenerateAsteroid(): void {
+  resetTransientToolInputAfterRockTransition()
   generateNewAsteroidGeometry()
   resetEconomyAndDrossForNewRockBody()
   resetAllResearchAndUnlocksForRegenerate()
@@ -1296,7 +1825,29 @@ function regenerateAsteroid(): void {
 }
 
 function emCatapultToNewAsteroid(): void {
+  resetTransientToolInputAfterRockTransition()
   generateNewAsteroidGeometry()
+  computroniumResearchOrder = buildComputroniumResearchOrder(currentSeed)
+  const laserUnlockApply = laserUnlockApplyFromVars()
+  const researchFlagsChanged = syncResearchFlagsFromPoints(
+    computroniumResearchOrder,
+    computroniumUnlockPoints.current,
+    gameBalance,
+    laserUnlockApply,
+  )
+  applyLaserUnlockApply(laserUnlockApply)
+  if (researchFlagsChanged) {
+    refreshToolCosts()
+    syncOverlaysDepthRow()
+    satelliteDots.setCounts(
+      orbitalSatelliteCount,
+      excavatingSatelliteCount,
+      scannerSatelliteCount,
+      drossCollectorSatelliteCount,
+      cargoDroneSatelliteCount,
+      orbitVisualRadius,
+    )
+  }
   resetEconomyAndDrossForNewRockBody()
   clampRefinerySelection()
   finalizeNewAsteroidPresentation({ zeroSatelliteDots: false })
@@ -1321,13 +1872,15 @@ let cargoDroneSatelliteCount = 0
 let emCatapultUnlocked = false
 let explosiveChargeUnlocked = false
 let lifterUnlocked = false
-/** Cargo tool + cargo sat row (separate from cleanup collector unlock). */
+/** Cargo tool + cargo sat row (separate from sweeper collector unlock). */
 let cargoDroneToolUnlocked = false
 /** Debug cheat: bypass structure gates, explosive research gate (Settings → Unlock all tools). Reset on Regenerate. */
 let debugUnlockAllTools = false
 
-/** After first root resource, refresh tools dock so Replicator/Seed can appear. */
+/** After first root resource, refresh tools dock so Replicator can appear. */
 let notifiedRootForToolsDock = false
+/** After first computronium voxel, refresh tools dock so Seed can appear. */
+let notifiedComputroniumForToolsDock = false
 
 /** Cumulative unlock points from active computronium (reset on Regenerate). */
 const computroniumUnlockPoints = { current: 0 }
@@ -1555,6 +2108,7 @@ function beforeToolChange(_from: PlayerTool, to: PlayerTool): boolean {
       debugUnlockAllTools,
       isToolAllowedByInitialDebugConfig,
       resourceTallies,
+      hasComputroniumVoxel: asteroidHasKind(voxelCells, 'computronium'),
     })
   ) {
     return false
@@ -1704,6 +2258,7 @@ const { syncSunRotationSpeed, syncLightAngleSliders } = createSettingsMenu(app, 
   onMaxPixelRatioCapChange: (cap) => {
     saveMaxPixelRatioCap(cap)
     applyRendererPixelRatio(renderer)
+    starTintComposer.setPixelRatio(renderer.getPixelRatio())
   },
   initialGameSpeedMult: gameSpeedMult,
   onGameSpeedMultChange: (mult: number) => {
@@ -1740,6 +2295,12 @@ const { syncSunRotationSpeed, syncLightAngleSliders } = createSettingsMenu(app, 
     invalidateRockTintCaches()
     reapplyAllRockColorsNoLaser()
     schedulePersistScanVisualizationDebug(scanVisualizationDebug)
+    schedulePersistSettingsClient()
+  },
+  localStarTintDebug,
+  onLocalStarTintDebugChange: () => {
+    starTintComposer.setTintFromSeed(currentSeed)
+    schedulePersistLocalStarTintDebug(localStarTintDebug)
     schedulePersistSettingsClient()
   },
   audioMasterDebug,
@@ -1861,6 +2422,7 @@ const {
   refreshToolCosts: refreshCosts,
   ensureSelectedToolRoster: ensureSelectedToolRosterFromPanel,
   setToolHoldFeedback,
+  setSelectedTool,
 } = createToolsPanel(app, {
   beforeToolChange,
   isToolRosterAllowed: (tool) =>
@@ -1868,6 +2430,7 @@ const {
       debugUnlockAllTools,
       isToolAllowedByInitialDebugConfig,
       resourceTallies,
+      hasComputroniumVoxel: asteroidHasKind(voxelCells, 'computronium'),
     }),
   getComputroniumResearchToolPhase: (tool) => {
     if (debugUnlockAllTools) {
@@ -2030,6 +2593,26 @@ const {
     }
   })(),
 })
+
+function shouldDeferToolHotkey(e: KeyboardEvent): boolean {
+  if (e.ctrlKey || e.metaKey || e.altKey) return true
+  if (e.repeat) return true
+  const t = e.target
+  if (!(t instanceof Element)) return false
+  if (t.closest('input, textarea, select, [contenteditable]')) return true
+  const modal = t.closest('[aria-modal="true"]')
+  if (modal instanceof HTMLElement && !modal.hidden) return true
+  return false
+}
+
+document.addEventListener('keydown', (e) => {
+  if (shouldDeferToolHotkey(e)) return
+  const tool = getPlayerToolForHotkeyCode(e.code)
+  if (tool === undefined) return
+  e.preventDefault()
+  setSelectedTool(tool)
+})
+
 refreshToolCosts = refreshCosts
 onDebugInitialToolConfigChange = () => {
   refreshCosts()
@@ -2288,6 +2871,29 @@ function flushPendingLaserAsteroidMeshReplace(): void {
 
 /** Dedupes `setToolHoldFeedback` so pointermove does not re-sync the cost strip every frame. */
 let lastHoldFeedbackMsg: string | null = null
+
+/**
+ * Clears laser/hoover/explosive drag state and re-enables orbit after a full rock-body swap
+ * (EM catapult or Regenerate). Avoids stuck `controls.enabled` / pointer flags vs new geometry.
+ */
+function resetTransientToolInputAfterRockTransition(): void {
+  pointerDown = null
+  laserPointerDown = false
+  excavatingLaserPointerDown = false
+  hooverPointerDown = false
+  lastHooverClient = null
+  lastLaserDragClient = null
+  lastLaserDragTool = null
+  explosiveChargeAwaitingUp = false
+  pendingLaserAsteroidMeshReplace = false
+  controls.enabled = true
+  stopOrbitalLaserSustain()
+  stopExcavatingLaserSustain()
+  stopHooverSustain()
+  clearLaserRockHighlightColors()
+  lastHoldFeedbackMsg = null
+  syncPressHoldToolFeedback()
+}
 
 function syncPressHoldToolFeedback(): void {
   let msg: string | null = null
@@ -2621,8 +3227,8 @@ function stepLifterFlights(nowMs: number, dtMs: number): void {
       }
       tryDiscoveryAt(f.discoveryPos)
       lifterFlights.splice(i, 1)
+      mergePendingWorldAnchoredRootGains(f.discoveryPos, credited, 'lifter_discovery')
       markMatterHudDirty()
-      setResourceHud()
       continue
     }
     f.pos.x += f.vel.x * dtMs
@@ -2702,6 +3308,7 @@ function stepExplosiveCharges(nowMs: number): void {
         rewardBaseUnits: 0.35,
         bonusUnits: 1,
         bonusChance: 0.12,
+        asteroidRegime: currentAsteroidProfile().regime,
       },
     )
   }
@@ -2893,7 +3500,7 @@ function formatSatelliteGameplayLine(kind: SatelliteInspectKind): string {
     case 'scanner':
       return 'Scanner: neighborhood scan energy scales with deployed count and scan volume.'
     case 'drossCollector':
-      return 'Cleanup collectors: collection rate scales with deployed count (balance).'
+      return 'Sweeper collectors: collection rate scales with deployed count (balance).'
     case 'cargoDrone':
       return 'Cargo drones: automatically move processed matter to root tallies after hubs each tick (balance).'
     default:
@@ -2983,7 +3590,9 @@ function tryPlaceMiningDroneAt(clientX: number, clientY: number): void {
   const cell = voxelCells[i]
   if (!ROCK_LITHOLOGY_KINDS.has(cell.kind)) return
   if (cell.replicatorEating || cell.replicatorActive) return
+  if (!tryPayResources(resourceTallies, getScaledMiningDronePlaceCost())) return
   initMiningDroneCell(cell)
+  setResourceHud()
   markRockInstanceColorsDirty()
   replaceAsteroidMesh(voxelCells)
   bumpMusicToolTapActivity()
@@ -3038,6 +3647,7 @@ function tryPickAt(clientX: number, clientY: number): void {
       rewardBaseUnits: 0.2,
       bonusUnits: 1,
       bonusChance: 0.08,
+      asteroidRegime: currentAsteroidProfile().regime,
     },
   )
   voxelCells.splice(i, 1)
@@ -3291,6 +3901,10 @@ function tryOrbitalLaserHit(clientX: number, clientY: number): void {
   scheduleLaserAsteroidMeshReplace()
 }
 
+/**
+ * Dig laser mining burst: early returns — not unlocked or no excavating satellites; empty rock;
+ * raycast miss; insufficient energy (`resetEconomyAndDrossForNewRockBody` zeros E after catapult).
+ */
 function tryExcavatingLaserHit(clientX: number, clientY: number): void {
   if (!excavatingLaserUnlocked || excavatingSatelliteCount < 1) return
   if (voxelCells.length === 0) return
@@ -3335,6 +3949,7 @@ function tryExcavatingLaserHit(clientX: number, clientY: number): void {
       rewardBaseUnits: 0.25,
       bonusUnits: 1,
       bonusChance: 0.1,
+      asteroidRegime: currentAsteroidProfile().regime,
     },
   )
   voxelCells.splice(i, 1)
@@ -3644,6 +4259,8 @@ function onResize(): void {
   camera.updateProjectionMatrix()
   renderer.setSize(w, h)
   applyRendererPixelRatio(renderer)
+  starTintComposer.setSize(w, h)
+  starTintComposer.setPixelRatio(renderer.getPixelRatio())
 }
 
 window.addEventListener('resize', onResize)
@@ -3692,7 +4309,7 @@ function tick(): void {
     )
     if (completedTransforms > 0) {
       playReplicatorPlaceClick()
-      setResourceHud()
+      markMatterHudDirty()
       syncOverlaysDepthRow()
     }
 
@@ -3735,6 +4352,7 @@ function tick(): void {
         nowMs: now,
         gridSize,
         voxelSize,
+        asteroidRegime: currentAsteroidProfile().regime,
       })
       perfMark('roid-scourge-step-end')
       perfMeasure('roid-scourge-step', 'roid-scourge-step-start', 'roid-scourge-step-end')
@@ -3758,6 +4376,7 @@ function tick(): void {
         nowMs: now,
         gridSize,
         voxelSize,
+        asteroidRegime: currentAsteroidProfile().regime,
       })
       perfMark('roid-locust-step-end')
       perfMeasure('roid-locust-step', 'roid-locust-step-start', 'roid-locust-step-end')
@@ -3885,6 +4504,11 @@ function tick(): void {
       refreshToolCosts()
     }
 
+    if (!notifiedComputroniumForToolsDock && asteroidHasKind(voxelCells, 'computronium')) {
+      notifiedComputroniumForToolsDock = true
+      refreshToolCosts()
+    }
+
     perfMark('roid-step-hubs-start')
     const hubResult = stepHubs(simDtMs / 1000, voxelCells, resourceTallies, energyState, {
       posIndex: getReplicatorNeighborIndex(),
@@ -3905,6 +4529,9 @@ function tick(): void {
         }
       },
     })
+    for (const batch of hubResult.hubRootGains) {
+      mergePendingWorldAnchoredRootGains(batch.hubPos, batch.delta, 'hub_pm')
+    }
     perfMark('roid-step-hubs-end')
     perfMeasure('roid-step-hubs', 'roid-step-hubs-start', 'roid-step-hubs-end')
     if (hubResult.tallyChanged) {
@@ -3925,6 +4552,7 @@ function tick(): void {
       cargoDroneSatelliteCount,
       {
         nowMs: now,
+        gridSize,
         onRootTalliesFromPm(cell, credited) {
           const origin =
             cell.originSource === 'wreck' || cell.originSource === 'asteroid'
@@ -3942,6 +4570,9 @@ function tick(): void {
         },
       },
     )
+    for (const batch of cargoDroneResult.cargoRootGains) {
+      mergePendingWorldAnchoredRootGains(batch.cellPos, batch.delta, 'cargo_drone')
+    }
     perfMark('roid-cargo-drones-end')
     perfMeasure('roid-cargo-drones', 'roid-cargo-drones-start', 'roid-cargo-drones-end')
     if (cargoDroneResult.tallyChanged) {
@@ -3995,6 +4626,10 @@ function tick(): void {
       const idx = asteroidRaycastCellIndex(lastHooverClient.x, lastHooverClient.y)
       if (idx !== null) {
         const centerPos = voxelCells[idx]!.pos
+        const rootBefore: Partial<Record<RootResourceId, number>> = {}
+        for (const id of ROOT_RESOURCE_IDS) {
+          rootBefore[id] = resourceTallies[id] ?? 0
+        }
         if (
           stepDrossHoover(
             simDtMs / 1000,
@@ -4005,26 +4640,17 @@ function tick(): void {
             gameBalance,
           )
         ) {
+          const hooverDelta: Partial<Record<RootResourceId, number>> = {}
+          for (const id of ROOT_RESOURCE_IDS) {
+            const d = (resourceTallies[id] ?? 0) - (rootBefore[id] ?? 0)
+            if (d > 0) hooverDelta[id] = d
+          }
+          if (Object.keys(hooverDelta).length > 0 && lastHooverClient) {
+            mergePendingHooverPointerRootGains(lastHooverClient.x, lastHooverClient.y, hooverDelta)
+          }
           markMatterHudDirty()
         }
       }
-    }
-
-    const capHud = computeEnergyCap(voxelCells, debugEnergyCapBonus)
-    const energyLineHud = formatEnergyHudLine(energyState.current, capHud)
-    if (matterHudDirty) {
-      setResourceHud()
-    } else if (energyLineHud !== lastMatterHudEnergyLine) {
-      lastMatterHudEnergyLine = energyLineHud
-      const energyEl = document.getElementById('matter-hud-energy')
-      if (energyEl) {
-        energyEl.textContent = energyLineHud
-      } else {
-        setResourceHud()
-      }
-      refreshToolCosts()
-    } else {
-      refreshToolCosts()
     }
 
     perfMark('roid-sim-end')
@@ -4152,6 +4778,27 @@ function tick(): void {
   }
 
   controls.update()
+
+  // Matter HUD + gain floats after controls so voxel projection matches this frame's camera.
+  if (!isPaused) {
+    const capHud = computeEnergyCap(voxelCells, debugEnergyCapBonus)
+    const energyLineHud = formatEnergyHudLine(energyState.current, capHud)
+    if (matterHudDirty) {
+      setResourceHud()
+    } else if (energyLineHud !== lastMatterHudEnergyLine) {
+      lastMatterHudEnergyLine = energyLineHud
+      const energyEl = document.getElementById('matter-hud-energy')
+      if (energyEl) {
+        energyEl.textContent = energyLineHud
+      } else {
+        setResourceHud()
+      }
+      refreshToolCosts()
+    } else {
+      refreshToolCosts()
+    }
+  }
+
   const orbitDist = camera.position.distanceTo(controls.target)
   const orbitSpan = controls.maxDistance - controls.minDistance
   const zoomBlacken01 =
@@ -4254,7 +4901,7 @@ function tick(): void {
   perfMeasure('roid-depth-overlay', 'roid-depth-overlay-start', 'roid-depth-overlay-end')
 
   perfMark('roid-render-start')
-  renderer.render(scene, camera)
+  starTintComposer.composer.render()
   perfMark('roid-render-end')
   perfMeasure('roid-render', 'roid-render-start', 'roid-render-end')
   undoFrameShake(camera)

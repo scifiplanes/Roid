@@ -5,7 +5,15 @@ import type { VoxelCell } from './voxelState'
 
 export function cellParticipatesInDepthReveal(cell: VoxelCell): boolean {
   const k = cell.kind
-  return k === 'regolith' || k === 'silicateRock' || k === 'metalRich' || k === 'processedMatter'
+  return (
+    k === 'regolith' ||
+    k === 'silicateRock' ||
+    k === 'metalRich' ||
+    k === 'wreckSalvage' ||
+    k === 'wreckStructure' ||
+    k === 'wreckDense' ||
+    k === 'processedMatter'
+  )
 }
 
 function manhattan(a: VoxelPos, b: VoxelPos): number {

@@ -215,6 +215,11 @@ export interface GameBalance {
    * `drossCollectionMult` is applied (QoL baseline, no unlock gate).
    */
   drossHooverSatelliteEquiv: number
+  /**
+   * Extra multiplier on Hoover dross drain only (`stepDrossHoover`). Does not affect collector
+   * satellites or ambient music weight (which uses `drossHooverSatelliteEquiv`).
+   */
+  drossHooverDrainMult: number
   /** Per HP tick while a replicator eats rock: probability [0,1] of spawning one scrap blob (independent roll). */
   drossReplicatorSpawnChance: number
   /** Voxel-equivalent dross mass when a replicator scrap roll succeeds (before `drossMassMult`). */
@@ -393,7 +398,8 @@ export const defaultGameBalance: GameBalance = {
   drossCollectionRatePerSatellitePerSec: 0.085,
   drossCollectionMult: 1,
   drossHooverRadiusVox: 5,
-  drossHooverSatelliteEquiv: 30,
+  drossHooverSatelliteEquiv: 300,
+  drossHooverDrainMult: 10,
   drossReplicatorSpawnChance: 0.1,
   drossMassPerReplicatorHp: 0.04,
   drossFogDensityPerMass: 0.0004,
@@ -569,6 +575,7 @@ export const GAME_BALANCE_KEYS: readonly (keyof GameBalance)[] = [
   'drossCollectionMult',
   'drossHooverRadiusVox',
   'drossHooverSatelliteEquiv',
+  'drossHooverDrainMult',
   'drossReplicatorSpawnChance',
   'drossMassPerReplicatorHp',
   'drossFogDensityPerMass',
@@ -718,7 +725,10 @@ export function clampBalanceField(key: keyof GameBalance, v: number): number {
   }
   if (key === 'drossHooverSatelliteEquiv') {
     const ri = Math.round(v)
-    return Math.min(48, Math.max(1, ri))
+    return Math.min(500, Math.max(1, ri))
+  }
+  if (key === 'drossHooverDrainMult') {
+    return Math.min(100, Math.max(1, v))
   }
   if (key === 'drossReplicatorSpawnChance') {
     return Math.min(1, Math.max(0, v))

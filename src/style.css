@@ -215,10 +215,10 @@ body {
   }
 }
 
-.matter-hud-gain-layer {
-  position: absolute;
+.resource-gain-overlay {
+  position: fixed;
   inset: 0;
-  z-index: 2;
+  z-index: 21;
   overflow: visible;
   pointer-events: none;
 }
@@ -230,7 +230,8 @@ body {
   margin: 0;
   padding: 0 4px;
   max-width: calc(100% - 32px);
-  transform: translateX(-50%);
+  --gain-stagger-x: 0px;
+  --gain-stagger-y: 0px;
   white-space: nowrap;
   font-size: 11px;
   line-height: 1.2;
@@ -241,19 +242,74 @@ body {
   animation: matter-hud-gain-float-drift 6s ease-out forwards;
 }
 
+/* Pixel-positioned copy of strip floats on `#resource-gain-overlay` (see `main.ts`). */
+.matter-hud-gain-float.matter-hud-gain-float--overlay-pinned {
+  bottom: auto;
+  left: auto;
+  margin: 0;
+  max-width: min(480px, calc(100vw - 32px));
+}
+
+.resource-gain-overlay .matter-hud-gain-float--spacious {
+  font-size: 12px;
+}
+
 .matter-hud-gain-float-res {
   display: inline;
+}
+
+/* World-anchored floats: one resource per line (HUD-adjacent keeps comma-separated inline). */
+.matter-hud-gain-float--entries-vertical {
+  white-space: normal;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.25;
+}
+
+.matter-hud-gain-float--entries-vertical .matter-hud-gain-float-res {
+  display: block;
 }
 
 @keyframes matter-hud-gain-float-drift {
   0% {
     opacity: 1;
-    transform: translateX(-50%) translateY(0);
+    transform: translateX(calc(-50% + var(--gain-stagger-x, 0px))) translateY(var(--gain-stagger-y, 0px));
   }
 
   100% {
     opacity: 0;
-    transform: translateX(-50%) translateY(-20px);
+    transform: translateX(calc(-50% + var(--gain-stagger-x, 0px)))
+      translateY(calc(var(--gain-stagger-y, 0px) - 20px));
+  }
+}
+
+.matter-hud-gain-float--at-pointer {
+  bottom: auto;
+  left: auto;
+  margin: 0;
+  --gain-stagger-x: 0px;
+  --gain-stagger-y: 0px;
+  max-width: min(480px, calc(100vw - 32px));
+  text-align: left;
+  transform: none;
+  z-index: 16;
+  animation: matter-hud-gain-float-at-pointer-drift 6s ease-out forwards;
+}
+
+.matter-hud-gain-float--at-pointer.matter-hud-gain-float--spacious {
+  font-size: 12px;
+}
+
+@keyframes matter-hud-gain-float-at-pointer-drift {
+  0% {
+    opacity: 1;
+    transform: translate(var(--gain-stagger-x, 0px), var(--gain-stagger-y, 0px));
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate(var(--gain-stagger-x, 0px), calc(var(--gain-stagger-y, 0px) - 20px));
   }
 }
 
@@ -451,10 +507,6 @@ body {
   padding: 8px 30px 8px 10px;
   font-size: 15px;
   line-height: 1.35;
-}
-
-.matter-hud-wrap--spacious .matter-hud-gain-float {
-  font-size: 12px;
 }
 
 #matter-hud .matter-hud-res {
@@ -1073,6 +1125,23 @@ body {
 
 .settings-row:last-child {
   margin-bottom: 0;
+}
+
+.settings-row--sandbox {
+  margin-left: -4px;
+  padding: 8px 10px 10px 12px;
+  border-left: 3px solid var(--nc-accent);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--nc-accent) 12%, var(--nc-panel-bg-deep));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--nc-accent) 35%, transparent);
+}
+
+.settings-row--sandbox.settings-row--sandbox-on {
+  border-left-color: var(--nc-fg-bright);
+  background: color-mix(in srgb, var(--nc-accent) 22%, var(--nc-panel-bg-mid));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--nc-fg-bright) 45%, transparent);
 }
 
 .settings-label {
@@ -2328,4 +2397,28 @@ body {
 .false-signal-toast--visible {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
+}
+
+/* Seed Assembly: relic preset tiles show icon + stacked name + theme blurb */
+.seed-assembly-presets-tile {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  text-align: left;
+}
+
+.seed-assembly-presets-tile-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.seed-assembly-presets-blurb {
+  font-size: 10px;
+  line-height: 1.25;
+  opacity: 0.82;
+  margin-top: 3px;
+  letter-spacing: 0.04em;
+  color: var(--nc-fg-muted, #9aa4b8);
 }
