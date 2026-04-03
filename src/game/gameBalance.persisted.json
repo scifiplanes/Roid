@@ -116,5 +116,6 @@
   "lifterFlightMs": 1600,
   "lifterFlightSpeed": 4.2,
   "cargoDroneMatterUnitsPerSecPerSat": 0.22,
-  "cargoDronePullMult": 1
+  "cargoDronePullMult": 1,
+  "drillVoxelsPerUse": 3
 }

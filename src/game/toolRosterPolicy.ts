@@ -20,6 +20,7 @@ const PHASE_ONLY_TOOLS: ReadonlySet<PlayerTool> = new Set([
   'miningDrone',
   'lifter',
   'cargoDrone',
+  'drill',
 ])
 
 /**
@@ -61,5 +62,5 @@ export function isGameplayToolRosterAllowed(tool: PlayerTool, p: ToolRosterPolic
       p.hasComputroniumVoxel
     )
   }
-  return p.isToolAllowedByInitialDebugConfig(tool)
+  return p.isToolAllowedByInitialDebugConfig(tool as keyof InitialToolDebugConfig)
 }

@@ -44,6 +44,7 @@ export type PlayerTool =
   | 'miningDrone'
   | 'computronium'
   | 'emCatapult'
+  | 'drill'
 
 /** Filter tabs (excludes `all`). Tools can appear in multiple tabs. */
 type ToolFilterTabId =
@@ -80,6 +81,7 @@ const TOOL_FILTER_TABS: Readonly<Record<PlayerTool, readonly ToolFilterTabId[]>>
   locust: ['nanites'],
   miningDrone: ['nanites', 'drones'],
   emCatapult: ['travel'],
+  drill: ['basic'],
 }
 
 export interface LaserSatelliteRowSnapshot {
@@ -425,6 +427,14 @@ const TOOLS: ReadonlyArray<{
     short: 'New asteroid; keep research',
     costTool: 'emCatapultInfo',
   },
+  {
+    id: 'drill',
+    fKey: 'D',
+    label: 'Drill',
+    title:
+      'Computronium research unlock. Click rock to remove several voxels in a row along your view ray, spawning dross and debris (voxel count in Debug → balance).',
+    short: 'Ray tunnel; rock → dross + debris',
+  },
 ]
 
 /** Physical key codes (`KeyboardEvent.code`), same order as {@link TOOLS}. */
@@ -451,6 +461,7 @@ const TOOL_HOTKEY_CODES: readonly string[] = [
   'KeyP',
   'KeyA',
   'KeyS',
+  'KeyD',
 ]
 
 const NUMPAD_TO_MAIN_ROW: Readonly<Record<string, string>> = {

@@ -12,8 +12,9 @@ describe('tool hotkeys', () => {
     expect(getPlayerToolForHotkeyCode('Numpad0')).toBe('lifter')
   })
 
-  it('maps last letter key to EM Catapult', () => {
+  it('maps last letter keys: EM Catapult (S) and Drill (D)', () => {
     expect(getPlayerToolForHotkeyCode('KeyS')).toBe('emCatapult')
+    expect(getPlayerToolForHotkeyCode('KeyD')).toBe('drill')
   })
 
   it('returns undefined for unbound codes', () => {

@@ -19,6 +19,7 @@ export interface LaserUnlockApply {
   miningDroneUnlocked: boolean
   lifterUnlocked: boolean
   cargoDroneToolUnlocked: boolean
+  drillUnlocked: boolean
 }
 
 /** One research step = one tool or satellite deploy tier unlocked (shuffled per asteroid). */
@@ -35,6 +36,7 @@ export type ComputroniumUnlockId =
   | 'lifter'
   | 'cargoDrone'
   | 'emCatapult'
+  | 'drill'
 
 export const COMPUTRONIUM_UNLOCK_IDS: readonly ComputroniumUnlockId[] = [
   'orbitalLaser',
@@ -49,6 +51,7 @@ export const COMPUTRONIUM_UNLOCK_IDS: readonly ComputroniumUnlockId[] = [
   'lifter',
   'cargoDrone',
   'emCatapult',
+  'drill',
 ] as const
 
 export const COMPUTRONIUM_RESEARCH_STEP_COUNT = COMPUTRONIUM_UNLOCK_IDS.length
@@ -197,6 +200,12 @@ function applyUnlockId(id: ComputroniumUnlockId, flags: LaserUnlockApply): boole
         changed = true
       }
       break
+    case 'drill':
+      if (!flags.drillUnlocked) {
+        flags.drillUnlocked = true
+        changed = true
+      }
+      break
     default:
       break
   }
@@ -267,6 +276,8 @@ function isFlagTrueForId(id: ComputroniumUnlockId, flags: LaserUnlockApply): boo
       return flags.cargoDroneToolUnlocked
     case 'emCatapult':
       return flags.emCatapultUnlocked
+    case 'drill':
+      return flags.drillUnlocked
     default:
       return false
   }
@@ -285,6 +296,7 @@ const UNLOCK_ID_TO_PLAYER_TOOL: Partial<Record<ComputroniumUnlockId, string>> = 
   lifter: 'lifter',
   cargoDrone: 'cargoDrone',
   emCatapult: 'emCatapult',
+  drill: 'drill',
 }
 
 export function getResearchPhaseForPlayerToolId(

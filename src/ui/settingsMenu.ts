@@ -187,6 +187,14 @@ const GAMEPLAY_BALANCE_SLIDERS: SliderRow[] = [
     valueDecimals: 0,
   },
   {
+    key: 'drillVoxelsPerUse',
+    label: 'Drill voxels per click (along ray; computronium unlock)',
+    min: 1,
+    max: 16,
+    step: 1,
+    valueDecimals: 0,
+  },
+  {
     key: 'explosiveChargeEnergyPerArm',
     label: 'Explosive charge energy per arm (after unlock)',
     min: 0.2,

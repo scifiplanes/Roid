@@ -2158,6 +2158,11 @@ body {
   margin-bottom: 0;
 }
 
+.discovery-modal-tips-em {
+  color: var(--nc-accent);
+  font-weight: bold;
+}
+
 .discovery-modal-buttons {
   display: flex;
   flex-direction: row;

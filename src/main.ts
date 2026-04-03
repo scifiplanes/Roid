@@ -33,7 +33,10 @@ import {
   sortDepthOverlayRockInstancesByViewDistance,
   type AsteroidRenderBundle,
 } from './scene/asteroid/buildAsteroidMesh'
-import { raycastFirstOccupiedCellIndex } from './game/voxelGridRaycast'
+import {
+  raycastFirstOccupiedCellIndex,
+  raycastOccupiedCellIndicesAlongRay,
+} from './game/voxelGridRaycast'
 import {
   convertRockCellToProcessedMatterInPlace,
   ROCK_LITHOLOGY_KINDS,
@@ -1762,6 +1765,7 @@ function resetAllResearchAndUnlocksForRegenerate(): void {
   explosiveChargeUnlocked = false
   lifterUnlocked = false
   cargoDroneToolUnlocked = false
+  drillUnlocked = false
   debugUnlockAllTools = false
   computroniumUnlockPoints.current = 0
   computroniumResearchOrder = buildComputroniumResearchOrder(currentSeed)
@@ -1874,6 +1878,7 @@ let explosiveChargeUnlocked = false
 let lifterUnlocked = false
 /** Cargo tool + cargo sat row (separate from sweeper collector unlock). */
 let cargoDroneToolUnlocked = false
+let drillUnlocked = false
 /** Debug cheat: bypass structure gates, explosive research gate (Settings → Unlock all tools). Reset on Regenerate. */
 let debugUnlockAllTools = false
 
@@ -1904,6 +1909,7 @@ function laserUnlockApplyFromVars(): LaserUnlockApply {
     miningDroneUnlocked,
     lifterUnlocked,
     cargoDroneToolUnlocked,
+    drillUnlocked,
   }
 }
 
@@ -1925,6 +1931,7 @@ function applyLaserUnlockApply(f: LaserUnlockApply): void {
   miningDroneUnlocked = f.miningDroneUnlocked
   lifterUnlocked = f.lifterUnlocked
   cargoDroneToolUnlocked = f.cargoDroneToolUnlocked
+  drillUnlocked = f.drillUnlocked
 }
 
 function researchPhaseState(): ResearchPhaseState {
@@ -2132,6 +2139,7 @@ function beforeToolChange(_from: PlayerTool, to: PlayerTool): boolean {
   if (to === 'computronium')
     return debugUnlockAllTools || structureToolPhaseFromCells('computronium', voxelCells) === 'unlocked'
   if (to === 'miningDrone') return debugUnlockAllTools || miningDroneUnlocked
+  if (to === 'drill') return debugUnlockAllTools || drillUnlocked
   return true
 }
 
@@ -2798,6 +2806,7 @@ function applyDebugUnlockAllTools(): void {
   miningDroneUnlocked = true
   lifterUnlocked = true
   cargoDroneToolUnlocked = true
+  drillUnlocked = true
   orbitalSatelliteCount = Math.max(1, orbitalSatelliteCount)
   excavatingSatelliteCount = Math.max(1, excavatingSatelliteCount)
   scannerSatelliteCount = Math.max(1, scannerSatelliteCount)
@@ -3350,16 +3359,22 @@ function tryScannerAt(clientX: number, clientY: number): void {
   bumpMusicToolTapActivity()
 }
 
-/**
- * First voxel cell under the pointer (grid DDA in asteroid local space), or null if the ray misses all voxels.
- */
-function asteroidRaycastCellIndex(clientX: number, clientY: number): number | null {
-  if (voxelCells.length === 0) return null
+/** Fills `_rayLocalOrigin` / `_rayLocalDir` in asteroid local space. */
+function ensureAsteroidRayLocalRay(clientX: number, clientY: number): boolean {
+  if (voxelCells.length === 0) return false
   canvasPointerToNdc(clientX, clientY)
   raycaster.setFromCamera(pointerNdc, camera)
   _asteroidInvWorld.copy(asteroidBundle.group.matrixWorld).invert()
   _rayLocalOrigin.copy(raycaster.ray.origin).applyMatrix4(_asteroidInvWorld)
   _rayLocalDir.copy(raycaster.ray.direction).transformDirection(_asteroidInvWorld)
+  return true
+}
+
+/**
+ * First voxel cell under the pointer (grid DDA in asteroid local space), or null if the ray misses all voxels.
+ */
+function asteroidRaycastCellIndex(clientX: number, clientY: number): number | null {
+  if (!ensureAsteroidRayLocalRay(clientX, clientY)) return null
   return raycastFirstOccupiedCellIndex(
     _rayLocalOrigin,
     _rayLocalDir,
@@ -3598,6 +3613,87 @@ function tryPlaceMiningDroneAt(clientX: number, clientY: number): void {
   bumpMusicToolTapActivity()
 }
 
+function isPickableMiningCell(cell: VoxelCell): boolean {
+  return (
+    cell.kind !== 'replicator' &&
+    cell.kind !== 'reactor' &&
+    cell.kind !== 'battery' &&
+    cell.kind !== 'hub' &&
+    cell.kind !== 'refinery' &&
+    cell.kind !== 'depthScanner' &&
+    cell.kind !== 'computronium' &&
+    cell.kind !== 'miningDrone' &&
+    cell.kind !== 'processedMatter'
+  )
+}
+
+function tryDrillAt(clientX: number, clientY: number): void {
+  if (!debugUnlockAllTools && !drillUnlocked) return
+  if (voxelCells.length === 0) return
+  if (!ensureAsteroidRayLocalRay(clientX, clientY)) return
+  const posMap = getVoxelPosIndexMap()
+  const maxAlong = Math.min(48, gridSize * 2)
+  const along = raycastOccupiedCellIndicesAlongRay(
+    _rayLocalOrigin,
+    _rayLocalDir,
+    voxelSize,
+    gridSize,
+    posMap,
+    maxAlong,
+  )
+  const want = Math.max(1, Math.floor(gameBalance.drillVoxelsPerUse))
+  const toRemoveIdx: number[] = []
+  for (const idx of along) {
+    const cell = voxelCells[idx]
+    if (!cell) continue
+    if (isPickableMiningCell(cell)) {
+      toRemoveIdx.push(idx)
+      if (toRemoveIdx.length >= want) break
+    } else {
+      break
+    }
+  }
+  if (toRemoveIdx.length === 0) return
+
+  const now = performance.now()
+  const center = (gridSize - 1) / 2
+  const regime = currentAsteroidProfile().regime
+  toRemoveIdx.sort((a, b) => b - a)
+  for (const i of toRemoveIdx) {
+    const cell = voxelCells[i]!
+    tryDiscoveryAt(cell.pos)
+    spawnDrossFromRemovedCell(drossState, cell, gameBalance)
+    const lp = {
+      x: (cell.pos.x - center) * voxelSize,
+      y: (cell.pos.y - center) * voxelSize,
+      z: (cell.pos.z - center) * voxelSize,
+    }
+    spawnDebrisShardFromRemovedCell(
+      debrisState,
+      cell,
+      lp,
+      now,
+      {
+        spawnChance: gameBalance.debrisSpawnChance,
+        lifetimeMs: {
+          min: gameBalance.debrisLifetimeMinSec * 1000,
+          max: gameBalance.debrisLifetimeMaxSec * 1000,
+        },
+        speedPerSec: { min: gameBalance.debrisSpeedMin, max: gameBalance.debrisSpeedMax },
+        rewardBaseUnits: 0.2,
+        bonusUnits: 1,
+        bonusChance: 0.08,
+        asteroidRegime: regime,
+      },
+    )
+    voxelCells.splice(i, 1)
+  }
+  bumpMusicToolTapActivity()
+  setResourceHud()
+  markRockInstanceColorsDirty()
+  replaceAsteroidMesh(voxelCells)
+}
+
 function tryPickAt(clientX: number, clientY: number): void {
   if (voxelCells.length === 0) return
 
@@ -3605,18 +3701,7 @@ function tryPickAt(clientX: number, clientY: number): void {
   if (i === null) return
 
   const cell = voxelCells[i]
-  if (
-    cell.kind === 'replicator' ||
-    cell.kind === 'reactor' ||
-    cell.kind === 'battery' ||
-    cell.kind === 'hub' ||
-    cell.kind === 'refinery' ||
-    cell.kind === 'depthScanner' ||
-    cell.kind === 'computronium' ||
-    cell.kind === 'miningDrone' ||
-    cell.kind === 'processedMatter'
-  )
-    return
+  if (!isPickableMiningCell(cell)) return
 
   const popped = cell.hpRemaining === 1
   cell.hpRemaining -= 1
@@ -4105,6 +4190,13 @@ canvas.addEventListener('pointerup', (e) => {
   pointerDown = null
   if (moved > CLICK_MAX_PX) return
   const tool = getSelectedTool()
+
+  // Drill must run before the debris block: raycastDebris can otherwise claim the tap
+  // when shards exist, so tryDrillAt would never run.
+  if (tool === 'drill') {
+    tryDrillAt(e.clientX, e.clientY)
+    return
+  }
 
   // Debris click: allow collecting drifting shards regardless of tool, as long
   // as the click is a short tap. Use asteroid-local ray like voxel picking.

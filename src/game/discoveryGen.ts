@@ -141,29 +141,29 @@ const SUFFIXES = [
 ]
 
 const RESEARCH_FLAVOR = [
-  'A dormant uplink aligns with your grid — routing unlocks.',
-  'Residual ephemeris resolves; orbital tools answer.',
-  'Buried calibration unlocks a deeper beam path.',
-  'A cached almanac completes the scanner chain.',
-  'Strange harmonics finish what computronium started.',
+  'Ancient schemata unearthed.',
+  'Derelict slice recovered.',
+  'Ancient specimen recovered.',
+  'Derelict vault yields.',
+  'Archeological discovery.',
 ]
 
 const WINDFALL_LINES = [
-  'Loose material clings to the cavity walls.',
-  'Crystals flicker as vacuum redeposits fines.',
-  'A pocket opens; mass tumbles inward.',
+  'Resource lode discovered.',
+  'Resource deposit discovered.',
+  'Resrouce pocket discovered.',
 ]
 
 const DRAIN_LINES = [
-  'The cavity equalizes — some stores vent to space.',
-  'A feedback pulse scatters cached volatiles.',
-  'Thermal shock cracks a storage blister.',
+  'Resource lost to accident.',
+  'Estimations corrected.',
+  'Resource unnacounted.',
 ]
 
 const LORE_ONLY = [
-  'You file a label that fits nowhere in the taxonomy.',
-  'The signature will bother you for weeks.',
-  'No spectrum matches; you keep the trace anyway.',
+  'Ancient fossil discovered.',
+  'Ancient artifact discovered.',
+  'Inconclusive specimen discovered.',
 ]
 
 /** Plain ASCII; each variant same line count for stable layout. */

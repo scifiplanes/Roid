@@ -27,6 +27,7 @@ function emptyFlags(): LaserUnlockApply {
     miningDroneUnlocked: false,
     lifterUnlocked: false,
     cargoDroneToolUnlocked: false,
+    drillUnlocked: false,
   }
 }
 
@@ -47,7 +48,7 @@ describe('computroniumResearchQueue', () => {
     expect(researchStepsCompleted(0, per)).toBe(0)
     expect(researchStepsCompleted(per * 0.99, per)).toBe(0)
     expect(researchStepsCompleted(per * 1, per)).toBe(1)
-    expect(researchStepsCompleted(per * 12, per)).toBe(COMPUTRONIUM_RESEARCH_STEP_COUNT)
+    expect(researchStepsCompleted(per * 13, per)).toBe(COMPUTRONIUM_RESEARCH_STEP_COUNT)
   })
 
   it('syncResearchFlagsFromPoints unlocks one step per band', () => {

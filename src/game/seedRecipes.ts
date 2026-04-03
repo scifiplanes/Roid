@@ -172,7 +172,7 @@ export interface SeedRecipeAvailabilityState {
 }
 
 /**
- * Maps completed research steps (12-step tree, shuffled order) to a coarse 0–6 “tier” for seeds/recipes.
+ * Maps completed research steps (13-step tree, shuffled order) to a coarse 0–6 “tier” for seeds/recipes.
  * Two steps ≈ one legacy tier band.
  */
 export function currentComputroniumTier(

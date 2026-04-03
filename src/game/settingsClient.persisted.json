@@ -1,6 +1,6 @@
 {
   "v": 1,
-  "sunAzimuthDeg": 76.52508596391459,
+  "sunAzimuthDeg": 60.692590791128055,
   "sunElevationDeg": -70,
   "sunLightDebug": {
     "rotateSunAzimuth": true,
@@ -17,28 +17,28 @@
     "boostLightnessMax": 0.75,
     "boostLightnessScale": 1.01,
     "boostLightnessAdd": 0.025,
-    "applyTintRgbMul": 1.9,
+    "applyTintRgbMul": 1.83,
     "suppressEmissiveWhenScanned": true,
-    "baseRockBulkHintLerp": 0.78,
+    "baseRockBulkHintLerp": 0,
     "baseRockBulkHintSaturation": 0.2,
     "baseRockBulkHintLightness": 0.41,
     "baseRockDensityShade": 0.74
   },
   "localStarTintDebug": {
-    "excludedHueBandCenter": 0.345,
-    "excludedHueBandWidth": 0.25,
-    "starTintSaturationMin": 0.78,
-    "starTintSaturationMax": 0.78
+    "excludedHueBandCenter": 0.31000000000000005,
+    "excludedHueBandWidth": 0.315,
+    "starTintSaturationMin": 0.01,
+    "starTintSaturationMax": 1
   },
   "audioMasterDebug": {
     "masterHighPassHz": 41.212598265400004,
     "eqLowShelfHz": 200,
-    "eqHighShelfHz": 4000,
-    "eqLowDb": 6.5,
-    "eqMidDb": 6,
-    "eqHighDb": -5.5,
-    "musicPostOutGainDb": 0,
-    "hooverLowpassBaseHz": 70,
+    "eqHighShelfHz": 1282.0888539868154,
+    "eqLowDb": -2.5,
+    "eqMidDb": -5.5,
+    "eqHighDb": 2.5,
+    "musicPostOutGainDb": 25.5,
+    "hooverLowpassBaseHz": 95,
     "hooverLowpassLfoDepthHz": 10,
     "hooverLowpassLfoRateHz": 0.55
   },
@@ -47,13 +47,13 @@
     "depthOverlayVisible": false
   },
   "discoveryAutoResolve": false,
-  "musicVolumeLinear": 0.97,
-  "sfxVolumeLinear": 1,
+  "musicVolumeLinear": 0.9,
+  "sfxVolumeLinear": 0.25,
   "toolsBarCollapsed": true,
   "overlayLegendCollapsed": false,
-  "matterHudCollapsed": true,
+  "matterHudCollapsed": false,
   "matterHudCompact": true,
   "colorScheme": "orange",
   "fontId": "disketMono",
-  "gameSpeedMult": 1
+  "gameSpeedMult": 0.2
 }

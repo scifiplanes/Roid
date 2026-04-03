@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { hasAnyRootResource, isGameplayToolRosterAllowed, isPhaseOnlyTool } from './toolRosterPolicy'
+import {
+  hasAnyRootResource,
+  isGameplayToolRosterAllowed,
+  isPhaseOnlyTool,
+} from './toolRosterPolicy'
 import type { InitialToolDebugConfig } from './computroniumSim'
 
 function cfg(partial: Partial<InitialToolDebugConfig>): InitialToolDebugConfig {
@@ -41,6 +45,10 @@ describe('toolRosterPolicy', () => {
 
   it('isPhaseOnlyTool is true for orbital laser', () => {
     expect(isPhaseOnlyTool('orbitalLaser')).toBe(true)
+  })
+
+  it('isPhaseOnlyTool is true for drill (computronium research)', () => {
+    expect(isPhaseOnlyTool('drill')).toBe(true)
   })
 
   it('allows phase-only tools regardless of debug starting-tools flags', () => {

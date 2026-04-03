@@ -180,3 +180,140 @@ export function raycastFirstOccupiedCellIndex(
 
   return null
 }
+
+/**
+ * All occupied cell indices along the ray, in traversal order, up to `maxCells` hits.
+ * Same coordinate system as {@link raycastFirstOccupiedCellIndex}.
+ */
+export function raycastOccupiedCellIndicesAlongRay(
+  originLocal: { x: number; y: number; z: number },
+  dirLocal: { x: number; y: number; z: number },
+  voxelSize: number,
+  gridSize: number,
+  posMap: Map<number, number>,
+  maxCells: number,
+): number[] {
+  const out: number[] = []
+  if (maxCells <= 0) return out
+
+  const center = (gridSize - 1) / 2
+  let dx = dirLocal.x
+  let dy = dirLocal.y
+  let dz = dirLocal.z
+  const len = Math.hypot(dx, dy, dz)
+  if (len < 1e-15) return out
+  dx /= len
+  dy /= len
+  dz /= len
+
+  const xMin = (-center - 0.5) * voxelSize
+  const xMax = (gridSize - 1 - center + 0.5) * voxelSize
+  const yMin = xMin
+  const yMax = xMax
+  const zMin = xMin
+  const zMax = xMax
+
+  const ox = originLocal.x
+  const oy = originLocal.y
+  const oz = originLocal.z
+
+  const interval = rayAabbInterval(ox, oy, oz, dx, dy, dz, xMin, xMax, yMin, yMax, zMin, zMax)
+  if (!interval || interval.t1 < 0) return out
+
+  let tStart = interval.t0 < 0 ? 0 : interval.t0
+  if (tStart > interval.t1) return out
+
+  let sx = ox + dx * tStart
+  let sy = oy + dy * tStart
+  let sz = oz + dz * tStart
+
+  const cellAt = (x: number, y: number, z: number) => {
+    const ix = Math.floor(x / voxelSize + center + 0.5 - 1e-12)
+    const iy = Math.floor(y / voxelSize + center + 0.5 - 1e-12)
+    const iz = Math.floor(z / voxelSize + center + 0.5 - 1e-12)
+    return [ix, iy, iz] as const
+  }
+
+  let [ix, iy, iz] = cellAt(sx, sy, sz)
+
+  const inBounds = (i: number) => i >= 0 && i < gridSize
+
+  const tryHit = (): number | null => {
+    if (!inBounds(ix) || !inBounds(iy) || !inBounds(iz)) return null
+    const k = packVoxelKey(ix, iy, iz, gridSize)
+    const idx = posMap.get(k)
+    return idx === undefined ? null : idx
+  }
+
+  const stepX = dx > EPS ? 1 : dx < -EPS ? -1 : 0
+  const stepY = dy > EPS ? 1 : dy < -EPS ? -1 : 0
+  const stepZ = dz > EPS ? 1 : dz < -EPS ? -1 : 0
+
+  const tDeltaX = Math.abs(dx) > EPS ? voxelSize / Math.abs(dx) : Infinity
+  const tDeltaY = Math.abs(dy) > EPS ? voxelSize / Math.abs(dy) : Infinity
+  const tDeltaZ = Math.abs(dz) > EPS ? voxelSize / Math.abs(dz) : Infinity
+
+  let tMaxX: number
+  let tMaxY: number
+  let tMaxZ: number
+
+  if (dx > EPS) {
+    tMaxX = ((ix - center + 0.5) * voxelSize - sx) / dx
+  } else if (dx < -EPS) {
+    tMaxX = ((ix - center - 0.5) * voxelSize - sx) / dx
+  } else {
+    tMaxX = Infinity
+  }
+
+  if (dy > EPS) {
+    tMaxY = ((iy - center + 0.5) * voxelSize - sy) / dy
+  } else if (dy < -EPS) {
+    tMaxY = ((iy - center - 0.5) * voxelSize - sy) / dy
+  } else {
+    tMaxY = Infinity
+  }
+
+  if (dz > EPS) {
+    tMaxZ = ((iz - center + 0.5) * voxelSize - sz) / dz
+  } else if (dz < -EPS) {
+    tMaxZ = ((iz - center - 0.5) * voxelSize - sz) / dz
+  } else {
+    tMaxZ = Infinity
+  }
+
+  const maxSteps = gridSize * 4 + 32
+
+  let hit = tryHit()
+  if (hit !== null) {
+    out.push(hit)
+    if (out.length >= maxCells) return out
+  }
+
+  for (let step = 0; step < maxSteps; step++) {
+    const minT = Math.min(tMaxX, tMaxY, tMaxZ)
+    if (!Number.isFinite(minT)) break
+
+    if (tMaxX <= minT + EPS) {
+      ix += stepX
+      tMaxX += tDeltaX
+    }
+    if (tMaxY <= minT + EPS) {
+      iy += stepY
+      tMaxY += tDeltaY
+    }
+    if (tMaxZ <= minT + EPS) {
+      iz += stepZ
+      tMaxZ += tDeltaZ
+    }
+
+    hit = tryHit()
+    if (hit !== null) {
+      out.push(hit)
+      if (out.length >= maxCells) return out
+    }
+
+    if (!inBounds(ix) || !inBounds(iy) || !inBounds(iz)) return out
+  }
+
+  return out
+}

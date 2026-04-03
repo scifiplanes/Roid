@@ -311,6 +311,10 @@ export interface GameBalance {
   cargoDroneMatterUnitsPerSecPerSat: number
   /** Multiplier on cargo drone PM throughput (Debug tuning). */
   cargoDronePullMult: number
+  /**
+   * Drill tool (computronium unlock): max rock voxels removed per click along the view ray.
+   */
+  drillVoxelsPerUse: number
 }
 
 export const defaultGameBalance: GameBalance = {
@@ -434,6 +438,7 @@ export const defaultGameBalance: GameBalance = {
   lifterFlightSpeed: 4.2,
   cargoDroneMatterUnitsPerSecPerSat: 0.22,
   cargoDronePullMult: 1,
+  drillVoxelsPerUse: 3,
 }
 
 /** Live tuning values; init via `initGameBalanceFromPersisted` before gameplay. */
@@ -607,6 +612,7 @@ export const GAME_BALANCE_KEYS: readonly (keyof GameBalance)[] = [
   'lifterFlightSpeed',
   'cargoDroneMatterUnitsPerSecPerSat',
   'cargoDronePullMult',
+  'drillVoxelsPerUse',
 ] as const
 
 const DIG_LASER_AUDIO_CLAMP: Partial<Record<keyof GameBalance, { min: number; max: number }>> = {
@@ -810,6 +816,10 @@ export function clampBalanceField(key: keyof GameBalance, v: number): number {
   }
   if (key === 'cargoDronePullMult') {
     return Math.min(8, Math.max(0, v))
+  }
+  if (key === 'drillVoxelsPerUse') {
+    const ri = Math.round(v)
+    return Math.min(16, Math.max(1, ri))
   }
   return Math.min(MULT_MAX, Math.max(MULT_MIN, v))
 }

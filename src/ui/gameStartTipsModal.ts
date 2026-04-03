@@ -1,12 +1,35 @@
-const TIP_LINES: string[] = [
+/** Plain string, or full sentence with `highlight` substring wrapped for emphasis. */
+const TIP_LINES: Array<string | { text: string; highlight: string }> = [
+  'Use Hoover to collect debris.',
   'Build first few tools to unlock more.',
   'Build Hubs to get resources from Replicators.',
   'Missing resource for Reactor is usually deeper.',
-  'Build Clean Up to get rid of Dross (Debris and Fog).',
   'Build Computronium to gradually unlock more tools.',
   'Try the digging laser.',
+  'Mining laser creates Processed Matter. There are multiple ways to collect Processed Matter.',
   'Cheat in debug menu if stuck',
+  'You can regenerate the asteroid in the menu.',
+  { text: 'There is a sandbox option in the menu', highlight: 'sandbox' },
 ]
+
+function appendTipListItem(list: HTMLUListElement, entry: string | { text: string; highlight: string }): void {
+  const li = document.createElement('li')
+  if (typeof entry === 'string') {
+    li.textContent = entry
+  } else {
+    const { text, highlight } = entry
+    const i = text.indexOf(highlight)
+    if (i < 0) {
+      li.textContent = text
+    } else {
+      const em = document.createElement('span')
+      em.className = 'discovery-modal-tips-em'
+      em.textContent = highlight
+      li.append(document.createTextNode(text.slice(0, i)), em, document.createTextNode(text.slice(i + highlight.length)))
+    }
+  }
+  list.appendChild(li)
+}
 
 export interface GameStartTipsModalApi {
   show: () => void
@@ -42,9 +65,7 @@ export function createGameStartTipsModal(
   const list = document.createElement('ul')
   list.className = 'discovery-modal-tips-list'
   for (const line of TIP_LINES) {
-    const li = document.createElement('li')
-    li.textContent = line
-    list.appendChild(li)
+    appendTipListItem(list, line)
   }
   body.appendChild(list)
 
