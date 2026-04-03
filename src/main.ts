@@ -166,6 +166,10 @@ import {
 } from './game/clickFeedback'
 import { gameBalance, initGameBalanceFromPersisted } from './game/gameBalance'
 import { perfMark, perfMeasure } from './game/perfMarks'
+import {
+  sampleAudioMeters,
+  updateSettingsAudioMeterElement,
+} from './game/audioMeters'
 import { createPerfDebugOverlay, getPerfDebugOverlayStored } from './game/perfDebugOverlay'
 import { applySfxReverbFromBalance, applySfxVolumeLinear } from './game/sfxReverbBus'
 import persistedSnapshot from './game/gameBalance.persisted.json' with { type: 'json' }
@@ -4255,6 +4259,8 @@ function tick(): void {
   perfMeasure('roid-render', 'roid-render-start', 'roid-render-end')
   undoFrameShake(camera)
 
+  sampleAudioMeters()
+  updateSettingsAudioMeterElement()
   if (import.meta.env.DEV && perfDebugOverlay) {
     perfDebugOverlay.onFrameEnd({
       frameStartMs,

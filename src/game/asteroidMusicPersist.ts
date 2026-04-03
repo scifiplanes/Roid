@@ -381,7 +381,7 @@ function mergeTop(p: unknown): Partial<AsteroidMusicDebug> {
   num('reeseVoiceIndex', 0, ASTEROID_MUSIC_VOICE_COUNT - 1)
   num('reeseOrderAfterVoice', 0, ASTEROID_MUSIC_VOICE_COUNT - 1)
   num('reesePitchSemitones', -36, 24)
-  num('reesePitchVariationSemitones', 0, 6)
+  num('reesePitchVariationSemitones', 0, 24)
   num('reesePitchJitterHz', NOTE_JITTER_HZ_MIN, NOTE_JITTER_HZ_MAX)
   num('reesePitchJitterRandomness', 0, 1)
   num('reeseSwellsRateHz', 0.0001, 2)

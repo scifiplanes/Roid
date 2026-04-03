@@ -292,7 +292,7 @@ export interface AsteroidMusicDebug {
   reeseOrderAfterVoice: number
   /** Overall pitch offset in semitones vs the voice’s default triad position. */
   reesePitchSemitones: number
-  /** Extra slow pitch wander depth in semitones (0…~4). */
+  /** Extra slow pitch wander depth in semitones (0–24). */
   reesePitchVariationSemitones: number
   /** Slow pitch jitter rate (Hz); very low values (minutes-scale). */
   reesePitchJitterHz: number
@@ -822,7 +822,7 @@ export function ensureVoiceMacroJitterFields(debug: AsteroidMusicDebug): void {
   ) {
     debug.reesePitchVariationSemitones = 2
   } else {
-    debug.reesePitchVariationSemitones = clamp(debug.reesePitchVariationSemitones, 0, 6)
+    debug.reesePitchVariationSemitones = clamp(debug.reesePitchVariationSemitones, 0, 24)
   }
   if (typeof debug.reesePitchJitterHz !== 'number' || !Number.isFinite(debug.reesePitchJitterHz)) {
     debug.reesePitchJitterHz = 0.003
@@ -1092,10 +1092,9 @@ export function applyVoiceMacrosToVoices(debug: AsteroidMusicDebug, rootMidi: nu
 
     // Reese voice overrides: pitch offset, extra slow pitch jitter, swells, width, and macro volume.
     if (reeseEnabled && i === reeseIndex) {
-      // Pitch: apply overall offset and additional very-slow jitter, independent of phrase spikes.
-      const baseOffset = clamp(Math.round(debug.reesePitchSemitones ?? 0), -36, 24)
+      // Slow pitch LFO only; `v.note` above already includes scale-snapped `reesePitchSemitones`.
       let extraSemis = 0
-      const depthSemi = clamp(debug.reesePitchVariationSemitones ?? 0, 0, 6)
+      const depthSemi = clamp(debug.reesePitchVariationSemitones ?? 0, 0, 24)
       let hz = clamp(debug.reesePitchJitterHz ?? 0.003, 0.0001, 0.05)
       if (depthSemi > 0 && hz > 0 && Number.isFinite(t)) {
         if (debug.reesePitchJitterRandomness && Number.isFinite(debug.reesePitchJitterRandomness)) {
@@ -1115,7 +1114,7 @@ export function applyVoiceMacrosToVoices(debug: AsteroidMusicDebug, rootMidi: nu
           2 * Math.PI * u01(i, SALT_REESE_PITCH)
         extraSemis = depthSemi * Math.sin(phase)
       }
-      v.note += baseOffset + extraSemis
+      v.note += extraSemis
 
       // Mutual detune between the reese’s two carriers: ±detune around the snapped pitch.
       const detSemi = clamp(debug.reeseDetuneSemitones ?? 0, 0, 12)

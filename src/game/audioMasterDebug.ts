@@ -6,12 +6,21 @@
 export interface AudioMasterDebug {
   /** High-pass cutoff (Hz); default rolls off sub-bass. */
   masterHighPassHz: number
-  /** Low shelf gain (dB) at ~200 Hz. */
+  /** Low shelf corner frequency (Hz); Web Audio lowshelf cutoff. */
+  eqLowShelfHz: number
+  /** High shelf corner frequency (Hz); Web Audio highshelf cutoff. */
+  eqHighShelfHz: number
+  /** Low shelf gain (dB). */
   eqLowDb: number
   /** Peaking gain (dB) at ~1 kHz. */
   eqMidDb: number
-  /** High shelf gain (dB) at ~4 kHz. */
+  /** High shelf gain (dB). */
   eqHighDb: number
+  /**
+   * Gain after EQ + high-pass, before the global master sum (dB; clamped about −24…+36).
+   * Meter taps the signal after this gain (in series with the bus).
+   */
+  musicPostOutGainDb: number
   /**
    * Hoover tool sustain: base lowpass cutoff (Hz) on the SFX path.
    * 0 or less falls back to a conservative default.
@@ -32,9 +41,12 @@ export interface AudioMasterDebug {
 export function createDefaultAudioMasterDebug(): AudioMasterDebug {
   return {
     masterHighPassHz: 40,
+    eqLowShelfHz: 200,
+    eqHighShelfHz: 4000,
     eqLowDb: 0,
     eqMidDb: 0,
     eqHighDb: 0,
+    musicPostOutGainDb: 0,
     hooverLowpassBaseHz: 120,
     hooverLowpassLfoDepthHz: 140,
     hooverLowpassLfoRateHz: 1.6,

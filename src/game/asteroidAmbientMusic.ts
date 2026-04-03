@@ -30,6 +30,12 @@ const STRUCTURE_KINDS = new Set<string>([
 /** Must exceed base delay + peak modulation. */
 const CHORUS_MAX_DELAY_SEC = 0.06
 
+/**
+ * Per-voice linear gain before chorus/bus; use [`audioMeters`](./audioMeters.ts) + master pre-limiter
+ * readout to validate headroom when changing this.
+ */
+const MUSIC_VOICE_GAIN_SCALE = 0.1
+
 /** Pre-delay into convolver (music wet path). */
 const REVERB_MAX_PRE_DELAY_SEC = 0.15
 /** Wet feedback loop delay (after convolver). */
@@ -1070,7 +1076,7 @@ export function createAsteroidAmbientMusic(options: {
     const d = getDebug()
     const vol = getMusicVolume()
     masterGain.gain.setValueAtTime(vol, t)
-    const gainScale = 0.065
+    const gainScale = MUSIC_VOICE_GAIN_SCALE
     const now = performance.now()
     const fadeInMs = Math.max(0.05, d.voiceFadeInSec) * 1000
     const fadeOutMs = Math.max(0.05, d.voiceFadeOutSec) * 1000

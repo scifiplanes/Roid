@@ -1,5 +1,7 @@
 import type { WebGLRenderer } from 'three'
 
+import { formatAudioMeterLines } from './audioMeters'
+
 const STORAGE_KEY = 'roid-perf-debug-overlay-visible'
 
 export function getPerfDebugOverlayStored(): boolean {
@@ -163,6 +165,7 @@ export function createPerfDebugOverlay(container: HTMLElement): PerfDebugOverlay
           : 'JS heap       n/a',
       )
 
+      lines.push(...formatAudioMeterLines())
       lines.push('— ms (fixed rows; — = <0.01) —')
       for (const name of MEASURE_NAMES) {
         const ms = sumMeasureDurations(name)

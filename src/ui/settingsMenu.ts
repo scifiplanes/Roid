@@ -2713,6 +2713,54 @@ export function createSettingsMenu(
   musicPostHeading.textContent = 'Output EQ + high-pass (end of music chain)'
   sectionMusicMaster.appendChild(musicPostHeading)
 
+  const musicMeterRow = document.createElement('div')
+  musicMeterRow.className = 'settings-row settings-debug-row'
+  musicMeterRow.style.display = 'flex'
+  musicMeterRow.style.flexWrap = 'wrap'
+  musicMeterRow.style.alignItems = 'center'
+  musicMeterRow.style.gap = '12px'
+  const musicMeterEl = document.createElement('div')
+  musicMeterEl.id = 'roid-settings-audio-meters'
+  musicMeterEl.className = 'settings-value'
+  musicMeterEl.style.whiteSpace = 'pre-wrap'
+  musicMeterEl.style.fontFamily = 'inherit'
+  musicMeterEl.style.flex = '1 1 220px'
+  musicMeterEl.style.minWidth = '0'
+  musicMeterEl.textContent = 'Levels: (audio running)'
+  musicMeterRow.appendChild(musicMeterEl)
+
+  const MASTER_OUT_GAIN_DB_LO = -24
+  const MASTER_OUT_GAIN_DB_HI = 36
+  const MASTER_OUT_GAIN_DB_STEP = 0.5
+  const musicPostGainWrap = document.createElement('div')
+  musicPostGainWrap.style.display = 'flex'
+  musicPostGainWrap.style.alignItems = 'center'
+  musicPostGainWrap.style.gap = '8px'
+  musicPostGainWrap.style.flex = '1 1 200px'
+  const musicPostGainLabel = document.createElement('label')
+  musicPostGainLabel.className = 'settings-label'
+  musicPostGainLabel.htmlFor = 'settings-master-post-out-gain-db'
+  musicPostGainLabel.textContent = 'Post output gain'
+  const musicPostGainInput = document.createElement('input')
+  musicPostGainInput.id = 'settings-master-post-out-gain-db'
+  musicPostGainInput.type = 'range'
+  musicPostGainInput.min = String(MASTER_OUT_GAIN_DB_LO)
+  musicPostGainInput.max = String(MASTER_OUT_GAIN_DB_HI)
+  musicPostGainInput.step = String(MASTER_OUT_GAIN_DB_STEP)
+  musicPostGainInput.value = String(audioMasterDebug.musicPostOutGainDb)
+  const musicPostGainVal = document.createElement('span')
+  musicPostGainVal.className = 'settings-value'
+  musicPostGainVal.textContent = `${audioMasterDebug.musicPostOutGainDb.toFixed(1)} dB`
+  musicPostGainInput.addEventListener('input', () => {
+    const n = Number(musicPostGainInput.value)
+    audioMasterDebug.musicPostOutGainDb = n
+    musicPostGainVal.textContent = `${n.toFixed(1)} dB`
+    onAudioMasterDebugChange?.()
+  })
+  musicPostGainWrap.append(musicPostGainLabel, musicPostGainInput, musicPostGainVal)
+  musicMeterRow.appendChild(musicPostGainWrap)
+  sectionMusicMaster.appendChild(musicMeterRow)
+
   const masterHpRow = document.createElement('div')
   masterHpRow.className = 'settings-row settings-debug-row'
   const masterHpLabel = document.createElement('label')
@@ -2740,11 +2788,96 @@ export function createSettingsMenu(
   masterHpRow.append(masterHpLabel, masterHpInput, masterHpVal)
   sectionMusicMaster.appendChild(masterHpRow)
 
+  const MASTER_EQ_LOW_SHELF_HZ_LO = 40
+  const MASTER_EQ_LOW_SHELF_HZ_HI = 2000
+  const MASTER_EQ_HIGH_SHELF_HZ_LO = 1000
+  const MASTER_EQ_HIGH_SHELF_HZ_HI = 12000
+  const MASTER_EQ_SHELF_HZ_STEPS = 1000
+
+  function eqLowShelfHzToSliderPos(hz: number): number {
+    const h = Math.min(MASTER_EQ_LOW_SHELF_HZ_HI, Math.max(MASTER_EQ_LOW_SHELF_HZ_LO, hz))
+    const t =
+      Math.log(h / MASTER_EQ_LOW_SHELF_HZ_LO) / Math.log(MASTER_EQ_LOW_SHELF_HZ_HI / MASTER_EQ_LOW_SHELF_HZ_LO)
+    return Math.round(t * MASTER_EQ_SHELF_HZ_STEPS)
+  }
+
+  function eqLowShelfSliderPosToHz(pos: number): number {
+    const t = Math.min(1, Math.max(0, pos / MASTER_EQ_SHELF_HZ_STEPS))
+    return MASTER_EQ_LOW_SHELF_HZ_LO * (MASTER_EQ_LOW_SHELF_HZ_HI / MASTER_EQ_LOW_SHELF_HZ_LO) ** t
+  }
+
+  function eqHighShelfHzToSliderPos(hz: number): number {
+    const h = Math.min(MASTER_EQ_HIGH_SHELF_HZ_HI, Math.max(MASTER_EQ_HIGH_SHELF_HZ_LO, hz))
+    const t =
+      Math.log(h / MASTER_EQ_HIGH_SHELF_HZ_LO) /
+      Math.log(MASTER_EQ_HIGH_SHELF_HZ_HI / MASTER_EQ_HIGH_SHELF_HZ_LO)
+    return Math.round(t * MASTER_EQ_SHELF_HZ_STEPS)
+  }
+
+  function eqHighShelfSliderPosToHz(pos: number): number {
+    const t = Math.min(1, Math.max(0, pos / MASTER_EQ_SHELF_HZ_STEPS))
+    return MASTER_EQ_HIGH_SHELF_HZ_LO * (MASTER_EQ_HIGH_SHELF_HZ_HI / MASTER_EQ_HIGH_SHELF_HZ_LO) ** t
+  }
+
+  const masterLowShelfHzRow = document.createElement('div')
+  masterLowShelfHzRow.className = 'settings-row settings-debug-row'
+  const masterLowShelfHzLabel = document.createElement('label')
+  masterLowShelfHzLabel.className = 'settings-label'
+  const masterLowShelfHzId = 'settings-master-eq-low-shelf-hz'
+  masterLowShelfHzLabel.htmlFor = masterLowShelfHzId
+  masterLowShelfHzLabel.textContent =
+    'Low shelf frequency (Hz, log slider; 40–2 kHz, travel biased low)'
+  const masterLowShelfHzInput = document.createElement('input')
+  masterLowShelfHzInput.id = masterLowShelfHzId
+  masterLowShelfHzInput.type = 'range'
+  masterLowShelfHzInput.min = '0'
+  masterLowShelfHzInput.max = String(MASTER_EQ_SHELF_HZ_STEPS)
+  masterLowShelfHzInput.step = '1'
+  masterLowShelfHzInput.value = String(eqLowShelfHzToSliderPos(audioMasterDebug.eqLowShelfHz))
+  const masterLowShelfHzVal = document.createElement('span')
+  masterLowShelfHzVal.className = 'settings-value'
+  masterLowShelfHzVal.textContent = `${Math.round(audioMasterDebug.eqLowShelfHz)} Hz`
+  masterLowShelfHzInput.addEventListener('input', () => {
+    const hz = eqLowShelfSliderPosToHz(Number(masterLowShelfHzInput.value))
+    audioMasterDebug.eqLowShelfHz = hz
+    masterLowShelfHzVal.textContent = `${Math.round(hz)} Hz`
+    onAudioMasterDebugChange?.()
+  })
+  masterLowShelfHzRow.append(masterLowShelfHzLabel, masterLowShelfHzInput, masterLowShelfHzVal)
+  sectionMusicMaster.appendChild(masterLowShelfHzRow)
+
+  const masterHighShelfHzRow = document.createElement('div')
+  masterHighShelfHzRow.className = 'settings-row settings-debug-row'
+  const masterHighShelfHzLabel = document.createElement('label')
+  masterHighShelfHzLabel.className = 'settings-label'
+  const masterHighShelfHzId = 'settings-master-eq-high-shelf-hz'
+  masterHighShelfHzLabel.htmlFor = masterHighShelfHzId
+  masterHighShelfHzLabel.textContent =
+    'High shelf frequency (Hz, log slider; 1–12 kHz, travel biased low)'
+  const masterHighShelfHzInput = document.createElement('input')
+  masterHighShelfHzInput.id = masterHighShelfHzId
+  masterHighShelfHzInput.type = 'range'
+  masterHighShelfHzInput.min = '0'
+  masterHighShelfHzInput.max = String(MASTER_EQ_SHELF_HZ_STEPS)
+  masterHighShelfHzInput.step = '1'
+  masterHighShelfHzInput.value = String(eqHighShelfHzToSliderPos(audioMasterDebug.eqHighShelfHz))
+  const masterHighShelfHzVal = document.createElement('span')
+  masterHighShelfHzVal.className = 'settings-value'
+  masterHighShelfHzVal.textContent = `${Math.round(audioMasterDebug.eqHighShelfHz)} Hz`
+  masterHighShelfHzInput.addEventListener('input', () => {
+    const hz = eqHighShelfSliderPosToHz(Number(masterHighShelfHzInput.value))
+    audioMasterDebug.eqHighShelfHz = hz
+    masterHighShelfHzVal.textContent = `${Math.round(hz)} Hz`
+    onAudioMasterDebugChange?.()
+  })
+  masterHighShelfHzRow.append(masterHighShelfHzLabel, masterHighShelfHzInput, masterHighShelfHzVal)
+  sectionMusicMaster.appendChild(masterHighShelfHzRow)
+
   type MasterEqKey = 'eqLowDb' | 'eqMidDb' | 'eqHighDb'
   const masterEqSpecs: { id: string; label: string; key: MasterEqKey }[] = [
-    { id: 'settings-master-eq-low', label: 'EQ — low (~200 Hz shelf, dB)', key: 'eqLowDb' },
+    { id: 'settings-master-eq-low', label: 'EQ — low shelf gain (dB)', key: 'eqLowDb' },
     { id: 'settings-master-eq-mid', label: 'EQ — mid (~1 kHz peaking, dB)', key: 'eqMidDb' },
-    { id: 'settings-master-eq-high', label: 'EQ — high (~4 kHz shelf, dB)', key: 'eqHighDb' },
+    { id: 'settings-master-eq-high', label: 'EQ — high shelf gain (dB)', key: 'eqHighDb' },
   ]
   for (const eqSpec of masterEqSpecs) {
     const row = document.createElement('div')
@@ -3942,7 +4075,7 @@ export function createSettingsMenu(
       id: 'settings-music-reese-pitch-var',
       label: 'Mid reese — slow pitch variation range (semitones)',
       min: 0,
-      max: 6,
+      max: 24,
       step: 0.5,
       decimals: 1,
       read: () => asteroidMusicDebug.reesePitchVariationSemitones,

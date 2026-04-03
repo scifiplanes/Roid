@@ -43,6 +43,8 @@ function createDefaultScanVisualizationDebug() {
 function createDefaultAudioMasterDebug() {
   return {
     masterHighPassHz: 40,
+    eqLowShelfHz: 200,
+    eqHighShelfHz: 4000,
     eqLowDb: 0,
     eqMidDb: 0,
     eqHighDb: 0,

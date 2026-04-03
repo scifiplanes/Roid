@@ -3,6 +3,8 @@
  * safety limiter (peak ceiling) → destination.
  */
 
+import { attachGlobalMasterAnalysers } from './audioMeters'
+
 /** dB; ceiling just below 0 dB to catch overs without changing average level. */
 const GLOBAL_MASTER_THRESHOLD_DB = -1
 /** Hard knee reads more like a limiter than smooth glue compression. */
@@ -37,6 +39,7 @@ export function getGlobalMasterInput(c: AudioContext): GainNode {
 
   inGain.connect(comp)
   comp.connect(c.destination)
+  attachGlobalMasterAnalysers(c, inGain, comp)
 
   ctxRef = c
   busIn = inGain

@@ -1,6 +1,6 @@
 {
   "v": 1,
-  "sunAzimuthDeg": 328.9586871658032,
+  "sunAzimuthDeg": 82.53088077150039,
   "sunElevationDeg": -70,
   "sunLightDebug": {
     "rotateSunAzimuth": true,
@@ -26,21 +26,24 @@
   },
   "audioMasterDebug": {
     "masterHighPassHz": 41.212598265400004,
-    "eqLowDb": 6.5,
-    "eqMidDb": 6,
-    "eqHighDb": -5.5,
+    "eqLowShelfHz": 200,
+    "eqHighShelfHz": 1282.0888539868154,
+    "eqLowDb": 1,
+    "eqMidDb": -5.5,
+    "eqHighDb": 2.5,
+    "musicPostOutGainDb": 28,
     "hooverLowpassBaseHz": 70,
     "hooverLowpassLfoDepthHz": 10,
     "hooverLowpassLfoRateHz": 0.55
   },
   "overlayVisualization": {
     "surfaceScanOverlayVisible": true,
-    "depthOverlayVisible": true
+    "depthOverlayVisible": false
   },
   "discoveryAutoResolve": false,
   "musicVolumeLinear": 1,
   "sfxVolumeLinear": 1,
-  "toolsBarCollapsed": false,
+  "toolsBarCollapsed": true,
   "overlayLegendCollapsed": false,
   "matterHudCollapsed": true,
   "matterHudCompact": true,

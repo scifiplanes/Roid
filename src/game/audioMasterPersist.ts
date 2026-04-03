@@ -8,9 +8,12 @@ let persistTimer: ReturnType<typeof setTimeout> | null = null
 
 const NUM_KEYS: (keyof AudioMasterDebug)[] = [
   'masterHighPassHz',
+  'eqLowShelfHz',
+  'eqHighShelfHz',
   'eqLowDb',
   'eqMidDb',
   'eqHighDb',
+  'musicPostOutGainDb',
   'hooverLowpassBaseHz',
   'hooverLowpassLfoDepthHz',
   'hooverLowpassLfoRateHz',
