@@ -1,6 +1,6 @@
 {
   "v": 1,
-  "sunAzimuthDeg": 85.80057396371996,
+  "sunAzimuthDeg": 93.39759916489504,
   "sunElevationDeg": -70,
   "sunLightDebug": {
     "rotateSunAzimuth": true,
@@ -40,10 +40,11 @@
   "discoveryAutoResolve": false,
   "musicVolumeLinear": 1,
   "sfxVolumeLinear": 1,
-  "toolsBarCollapsed": false,
+  "toolsBarCollapsed": true,
   "overlayLegendCollapsed": false,
   "matterHudCollapsed": true,
   "matterHudCompact": true,
   "colorScheme": "orange",
-  "fontId": "disketMono"
+  "fontId": "disketMono",
+  "gameSpeedMult": 0.2
 }

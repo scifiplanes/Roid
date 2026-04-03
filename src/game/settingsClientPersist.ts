@@ -26,6 +26,7 @@ import type { ColorSchemeId } from '../ui/colorScheme'
 import { COLOR_SCHEME_STORAGE_KEY, isColorSchemeId } from './colorSchemePrefs'
 import type { FontId } from '../ui/fontTheme'
 import { FONT_STORAGE_KEY, isFontId } from './fontPrefs'
+import { clampGameSpeedMult, GAME_SPEED_MULT_STORAGE_KEY } from './gameSpeedDebug'
 
 export const SUN_LIGHT_ANGLES_STORAGE_KEY = 'roid:sunLightAngles'
 export const SUN_LIGHT_DEBUG_STORAGE_KEY = 'roid:sunLightDebug'
@@ -57,6 +58,8 @@ export interface SettingsClientPersistedV1 {
   matterHudCompact?: boolean
   colorScheme?: ColorSchemeId
   fontId?: FontId
+  /** Debug: multiplies simulated dt (1 = normal). */
+  gameSpeedMult?: number
 }
 
 export interface SettingsClientRuntimeSnapshot {
@@ -74,6 +77,7 @@ export interface SettingsClientRuntimeSnapshot {
   matterHudCompact: boolean
   colorScheme: ColorSchemeId
   fontId: FontId
+  gameSpeedMult: number
 }
 
 let snapshotGetter: (() => SettingsClientRuntimeSnapshot) | null = null
@@ -103,6 +107,7 @@ export function buildSettingsClientPayload(s: SettingsClientRuntimeSnapshot): Se
     matterHudCompact: s.matterHudCompact,
     colorScheme: s.colorScheme,
     fontId: s.fontId,
+    gameSpeedMult: s.gameSpeedMult,
   }
 }
 
@@ -310,6 +315,11 @@ export function seedSettingsClientLocalStorageFromBundleIfMissing(imported: unkn
   const font = imported.fontId
   if (isFontId(font)) {
     seedStringIfAbsent(FONT_STORAGE_KEY, font)
+  }
+
+  const gsm = imported.gameSpeedMult
+  if (typeof gsm === 'number' && Number.isFinite(gsm)) {
+    seedStringIfAbsent(GAME_SPEED_MULT_STORAGE_KEY, String(clampGameSpeedMult(gsm)))
   }
 }
 

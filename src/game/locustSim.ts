@@ -1,10 +1,11 @@
-import type { VoxelPos } from '../scene/asteroid/generateAsteroidVoxels'
 import type { DrossState } from './drossSim'
 import { spawnDrossFromRemovedCell } from './drossSim'
 import type { DebrisState } from './debrisSim'
 import { spawnDebrisFromRemovedCell as spawnDebrisShardFromRemovedCell } from './debrisSim'
 import type { GameBalance } from './gameBalance'
 import type { VoxelCell } from './voxelState'
+import { buildPosIndex, type ReplicatorNeighborIndex } from './replicatorSim'
+import { packVoxelKey } from './spatialKey'
 
 const NEIGHBOR_OFFSETS: ReadonlyArray<readonly [number, number, number]> = [
   [1, 0, 0],
@@ -14,18 +15,6 @@ const NEIGHBOR_OFFSETS: ReadonlyArray<readonly [number, number, number]> = [
   [0, 0, 1],
   [0, 0, -1],
 ]
-
-function posKey(p: VoxelPos): string {
-  return `${p.x},${p.y},${p.z}`
-}
-
-function buildPosIndex(cells: VoxelCell[]): Map<string, VoxelCell> {
-  const m = new Map<string, VoxelCell>()
-  for (const c of cells) {
-    m.set(posKey(c.pos), c)
-  }
-  return m
-}
 
 function canLocustConsume(cell: VoxelCell): boolean {
   if (cell.locustActive) return false
@@ -44,16 +33,17 @@ function canLocustConsume(cell: VoxelCell): boolean {
 
 function advanceFrontFromLocustCell(
   origin: VoxelCell,
-  index: Map<string, VoxelCell>,
+  index: ReplicatorNeighborIndex,
   newlyClaimed: VoxelCell[],
   conversionsLeft: { value: number },
+  gridSize: number,
 ): boolean {
   if (conversionsLeft.value <= 0) return false
   const { x, y, z } = origin.pos
   let claimedAny = false
   for (const [dx, dy, dz] of NEIGHBOR_OFFSETS) {
     if (conversionsLeft.value <= 0) break
-    const key = posKey({ x: x + dx, y: y + dy, z: z + dz })
+    const key = packVoxelKey(x + dx, y + dy, z + dz, gridSize)
     const n = index.get(key)
     if (!n || !canLocustConsume(n)) continue
     n.locustActive = true
@@ -100,14 +90,15 @@ export function stepLocust(cells: VoxelCell[], options: StepLocustOptions): bool
   }
   if (frontier.length === 0) return false
 
-  const index = buildPosIndex(cells)
+  const gsz = gridSize ?? 33
+  const index = buildPosIndex(cells, gsz)
   const newlyClaimed: VoxelCell[] = []
   const toRemove = new Set<VoxelCell>()
   const conversionsLeft = { value: maxConversions }
 
   for (const cell of frontier) {
     if (conversionsLeft.value <= 0) break
-    const advanced = advanceFrontFromLocustCell(cell, index, newlyClaimed, conversionsLeft)
+    const advanced = advanceFrontFromLocustCell(cell, index, newlyClaimed, conversionsLeft, gsz)
     if (!advanced) {
       spawnDrossFromRemovedCell(drossState, cell, balance)
       if (debrisState && nowMs !== undefined && gridSize !== undefined && voxelSize !== undefined) {

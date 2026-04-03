@@ -149,6 +149,18 @@ export interface AsteroidMusicDebug {
   voiceLifetimeJitter: number
   voxelWeight: number
   satelliteWeight: number
+  /** Satellite-equivalent units added to music voice activity while post-poke boost is active. */
+  interactionPokeSatelliteEquiv: number
+  /** Seconds to keep post-poke boost active after each replicator poke (refreshes on poke). */
+  interactionPokeDurationSec: number
+  /** Satellite-equivalent per tick while orbital mining laser is held. */
+  interactionOrbitalLaserHoldSatelliteEquiv: number
+  /** Satellite-equivalent per tick while excavating laser is held. */
+  interactionExcavatingLaserHoldSatelliteEquiv: number
+  /** Satellite-equivalent while generic tool-tap boost timer is active (non-poke actions). */
+  interactionToolTapSatelliteEquiv: number
+  /** Seconds to keep tool-tap boost after each qualifying tool action. */
+  interactionToolTapDurationSec: number
   /** Global: seconds for each voice to fade from silence to full level when it becomes active. */
   voiceFadeInSec: number
   /** Global: seconds for each voice to fade to silence when it turns off. */
@@ -1159,6 +1171,12 @@ export function createDefaultAsteroidMusicDebug(): AsteroidMusicDebug {
     voiceLifetimeJitter: 0,
     voxelWeight: 1,
     satelliteWeight: 1,
+    interactionPokeSatelliteEquiv: 4,
+    interactionPokeDurationSec: 1.2,
+    interactionOrbitalLaserHoldSatelliteEquiv: 4,
+    interactionExcavatingLaserHoldSatelliteEquiv: 4,
+    interactionToolTapSatelliteEquiv: 4,
+    interactionToolTapDurationSec: 1.2,
     voiceFadeInSec: 1.85,
     voiceFadeOutSec: 1.25,
     notePitchSlideBaseSec: 3,

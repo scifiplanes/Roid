@@ -1,3 +1,4 @@
+import { researchStepsCompleted } from './computroniumResearchQueue'
 import type { SeedId } from './seedDefs'
 import type { ResourceId } from './resources'
 
@@ -130,15 +131,19 @@ export interface SeedRecipeAvailabilityState {
   debugUnlockAllSeedRecipes?: boolean
 }
 
+/**
+ * Maps completed research steps (12-step tree, shuffled order) to a coarse 0–6 “tier” for seeds/recipes.
+ * Two steps ≈ one legacy tier band.
+ */
 export function currentComputroniumTier(
   unlockPoints: number,
   pointsPerStage: number,
 ): 0 | 1 | 2 | 3 | 4 | 5 | 6 {
   if (!Number.isFinite(pointsPerStage) || pointsPerStage <= 0) return 0
-  const t = Math.floor(unlockPoints / pointsPerStage)
-  if (t <= 0) return 0
-  if (t >= 6) return 6
-  return t as 1 | 2 | 3 | 4 | 5 | 6
+  const steps = researchStepsCompleted(unlockPoints, pointsPerStage)
+  if (steps <= 0) return 0
+  const t = Math.min(6, Math.ceil(steps / 2))
+  return t as 0 | 1 | 2 | 3 | 4 | 5 | 6
 }
 
 export function isSeedRecipeUnlocked(

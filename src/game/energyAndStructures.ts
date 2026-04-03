@@ -390,7 +390,15 @@ export function stepEnergy(
   state.current = Math.min(state.current, cap)
 }
 
+/** Mature replicators with an in-progress structure/computronium timer (sparse; avoids scanning all voxels each tick). */
+const cellsPendingReplicatorTransform = new Set<VoxelCell>()
+
+export function getReplicatorTransformPendingCount(): number {
+  return cellsPendingReplicatorTransform.size
+}
+
 export function clearReplicatorTransformState(cell: VoxelCell): void {
+  cellsPendingReplicatorTransform.delete(cell)
   cell.replicatorTransformTarget = undefined
   cell.replicatorTransformElapsedMs = undefined
   cell.replicatorTransformTotalMs = undefined
@@ -448,6 +456,7 @@ export function tryStartReplicatorTransform(
   cell.replicatorTransformTarget = target
   cell.replicatorTransformElapsedMs = 0
   cell.replicatorTransformTotalMs = Math.max(0, totalSec * 1000)
+  cellsPendingReplicatorTransform.add(cell)
   return true
 }
 
@@ -456,7 +465,7 @@ export function tryStartReplicatorTransform(
  */
 export function stepReplicatorTransforms(
   dtMs: number,
-  cells: VoxelCell[],
+  _cells: VoxelCell[],
   options?: { paused?: boolean },
 ): {
   meshDirty: boolean
@@ -465,14 +474,18 @@ export function stepReplicatorTransforms(
   if (options?.paused) {
     return { meshDirty: false, completedTransforms: 0 }
   }
-  if (cells.length === 0 || dtMs <= 0) {
+  if (cellsPendingReplicatorTransform.size === 0 || dtMs <= 0) {
     return { meshDirty: false, completedTransforms: 0 }
   }
   let meshDirty = false
   let completedTransforms = 0
-  for (const cell of cells) {
+  const pending = Array.from(cellsPendingReplicatorTransform)
+  for (const cell of pending) {
     const target = cell.replicatorTransformTarget
-    if (target === undefined) continue
+    if (target === undefined) {
+      cellsPendingReplicatorTransform.delete(cell)
+      continue
+    }
     const total = cell.replicatorTransformTotalMs ?? 0
     let elapsed = (cell.replicatorTransformElapsedMs ?? 0) + dtMs
     if (elapsed < total) {

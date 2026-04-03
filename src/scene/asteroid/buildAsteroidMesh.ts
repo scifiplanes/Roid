@@ -952,6 +952,7 @@ function scanEmissiveSuppressFactor(
  * `discoveryScanHintIndices` — eligible scanned discovery sites: opaque unlit bright red (does not roll discoveries).
  * `debugLodeDisplayIndices` — when set, those rock voxels are drawn with the lode-density heatmap (debug).
  * `highlightPulse` (e.g. 0.78–1 from sin) modulates brightness while the mouse is held or fuse blinks.
+ * `onlyCellIndices` — when set, only those voxel indices get new colors (others unchanged); use for small dirty sets when overlays match full reapply semantics.
  */
 export function reapplyRockInstanceColors(
   bundle: AsteroidRenderBundle,
@@ -965,6 +966,7 @@ export function reapplyRockInstanceColors(
   depthOverlayActive = false,
   discoveryScanHintIndices: ReadonlySet<number> | null = null,
   debugLodeDisplayIndices: ReadonlySet<number> | null = null,
+  onlyCellIndices: ReadonlySet<number> | null = null,
 ): void {
   const { baseColor = new Color(0.58, 0.52, 0.48) } = options
   const {
@@ -982,6 +984,9 @@ export function reapplyRockInstanceColors(
     refineryStandby,
   } = bundle
   const nowMs = performance.now()
+
+  const skipCell = (cellIndex: number): boolean =>
+    onlyCellIndices !== null && !onlyCellIndices.has(cellIndex)
 
   function applyDepthOverlayRock(cell: VoxelCell, out: Color, cellIndex: number): void {
     // Infected fronts should cut through depth-overlay blending.
@@ -1136,6 +1141,7 @@ export function reapplyRockInstanceColors(
   if (solidIndices && solid.count > 0) {
     for (let j = 0; j < solid.count; j++) {
       const i = solidIndices[j]
+      if (skipCell(i)) continue
       const cell = cells[i]
       const { pos, kind } = cell
       const rockDef = getKindDef(kind)
@@ -1195,6 +1201,7 @@ export function reapplyRockInstanceColors(
     if (eatingIndices) {
       for (let j = 0; j < eating.count; j++) {
         const i = eatingIndices[j]
+        if (skipCell(i)) continue
         const cell = cells[i]
         const { pos, kind, hpRemaining } = cell
 
@@ -1256,6 +1263,7 @@ export function reapplyRockInstanceColors(
     if (reactorIndices) {
       for (let j = 0; j < reactor.count; j++) {
         const i = reactorIndices[j]
+        if (skipCell(i)) continue
         const cell = cells[i]
         const { pos } = cell
         const hh = (pos.x * 73 + pos.y * 137 + pos.z * 211) >>> 0
@@ -1277,6 +1285,7 @@ export function reapplyRockInstanceColors(
     if (batteryIndices) {
       for (let j = 0; j < battery.count; j++) {
         const i = batteryIndices[j]
+        if (skipCell(i)) continue
         const cell = cells[i]
         const { pos } = cell
         const hh = (pos.x * 73 + pos.y * 137 + pos.z * 211) >>> 0
@@ -1298,6 +1307,7 @@ export function reapplyRockInstanceColors(
     if (depthScannerIndices) {
       for (let j = 0; j < depthScanner.count; j++) {
         const i = depthScannerIndices[j]
+        if (skipCell(i)) continue
         const cell = cells[i]
         const { pos } = cell
         const hh = (pos.x * 73 + pos.y * 137 + pos.z * 211) >>> 0
@@ -1319,6 +1329,7 @@ export function reapplyRockInstanceColors(
     if (miningDroneIndices) {
       for (let j = 0; j < miningDrone.count; j++) {
         const i = miningDroneIndices[j]
+        if (skipCell(i)) continue
         const cell = cells[i]
         const { pos } = cell
         const hh = (pos.x * 73 + pos.y * 137 + pos.z * 211) >>> 0
@@ -1340,6 +1351,7 @@ export function reapplyRockInstanceColors(
     if (hubIndices) {
       for (let j = 0; j < hub.count; j++) {
         const i = hubIndices[j]
+        if (skipCell(i)) continue
         const cell = cells[i]
         const { pos } = cell
         const hh = (pos.x * 73 + pos.y * 137 + pos.z * 211) >>> 0
@@ -1360,6 +1372,7 @@ export function reapplyRockInstanceColors(
     if (hubStandbyIndices) {
       for (let j = 0; j < hubStandby.count; j++) {
         const i = hubStandbyIndices[j]
+        if (skipCell(i)) continue
         const cell = cells[i]
         const { pos } = cell
         const hh = (pos.x * 73 + pos.y * 137 + pos.z * 211) >>> 0
@@ -1381,6 +1394,7 @@ export function reapplyRockInstanceColors(
     if (refineryIndices) {
       for (let j = 0; j < refinery.count; j++) {
         const i = refineryIndices[j]
+        if (skipCell(i)) continue
         const cell = cells[i]
         const { pos } = cell
         const hh = (pos.x * 73 + pos.y * 137 + pos.z * 211) >>> 0
@@ -1401,6 +1415,7 @@ export function reapplyRockInstanceColors(
     if (refineryStandbyIndices) {
       for (let j = 0; j < refineryStandby.count; j++) {
         const i = refineryStandbyIndices[j]
+        if (skipCell(i)) continue
         const cell = cells[i]
         const { pos } = cell
         const hh = (pos.x * 73 + pos.y * 137 + pos.z * 211) >>> 0
@@ -1422,6 +1437,7 @@ export function reapplyRockInstanceColors(
     if (computroniumIndices) {
       for (let j = 0; j < computronium.count; j++) {
         const i = computroniumIndices[j]
+        if (skipCell(i)) continue
         const cell = cells[i]
         const { pos } = cell
         const hh = (pos.x * 73 + pos.y * 137 + pos.z * 211) >>> 0
@@ -1442,6 +1458,7 @@ export function reapplyRockInstanceColors(
     if (computroniumStandbyIndices) {
       for (let j = 0; j < computroniumStandby.count; j++) {
         const i = computroniumStandbyIndices[j]
+        if (skipCell(i)) continue
         const cell = cells[i]
         const { pos } = cell
         const hh = (pos.x * 73 + pos.y * 137 + pos.z * 211) >>> 0

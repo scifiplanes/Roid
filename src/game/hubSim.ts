@@ -8,7 +8,8 @@ import {
   takeOneResource,
   totalStoredResourceUnits,
 } from './localStores'
-import { buildPosIndex, posKey } from './replicatorSim'
+import { buildPosIndex, type ReplicatorNeighborIndex } from './replicatorSim'
+import { packVoxelKey } from './spatialKey'
 import {
   addRootTalliesFromPmComposition,
   defaultUniformRootComposition,
@@ -55,17 +56,22 @@ const HUB_UNITS_PER_SEC = 5.2
 /** Max energy all hubs may spend per second (before `hubMaxEnergySpendMult`). */
 const HUB_MAX_ENERGY_SPEND_PER_SEC = 5
 
-function buildDistanceMap(start: VoxelPos, index: Map<string, VoxelCell>): Map<string, number> {
-  const dist = new Map<string, number>()
+function buildDistanceMap(
+  start: VoxelPos,
+  index: ReplicatorNeighborIndex,
+  gridSize: number,
+): Map<number, number> {
+  const dist = new Map<number, number>()
   const q: VoxelPos[] = []
-  dist.set(posKey(start), 0)
+  const startK = packVoxelKey(start.x, start.y, start.z, gridSize)
+  dist.set(startK, 0)
   q.push(start)
   while (q.length > 0) {
     const p = q.shift()!
-    const d = dist.get(posKey(p))!
+    const d = dist.get(packVoxelKey(p.x, p.y, p.z, gridSize))!
     for (const [dx, dy, dz] of NEIGHBOR_OFFSETS) {
       const np = { x: p.x + dx, y: p.y + dy, z: p.z + dz }
-      const nk = posKey(np)
+      const nk = packVoxelKey(np.x, np.y, np.z, gridSize)
       if (dist.has(nk)) continue
       const nc = index.get(nk)
       if (!nc || !isHubTransitCell(nc)) continue
@@ -97,6 +103,13 @@ export interface StepHubsOptions {
    * Allows callers to maintain origin-tagged tallies alongside the primary map.
    */
   onRootTalliesFromPm?: (cell: VoxelCell, credited: Partial<Record<RootResourceId, number>>) => void
+  /**
+   * Shared position→cell map for this tick (same shape as `buildPosIndex`).
+   * When omitted, a fresh index is built.
+   */
+  posIndex?: ReplicatorNeighborIndex
+  /** Grid edge length for packed keys (default 33). */
+  gridSize?: number
 }
 
 export function stepHubs(
@@ -111,8 +124,13 @@ export function stepHubs(
   }
 
   const nowMs = performance.now()
+  const gridSize = options?.gridSize ?? 33
 
-  const activeHubs = cells.filter(isHubProcessing)
+  const activeHubs: VoxelCell[] = []
+  for (let i = 0; i < cells.length; i++) {
+    const c = cells[i]!
+    if (isHubProcessing(c)) activeHubs.push(c)
+  }
   if (activeHubs.length === 0) {
     return { meshDirty: false, tallyChanged: false, replicatorStoreChanged: false }
   }
@@ -130,9 +148,9 @@ export function stepHubs(
   let tallyChanged = false
   let replicatorStoreChanged = false
 
-  const index = buildPosIndex(cells)
+  const index = options?.posIndex ?? buildPosIndex(cells, gridSize)
   for (const hub of activeHubs) {
-    const distMap = buildDistanceMap(hub.pos, index)
+    const distMap = buildDistanceMap(hub.pos, index, gridSize)
 
     for (let a = 0; a < attemptsPerHub; a++) {
       if (energyState.current < HUB_ENERGY_PER_UNIT) break
@@ -140,7 +158,8 @@ export function stepHubs(
 
       let best: VoxelCell | null = null
       let bestScore = 0
-      for (const cell of cells) {
+      for (let ci = 0; ci < cells.length; ci++) {
+        const cell = cells[ci]!
         if (
           cell.kind === 'processedMatter' &&
           cell.lifterChargeStartMs != null &&
@@ -149,7 +168,7 @@ export function stepHubs(
           continue
         }
         if (!cellHasRefinableStock(cell)) continue
-        const dk = posKey(cell.pos)
+        const dk = packVoxelKey(cell.pos.x, cell.pos.y, cell.pos.z, gridSize)
         const d = distMap.get(dk)
         if (d === undefined) continue
         const sc = scoreForPull(cell, d)
@@ -180,8 +199,12 @@ export function stepHubs(
           options?.onProcessedMatterUnitTaken?.(best)
         }
         if (best.kind === 'processedMatter' && (best.processedMatterUnits ?? 0) <= 0) {
-          const i = cells.indexOf(best)
-          if (i >= 0) cells.splice(i, 1)
+          for (let i = 0; i < cells.length; i++) {
+            if (cells[i] === best) {
+              cells.splice(i, 1)
+              break
+            }
+          }
           meshDirty = true
         }
         continue

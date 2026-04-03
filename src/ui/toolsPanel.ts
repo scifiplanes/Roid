@@ -179,10 +179,12 @@ export interface ToolsPanelOptions {
   /** After `patchGameBalance` from the tools dock (e.g. depth lode opacity row). */
   onGameBalancePatch?: () => void
   /**
-   * Debug → Starting tools (new asteroid / Regenerate): when set, return false to hide and block a tool.
-   * Main passes `(t) => debugUnlockAllTools || isToolAllowedByInitialDebugConfig(t)`.
+   * Roster allow: phase-gated tools use gameplay only; pick/inspect/hoover/replicator/seed use Debug + milestones.
+   * Main wires {@link isGameplayToolRosterAllowed}.
    */
   isToolRosterAllowed?: (tool: PlayerTool) => boolean
+  /** Shuffled computronium research UI phase (hidden / researching / unlocked). When set, overrides laser/cleanup phase getters for those tools. */
+  getComputroniumResearchToolPhase?: (tool: PlayerTool) => LaserToolUiPhase | undefined
 }
 
 type CostToolKind =
@@ -507,6 +509,7 @@ export function createToolsPanel(
     onGameBalancePatch,
     openSeedAssemblyModal,
     isToolRosterAllowed,
+    getComputroniumResearchToolPhase,
   }: ToolsPanelOptions = {},
 ): {
   getSelectedTool: () => PlayerTool
@@ -514,6 +517,8 @@ export function createToolsPanel(
   setSelectedTool: (tool: PlayerTool, options?: { skipBeforeToolChange?: boolean }) => void
   /** If the current tool was removed from the debug roster, switch to the first still-allowed tool. */
   ensureSelectedToolRoster: () => void
+  /** Second line on the selected-tool strip while hoover / laser is actively held (from `main.ts`). */
+  setToolHoldFeedback: (text: string | null) => void
 } {
   const wrap = document.createElement('div')
   wrap.className = 'tools-overlay'
@@ -583,6 +588,9 @@ export function createToolsPanel(
 
   /** Selected satellite deploy type (+sat buttons); launch happens via `satLaunchBtn`. */
   let pendingSatelliteKind: SatelliteDeployKind | null = null
+
+  /** Second line on the selected-tool strip while hoover / laser hold is active (set from `main.ts`). */
+  let toolHoldFeedback: string | null = null
 
   const satRow = document.createElement('div')
   satRow.className = 'tools-sat-row'
@@ -864,6 +872,8 @@ export function createToolsPanel(
 
   function isToolHidden(tool: PlayerTool): boolean {
     if (isToolRosterAllowed && !isToolRosterAllowed(tool)) return true
+    const cr = getComputroniumResearchToolPhase?.(tool)
+    if (cr !== undefined) return cr === 'hidden'
     // Lifter / cargo have no `costTool` row, so they skip `refreshToolCosts` research styling; hide them
     // until cleanup tier is **fully** unlocked (not "researching" toward tier 5), same as actual use gates.
     if (tool === 'lifter' || tool === 'cargoDrone') {
@@ -928,6 +938,8 @@ export function createToolsPanel(
       laserSatelliteKind?: 'orbital' | 'excavating' | 'scanner' | 'cargoDrone'
     },
   ): LaserToolUiPhase | null {
+    const cr = getComputroniumResearchToolPhase?.(toolId)
+    if (cr !== undefined) return cr
     if (ui.laserSatelliteKind === 'cargoDrone') {
       if (!getDrossCollectorToolUiPhase && !getDrossCollectorDeployUiPhase) return 'hidden'
       return (getDrossCollectorToolUiPhase ?? getDrossCollectorDeployUiPhase)!()
@@ -961,11 +973,32 @@ export function createToolsPanel(
     return null
   }
 
+  function clearSelectedCostStrip(): void {
+    selectedCostStrip.hidden = true
+    selectedCostStrip.textContent = ''
+    selectedCostStrip.classList.remove('tools-selected-cost--hold-active')
+  }
+
+  function setSelectedCostStripVisible(detail: string): void {
+    selectedCostStrip.hidden = false
+    if (toolHoldFeedback) {
+      selectedCostStrip.textContent = `${detail}\n${toolHoldFeedback}`
+      selectedCostStrip.classList.add('tools-selected-cost--hold-active')
+    } else {
+      selectedCostStrip.textContent = detail
+      selectedCostStrip.classList.remove('tools-selected-cost--hold-active')
+    }
+  }
+
+  function setToolHoldFeedback(text: string | null): void {
+    toolHoldFeedback = text
+    syncSelectedToolCostLine()
+  }
+
   function syncSelectedToolCostLine(): void {
     const def = TOOLS.find((t) => t.id === selected)
     if (!def) {
-      selectedCostStrip.hidden = true
-      selectedCostStrip.textContent = ''
+      clearSelectedCostStrip()
       return
     }
     const name = def.label
@@ -973,40 +1006,36 @@ export function createToolsPanel(
 
     if (!costUi.has(selected)) {
       if (isToolHidden(selected)) {
-        selectedCostStrip.hidden = true
-        selectedCostStrip.textContent = ''
+        clearSelectedCostStrip()
         return
       }
-      selectedCostStrip.hidden = false
-      selectedCostStrip.textContent = `${name}: ${short}`
+      setSelectedCostStripVisible(`${name}: ${short}`)
       return
     }
 
     const ui = costUi.get(selected)!
     if (ui.button.hidden) {
-      selectedCostStrip.hidden = true
-      selectedCostStrip.textContent = ''
+      clearSelectedCostStrip()
       return
     }
     const phase = researchPhaseForTool(selected, ui)
     if (phase === 'researching') {
-      selectedCostStrip.hidden = false
-      selectedCostStrip.textContent = `${name}: ${short} — Research in progress`
+      setSelectedCostStripVisible(`${name}: ${short} — Research in progress`)
       return
     }
     const line = ui.costSpan.textContent.trim()
-    selectedCostStrip.hidden = false
     let detail = line ? `${name}: ${short} — ${line}` : `${name}: ${short}`
     if (ui.button.getAttribute('aria-disabled') === 'true' && !getResourceTallies) {
       detail += ' — requirements not met'
     }
-    selectedCostStrip.textContent = detail
+    setSelectedCostStripVisible(detail)
   }
 
   function setPressed(tool: PlayerTool): void {
     if (isToolHidden(tool)) return
     if (tool === selected) return
     if (beforeToolChange && !beforeToolChange(selected, tool)) return
+    toolHoldFeedback = null
     selected = tool
     pendingSatelliteKind = null
     for (const [id, btn] of buttons) {
@@ -1027,6 +1056,7 @@ export function createToolsPanel(
     if (!buttons.has(tool)) return
     if (isToolHidden(tool)) return
     if (options?.skipBeforeToolChange) {
+      toolHoldFeedback = null
       selected = tool
       pendingSatelliteKind = null
       for (const [id, btn] of buttons) {
@@ -1709,5 +1739,6 @@ export function createToolsPanel(
     refreshToolCosts,
     setSelectedTool,
     ensureSelectedToolRoster,
+    setToolHoldFeedback,
   }
 }

@@ -255,6 +255,8 @@ export function createAsteroidAmbientMusic(options: {
     scannerSats: number,
     drossCollectorSats: number,
     cargoDroneSats: number,
+    /** Extra satellite-equivalent units (Hoover hold, poke boost); scaled by `satelliteWeight` like real sats. */
+    interactionSatelliteEquiv: number,
   ) => void
   dispose: () => void
 } {
@@ -1631,6 +1633,7 @@ export function createAsteroidAmbientMusic(options: {
       scannerSats: number,
       drossCollectorSats: number,
       cargoDroneSats: number,
+      interactionSatelliteEquiv: number,
     ): void {
       if (voices.length === 0) return
       const d = getDebug()
@@ -1648,7 +1651,12 @@ export function createAsteroidAmbientMusic(options: {
       }
       const satSum =
         orbitalSats + excavatingSats + scannerSats + drossCollectorSats + cargoDroneSats
-      const w = structureVoxelCount * d.voxelWeight + satSum * d.satelliteWeight
+      const equiv =
+        Number.isFinite(interactionSatelliteEquiv) && interactionSatelliteEquiv > 0
+          ? interactionSatelliteEquiv
+          : 0
+      const w =
+        structureVoxelCount * d.voxelWeight + (satSum + equiv) * d.satelliteWeight
       let target = Math.round(w * d.activityScale)
       target = Math.min(d.maxVoices, Math.max(d.minVoices, target))
       target = Math.min(ASTEROID_MUSIC_VOICE_COUNT, Math.max(0, target))

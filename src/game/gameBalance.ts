@@ -392,8 +392,8 @@ export const defaultGameBalance: GameBalance = {
   drossMassMult: 1,
   drossCollectionRatePerSatellitePerSec: 0.085,
   drossCollectionMult: 1,
-  drossHooverRadiusVox: 3,
-  drossHooverSatelliteEquiv: 10,
+  drossHooverRadiusVox: 5,
+  drossHooverSatelliteEquiv: 30,
   drossReplicatorSpawnChance: 0.1,
   drossMassPerReplicatorHp: 0.04,
   drossFogDensityPerMass: 0.0004,
@@ -418,8 +418,8 @@ export const defaultGameBalance: GameBalance = {
   miningDroneMaxMovesPerTick: 64,
   wreckSpawnProbability: 0,
   debrisSpawnChance: 0.4,
-  debrisLifetimeMinSec: 3.5,
-  debrisLifetimeMaxSec: 6,
+  debrisLifetimeMinSec: 6,
+  debrisLifetimeMaxSec: 18,
   debrisSpeedMin: 0.35,
   debrisSpeedMax: 0.7,
   debrisPickupCooldownSec: 0.18,
@@ -718,7 +718,7 @@ export function clampBalanceField(key: keyof GameBalance, v: number): number {
   }
   if (key === 'drossHooverSatelliteEquiv') {
     const ri = Math.round(v)
-    return Math.min(24, Math.max(1, ri))
+    return Math.min(48, Math.max(1, ri))
   }
   if (key === 'drossReplicatorSpawnChance') {
     return Math.min(1, Math.max(0, v))
@@ -781,7 +781,7 @@ export function clampBalanceField(key: keyof GameBalance, v: number): number {
     key === 'debrisLifetimeMinSec' ||
     key === 'debrisLifetimeMaxSec'
   ) {
-    return Math.min(20, Math.max(0.2, v))
+    return Math.min(60, Math.max(0.2, v))
   }
   if (key === 'debrisSpeedMin' || key === 'debrisSpeedMax') {
     return Math.min(3, Math.max(0.05, v))

@@ -3,9 +3,10 @@ import type { VoxelCell } from './voxelState'
 import { compositionToYields } from './compositionYields'
 import { gameBalance } from './gameBalance'
 import { addYieldsToCellStore } from './localStores'
-import { defaultUniformRootComposition, type ResourceId, RESOURCE_IDS_ORDERED } from './resources'
+import { defaultUniformRootComposition, type ResourceId } from './resources'
 import type { SeedRuntimeState } from './voxelState'
 import { clearDepthRevealState, clearSurfaceScanTint } from './scanVisualization'
+import { packVoxelKey } from './spatialKey'
 
 /** Wall-clock ms between each HP lost while a replicator eats rock (before per-cell jitter). */
 export const REPLICATOR_MS_PER_HP = 3200
@@ -33,6 +34,35 @@ const PASSIVE_PER_SEC: Partial<Record<ResourceId, number>> = {
   silicates: 0.015,
 }
 
+/** Hot path: only ids with a positive passive rate (avoid scanning full `RESOURCE_IDS_ORDERED`). */
+const PASSIVE_RESOURCE_IDS = Object.keys(PASSIVE_PER_SEC) as ResourceId[]
+
+/** Mature `kind === 'replicator'` cells; rebuilt with spatial index (see `rebuildReplicatorSimHotLists`). */
+const matureReplicatorCells = new Set<VoxelCell>()
+/** Rock (non-mature) cells currently being eaten; same rebuild policy. */
+const eatingRockCells = new Set<VoxelCell>()
+
+/**
+ * Repopulates mature/eating sets from `cells` (full scan). Call when rebuilding the voxel position index.
+ */
+export function rebuildReplicatorSimHotLists(cells: readonly VoxelCell[]): void {
+  matureReplicatorCells.clear()
+  eatingRockCells.clear()
+  for (const cell of cells) {
+    if (cell.kind === 'replicator') {
+      matureReplicatorCells.add(cell)
+    }
+    if (cell.replicatorEating && cell.kind !== 'replicator') {
+      eatingRockCells.add(cell)
+    }
+  }
+}
+
+/** Test hook: hot-list cardinalities after `rebuildReplicatorSimHotLists`. */
+export function getReplicatorSimHotListSizes(): { mature: number; eatingRock: number } {
+  return { mature: matureReplicatorCells.size, eatingRock: eatingRockCells.size }
+}
+
 const NEIGHBOR_OFFSETS: ReadonlyArray<readonly [number, number, number]> = [
   [1, 0, 0],
   [-1, 0, 0],
@@ -42,16 +72,17 @@ const NEIGHBOR_OFFSETS: ReadonlyArray<readonly [number, number, number]> = [
   [0, 0, -1],
 ]
 
+/** String key for persistence / discovery (not hot-path maps). */
 export function posKey(p: VoxelPos): string {
   return `${p.x},${p.y},${p.z}`
 }
 
-export type ReplicatorNeighborIndex = Map<string, VoxelCell>
+export type ReplicatorNeighborIndex = Map<number, VoxelCell>
 
-export function buildPosIndex(cells: VoxelCell[]): ReplicatorNeighborIndex {
+export function buildPosIndex(cells: VoxelCell[], gridSize: number): ReplicatorNeighborIndex {
   const m: ReplicatorNeighborIndex = new Map()
   for (const c of cells) {
-    m.set(posKey(c.pos), c)
+    m.set(packVoxelKey(c.pos.x, c.pos.y, c.pos.z, gridSize), c)
   }
   return m
 }
@@ -69,7 +100,7 @@ function applyPassiveIncomePerCell(dtSec: number, cell: VoxelCell): boolean {
   if (cell.kind !== 'replicator' || dtSec <= 0) return false
   const rem = ensurePassiveRemainder(cell)
   let changed = false
-  for (const id of RESOURCE_IDS_ORDERED) {
+  for (const id of PASSIVE_RESOURCE_IDS) {
     const rate = PASSIVE_PER_SEC[id]
     if (rate === undefined || rate <= 0) continue
     rem[id] = (rem[id] ?? 0) + rate * gameBalance.passiveIncomeMult * dtSec
@@ -175,19 +206,21 @@ function canSpreadTo(cell: VoxelCell): boolean {
   return true
 }
 
-function spreadFromCell(origin: VoxelCell, index: ReplicatorNeighborIndex): void {
+function spreadFromCell(origin: VoxelCell, index: ReplicatorNeighborIndex, gridSize: number): void {
   const { x, y, z } = origin.pos
   for (const [dx, dy, dz] of NEIGHBOR_OFFSETS) {
-    const key = posKey({ x: x + dx, y: y + dy, z: z + dz })
+    const key = packVoxelKey(x + dx, y + dy, z + dz, gridSize)
     const n = index.get(key)
     if (!n || !canSpreadTo(n)) continue
     n.replicatorActive = true
     n.replicatorEating = true
     n.replicatorEatAccumulatorMs = 0
+    eatingRockCells.add(n)
   }
 }
 
-function finishEating(cell: VoxelCell, index: ReplicatorNeighborIndex): void {
+function finishEating(cell: VoxelCell, index: ReplicatorNeighborIndex, gridSize: number): void {
+  eatingRockCells.delete(cell)
   const rockKind = cell.kind
   const bulk = cell.bulkComposition ?? defaultUniformRootComposition()
   addYieldsToCellStore(cell, compositionToYields(rockKind, bulk))
@@ -201,7 +234,7 @@ function finishEating(cell: VoxelCell, index: ReplicatorNeighborIndex): void {
   cell.replicatorEatAccumulatorMs = 0
   cell.replicatorMsPerHp = undefined
   cell.replicatorActive = true
-  spreadFromCell(cell, index)
+  spreadFromCell(cell, index, gridSize)
 }
 
 const REPLICATOR_TAP_PULSE_MS = 260
@@ -213,7 +246,16 @@ export function pokeReplicator(cell: VoxelCell, nowMs: number): boolean {
 }
 
 export interface StepReplicatorsResult {
+  /**
+   * True when voxel→instanced-layer membership changed (e.g. rock→replicator, new eating neighbors).
+   * Callers should run full `replaceAsteroidMesh`; do not conflate with HP-only tint updates.
+   */
   meshDirty: boolean
+  /**
+   * True when eating-rock or cannibal HP changed but geometry layers are unchanged.
+   * Callers should `markRockInstanceColorsDirty()` / `reapplyRockInstanceColors` only.
+   */
+  eatingVisualDirty: boolean
   tallyChanged: boolean
   /** HP steps consumed by replicators this frame (for subtle click SFX). */
   replicatorConsumeTicks: number
@@ -231,6 +273,8 @@ export interface StepReplicatorsOptions {
    * Callers that already maintain a position→cell map can pass it here.
    */
   neighborIndex?: ReplicatorNeighborIndex
+  /** Grid edge length for packed spatial keys (default 33). */
+  gridSize?: number
 }
 
 /**
@@ -242,33 +286,43 @@ export function stepReplicators(
   options?: StepReplicatorsOptions,
 ): StepReplicatorsResult {
   if (options && options.replicatorPaused) {
-    return { meshDirty: false, tallyChanged: false, replicatorConsumeTicks: 0, replicatorCannibalTicks: 0 }
+    return {
+      meshDirty: false,
+      eatingVisualDirty: false,
+      tallyChanged: false,
+      replicatorConsumeTicks: 0,
+      replicatorCannibalTicks: 0,
+    }
   }
   if (cells.length === 0 || dtMs <= 0) {
-    return { meshDirty: false, tallyChanged: false, replicatorConsumeTicks: 0, replicatorCannibalTicks: 0 }
+    return {
+      meshDirty: false,
+      eatingVisualDirty: false,
+      tallyChanged: false,
+      replicatorConsumeTicks: 0,
+      replicatorCannibalTicks: 0,
+    }
   }
 
   const dtSec = dtMs / 1000
 
-  const matureReplicators: VoxelCell[] = []
-  const eatingReplicators: VoxelCell[] = []
-
-  // First pass: identify active replicator cells once.
-  for (const cell of cells) {
-    if (cell.kind === 'replicator') {
-      matureReplicators.push(cell)
-    }
-    if (cell.replicatorEating && cell.kind !== 'replicator') {
-      eatingReplicators.push(cell)
-    }
-  }
+  // Snapshot hot lists (maintained with spatial index rebuild + eating-cell updates in finishEating/spreadFromCell).
+  const matureReplicators = Array.from(matureReplicatorCells)
+  const eatingReplicators = Array.from(eatingRockCells)
 
   // Fast path: no active or eating replicators → nothing to do this frame.
   if (matureReplicators.length === 0 && eatingReplicators.length === 0) {
-    return { meshDirty: false, tallyChanged: false, replicatorConsumeTicks: 0, replicatorCannibalTicks: 0 }
+    return {
+      meshDirty: false,
+      eatingVisualDirty: false,
+      tallyChanged: false,
+      replicatorConsumeTicks: 0,
+      replicatorCannibalTicks: 0,
+    }
   }
 
   let meshDirty = false
+  let eatingVisualDirty = false
   let tallyChanged = false
   let replicatorConsumeTicks = 0
   let replicatorCannibalTicks = 0
@@ -285,7 +339,8 @@ export function stepReplicators(
     }
   }
 
-  const index = options?.neighborIndex ?? buildPosIndex(cells)
+  const gridSize = options?.gridSize ?? 33
+  const index = options?.neighborIndex ?? buildPosIndex(cells, gridSize)
 
   // Cross-strain replicator-on-replicator feeding is a debug / balance feature.
   const cannibalEnabled = gameBalance.replicatorCannibalismEnabled === true
@@ -296,6 +351,9 @@ export function stepReplicators(
       cell.replicatorBeingFed = false
     }
   }
+
+  /** Feeder cell → chosen victim from scoring pass (reused by drain pass; avoids a second 6-neighbor scan). */
+  const cannibalVictimByFeeder = new Map<VoxelCell, VoxelCell>()
 
   // Decide which mature replicators are feeding other strains this frame.
   if (cannibalEnabled && matureReplicators.length > 0) {
@@ -313,7 +371,7 @@ export function stepReplicators(
       let bestTarget: VoxelCell | undefined
       let bestScore = -Infinity
       for (const [dx, dy, dz] of NEIGHBOR_OFFSETS) {
-        const n = index.get(posKey({ x: x + dx, y: y + dy, z: z + dz }))
+        const n = index.get(packVoxelKey(x + dx, y + dy, z + dz, gridSize))
         if (!n) continue
         if (n.kind !== 'replicator') continue
         if (n.hpRemaining <= 0) continue
@@ -343,12 +401,13 @@ export function stepReplicators(
       cell.replicatorFeedingOther = true
       // Mark the victim as being fed this frame (for visuals).
       bestTarget.replicatorBeingFed = true
+      cannibalVictimByFeeder.set(cell, bestTarget)
     }
   }
 
   // Rock-eating replicators (existing mechanic).
   if ((options && options.replicatorPaused) || eatingReplicators.length === 0) {
-    return { meshDirty, tallyChanged, replicatorConsumeTicks, replicatorCannibalTicks }
+    return { meshDirty, eatingVisualDirty, tallyChanged, replicatorConsumeTicks, replicatorCannibalTicks }
   }
 
   for (const cell of eatingReplicators) {
@@ -372,10 +431,10 @@ export function stepReplicators(
     for (let k = 0; k < ticks; k++) {
       cell.hpRemaining -= 1
       replicatorConsumeTicks += 1
-      meshDirty = true
+      eatingVisualDirty = true
       options && options.onReplicatorRockHpConsumed?.(cell)
       if (cell.hpRemaining <= 0) {
-        finishEating(cell, index)
+        finishEating(cell, index, gridSize)
         tallyChanged = true
         meshDirty = true
         acc = 0
@@ -400,18 +459,26 @@ export function stepReplicators(
         continue
       }
 
-      // Find a current valid victim (different strain, positive HP).
+      // Prefer victim from scoring pass; fall back to first valid neighbor (legacy order).
       const strain = cell.replicatorStrainId
-      const { x, y, z } = cell.pos
-      let victim: VoxelCell | undefined
-      for (const [dx, dy, dz] of NEIGHBOR_OFFSETS) {
-        const n = index.get(posKey({ x: x + dx, y: y + dy, z: z + dz }))
-        if (!n) continue
-        if (n.kind !== 'replicator') continue
-        if (n.hpRemaining <= 0) continue
-        if (strain !== undefined && n.replicatorStrainId === strain) continue
-        victim = n
-        break
+      let victim: VoxelCell | undefined = cannibalVictimByFeeder.get(cell)
+      if (
+        !victim ||
+        victim.kind !== 'replicator' ||
+        victim.hpRemaining <= 0 ||
+        (strain !== undefined && victim.replicatorStrainId === strain)
+      ) {
+        victim = undefined
+        const { x, y, z } = cell.pos
+        for (const [dx, dy, dz] of NEIGHBOR_OFFSETS) {
+          const n = index.get(packVoxelKey(x + dx, y + dy, z + dz, gridSize))
+          if (!n) continue
+          if (n.kind !== 'replicator') continue
+          if (n.hpRemaining <= 0) continue
+          if (strain !== undefined && n.replicatorStrainId === strain) continue
+          victim = n
+          break
+        }
       }
       if (!victim) {
         cell.replicatorFeedingOther = false
@@ -441,17 +508,18 @@ export function stepReplicators(
         if (victim.hpRemaining <= 0 || cell.hpRemaining <= 0) break
         victim.hpRemaining -= 1
         replicatorCannibalTicks += 1
-        meshDirty = true
+        eatingVisualDirty = true
 
         if (efficiency > 0 && victim.storedResources && victim.hpRemaining >= 0) {
           if (!cell.storedResources) cell.storedResources = {}
-          for (const id of RESOURCE_IDS_ORDERED) {
-            const src = victim.storedResources[id]
+          const sr = victim.storedResources
+          for (const id in sr) {
+            const src = sr[id as ResourceId]
             if (!src || src <= 0) continue
             const siphon = src * efficiency * (1 / 32)
             if (siphon <= 0) continue
-            victim.storedResources[id] = src - siphon
-            cell.storedResources[id] = (cell.storedResources[id] ?? 0) + siphon
+            sr[id as ResourceId] = src - siphon
+            cell.storedResources[id as ResourceId] = (cell.storedResources[id as ResourceId] ?? 0) + siphon
           }
         }
 
@@ -469,5 +537,5 @@ export function stepReplicators(
     }
   }
 
-  return { meshDirty, tallyChanged, replicatorConsumeTicks, replicatorCannibalTicks }
+  return { meshDirty, eatingVisualDirty, tallyChanged, replicatorConsumeTicks, replicatorCannibalTicks }
 }

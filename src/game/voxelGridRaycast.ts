@@ -4,11 +4,9 @@
  * near or inside mesh geometry, unlike triangle `InstancedMesh` picking.
  */
 
-const EPS = 1e-9
+import { packVoxelKey } from './spatialKey'
 
-function posKey(ix: number, iy: number, iz: number): string {
-  return `${ix},${iy},${iz}`
-}
+const EPS = 1e-9
 
 function rayAabbInterval(
   ox: number,
@@ -58,14 +56,14 @@ function rayAabbInterval(
 /**
  * @param originLocal - Ray origin in asteroid group local space
  * @param dirLocal - Ray direction in local space (need not be normalized)
- * @param posMap - `voxelPosKey` → index in `voxelCells`
+ * @param posMap - packed voxel key → index in `voxelCells`
  */
 export function raycastFirstOccupiedCellIndex(
   originLocal: { x: number; y: number; z: number },
   dirLocal: { x: number; y: number; z: number },
   voxelSize: number,
   gridSize: number,
-  posMap: Map<string, number>,
+  posMap: Map<number, number>,
 ): number | null {
   const center = (gridSize - 1) / 2
   let dx = dirLocal.x
@@ -111,7 +109,7 @@ export function raycastFirstOccupiedCellIndex(
 
   const tryHit = (): number | null => {
     if (!inBounds(ix) || !inBounds(iy) || !inBounds(iz)) return null
-    const k = posKey(ix, iy, iz)
+    const k = packVoxelKey(ix, iy, iz, gridSize)
     const idx = posMap.get(k)
     return idx === undefined ? null : idx
   }

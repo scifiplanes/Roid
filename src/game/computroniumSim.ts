@@ -7,24 +7,26 @@ import {
 } from './refineryRecipeUnlock'
 import type { RootResourceId } from './resources'
 import type { VoxelCell } from './voxelState'
+import {
+  applyLegacyTierAsResearchSteps,
+  syncResearchFlagsFromPoints,
+  type ComputroniumUnlockId,
+  type LaserUnlockApply,
+} from './computroniumResearchQueue'
 
-export interface LaserUnlockApply {
-  orbitalLaserUnlocked: boolean
-  excavatingLaserUnlocked: boolean
-  scannerLaserUnlocked: boolean
-  /** Fourth computronium stage (after scanner satellite); gates depth scan tool + passive reveal. */
-  depthScanUnlocked: boolean
-  /** Fifth stage: cleanup collector satellite deploy. */
-  drossCollectorUnlocked: boolean
-  /** Tier 6: EM Catapult tool (new asteroid while keeping research). */
-  emCatapultUnlocked: boolean
-  orbitalSatelliteCount: number
-  excavatingSatelliteCount: number
-  scannerSatelliteCount: number
-  drossCollectorSatelliteCount: number
-  /** Cargo drone orbit fleet: automatic PM → roots (persists with other satellite counts). */
-  cargoDroneSatelliteCount: number
-}
+export type {
+  ComputroniumUnlockId,
+  LaserUnlockApply,
+} from './computroniumResearchQueue'
+export {
+  buildComputroniumResearchOrder,
+  COMPUTRONIUM_RESEARCH_STEP_COUNT,
+  getResearchPhaseForPlayerToolId,
+  getResearchPhaseForUnlockId,
+  researchStepsCompleted,
+  type ResearchPhaseState,
+  type ResearchToolUiPhase,
+} from './computroniumResearchQueue'
 
 export type LaserToolId = 'orbitalLaser' | 'excavatingLaser' | 'scanner'
 
@@ -50,9 +52,7 @@ export interface InitialToolDebugConfig {
   scourge: boolean
   locust: boolean
   miningDrone: boolean
-  /** Tier 5: PM flight tool (same research ladder as cleanup). */
   lifter: boolean
-  /** Tier 5: cargo satellite fleet + PM → roots (same research ladder as cleanup). */
   cargoDrone: boolean
   emCatapult: boolean
 }
@@ -61,8 +61,8 @@ let debugInitialToolConfig: InitialToolDebugConfig = {
   pick: true,
   inspect: true,
   hoover: true,
-  replicator: false,
-  seed: false,
+  replicator: true,
+  seed: true,
   reactor: false,
   battery: false,
   hub: false,
@@ -99,11 +99,10 @@ export function applyInitialToolDebugConfigToResearch(
   unlockPoints: { current: number },
   flags: LaserUnlockApply,
   balance: GameBalance,
+  order: readonly ComputroniumUnlockId[],
 ): void {
   const cfg = debugInitialToolConfig
 
-  // Map requested unlocks on the research ladder to a minimum tier.
-  // Earlier tiers are implied; eg, EM Catapult implies all prior tiers.
   let tier: 1 | 2 | 3 | 4 | 5 | 6 | null = null
   if (cfg.orbitalLaser || cfg.explosiveCharge) tier = Math.max(tier ?? 1, 1) as 1 | 2 | 3 | 4 | 5 | 6
   if (cfg.excavatingLaser) tier = Math.max(tier ?? 2, 2) as 1 | 2 | 3 | 4 | 5 | 6
@@ -125,8 +124,7 @@ export function applyInitialToolDebugConfigToResearch(
     return
   }
 
-  unlockPoints.current = balance.computroniumPointsPerStage * tier * 1.01
-  applyResearchTierGrant(tier, flags)
+  applyLegacyTierAsResearchSteps(order, tier, unlockPoints, balance, flags)
 }
 
 export function countActiveComputronium(cells: VoxelCell[]): number {
@@ -138,7 +136,8 @@ export function countActiveComputronium(cells: VoxelCell[]): number {
 }
 
 /**
- * UI visibility for the three computronium-gated laser tools. Thresholds match {@link stepComputronium}.
+ * @deprecated Use {@link getResearchPhaseForUnlockId} with shuffled {@link ResearchPhaseState}.
+ * Kept for modules not yet migrated.
  */
 export function getLaserToolUiPhase(
   tool: LaserToolId,
@@ -178,10 +177,6 @@ export function getLaserToolUiPhase(
   return 'hidden'
 }
 
-/**
- * Explosive charge (F9): same phase as computronium research tier 1 (mining laser unlock).
- * Thresholds match {@link getLaserToolUiPhase} for `orbitalLaser` and {@link stepComputronium}.
- */
 export function getExplosiveChargeToolUiPhase(
   state: {
     unlockPoints: number
@@ -198,9 +193,6 @@ export function getExplosiveChargeToolUiPhase(
   return 'hidden'
 }
 
-/**
- * Depth scan tool UI: fourth research tier after scanner satellite (t4 = 4 × points-per-stage).
- */
 export function getDepthScanToolUiPhase(
   state: {
     unlockPoints: number
@@ -220,9 +212,6 @@ export function getDepthScanToolUiPhase(
   return 'hidden'
 }
 
-/**
- * Cleanup collector satellite deploy UI: tier 5 (t5 = 5 × points-per-stage), after depth scan unlock.
- */
 export function getDrossCollectorDeployUiPhase(
   state: {
     unlockPoints: number
@@ -242,9 +231,6 @@ export function getDrossCollectorDeployUiPhase(
   return 'hidden'
 }
 
-/**
- * EM Catapult tool UI: tier 6 (t6 = 6 × points-per-stage), after cleanup collector tier.
- */
 export function getEmCatapultToolUiPhase(
   state: {
     unlockPoints: number
@@ -267,14 +253,9 @@ export function getEmCatapultToolUiPhase(
 export interface RefineryRecipeUiState {
   unlockPoints: number
   activeComputronium: number
-  /** When true (debug), all refinement recipes are treated as unlocked. */
   debugUnlockAllRecipes: boolean
 }
 
-/**
- * Per-root refinement recipe: same phase rules as laser tools (tier 6+ thresholds in
- * {@link refineryRootComputroniumSlot} / {@link computroniumTierThresholdForRefinerySlot}).
- */
 export function getRefineryRecipeUiPhase(
   root: RootResourceId,
   state: RefineryRecipeUiState,
@@ -299,8 +280,8 @@ export function isRefineryRecipeUnlocked(
 }
 
 /**
- * Active computronium drains energy; unlock points accrue proportional to how much of that
- * drain was actually paid. No progress when the pool is empty (scale 0).
+ * Active computronium drains energy; unlock points accrue proportional to paid drain.
+ * Unlocks follow {@link syncResearchFlagsFromPoints} and the per-asteroid shuffled {@link order}.
  */
 export function stepComputronium(
   dtSec: number,
@@ -309,11 +290,11 @@ export function stepComputronium(
   unlockPoints: { current: number },
   flags: LaserUnlockApply,
   balance: GameBalance,
+  order: readonly ComputroniumUnlockId[],
 ): boolean {
   if (dtSec <= 0) return false
 
   const active = countActiveComputronium(cells)
-  let unlocksChanged = false
 
   if (active > 0) {
     const desiredDrain = balance.computroniumEnergyDrainPerSecPerCell * active * dtSec
@@ -324,71 +305,19 @@ export function stepComputronium(
       balance.computroniumUnlockPointsPerSecPerCell * active * dtSec * scale
   }
 
-  const per = balance.computroniumPointsPerStage
-  const t1 = per
-  const t2 = per * 2
-  const t3 = per * 3
-  const t4 = per * 4
-  const t5 = per * 5
-  const t6 = per * 6
-
-  if (!flags.orbitalLaserUnlocked && unlockPoints.current >= t1) {
-    flags.orbitalLaserUnlocked = true
-    flags.orbitalSatelliteCount = Math.max(1, flags.orbitalSatelliteCount)
-    unlocksChanged = true
-  }
-  if (!flags.excavatingLaserUnlocked && unlockPoints.current >= t2) {
-    flags.excavatingLaserUnlocked = true
-    flags.excavatingSatelliteCount = Math.max(1, flags.excavatingSatelliteCount)
-    unlocksChanged = true
-  }
-  if (!flags.scannerLaserUnlocked && unlockPoints.current >= t3) {
-    flags.scannerLaserUnlocked = true
-    flags.scannerSatelliteCount = Math.max(1, flags.scannerSatelliteCount)
-    unlocksChanged = true
-  }
-  if (!flags.depthScanUnlocked && unlockPoints.current >= t4) {
-    flags.depthScanUnlocked = true
-    unlocksChanged = true
-  }
-  if (!flags.drossCollectorUnlocked && unlockPoints.current >= t5) {
-    flags.drossCollectorUnlocked = true
-    flags.drossCollectorSatelliteCount = Math.max(1, flags.drossCollectorSatelliteCount)
-    unlocksChanged = true
-  }
-  if (!flags.emCatapultUnlocked && unlockPoints.current >= t6) {
-    flags.emCatapultUnlocked = true
-    unlocksChanged = true
-  }
-
-  return unlocksChanged
+  return syncResearchFlagsFromPoints(order, unlockPoints.current, balance, flags)
 }
 
 /**
- * Force research tiers up to `tier` (inclusive), matching cumulative unlocks from {@link stepComputronium}
- * when crossing each threshold (satellite floors for laser tiers + cleanup collector at tier 5 + EM Catapult at tier 6).
+ * @deprecated Prefer {@link applyResearchStepsCompletedGrant} with shuffle {@link order}.
+ * Grants legacy tier-style progress (tier T → 2T research steps, capped).
  */
-export function applyResearchTierGrant(tier: 1 | 2 | 3 | 4 | 5 | 6, flags: LaserUnlockApply): void {
-  if (tier >= 1) {
-    flags.orbitalLaserUnlocked = true
-    flags.orbitalSatelliteCount = Math.max(1, flags.orbitalSatelliteCount)
-  }
-  if (tier >= 2) {
-    flags.excavatingLaserUnlocked = true
-    flags.excavatingSatelliteCount = Math.max(1, flags.excavatingSatelliteCount)
-  }
-  if (tier >= 3) {
-    flags.scannerLaserUnlocked = true
-    flags.scannerSatelliteCount = Math.max(1, flags.scannerSatelliteCount)
-  }
-  if (tier >= 4) {
-    flags.depthScanUnlocked = true
-  }
-  if (tier >= 5) {
-    flags.drossCollectorUnlocked = true
-    flags.drossCollectorSatelliteCount = Math.max(1, flags.drossCollectorSatelliteCount)
-  }
-  if (tier >= 6) {
-    flags.emCatapultUnlocked = true
-  }
+export function applyResearchTierGrant(
+  tier: 1 | 2 | 3 | 4 | 5 | 6,
+  flags: LaserUnlockApply,
+  unlockPoints: { current: number },
+  balance: GameBalance,
+  order: readonly ComputroniumUnlockId[],
+): void {
+  applyLegacyTierAsResearchSteps(order, tier, unlockPoints, balance, flags)
 }

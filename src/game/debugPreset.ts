@@ -19,6 +19,7 @@ import { SFX_VOLUME_STORAGE_KEY } from './sfxVolume'
 import { PICK_THUD_DEBUG_STORAGE_KEY } from './pickThudPersist'
 import { OVERLAY_VISUALIZATION_STORAGE_KEY } from './overlayVisualizationPrefs'
 import { SCAN_VISUALIZATION_DEBUG_STORAGE_KEY } from './scanVisualizationPersist'
+import { GAME_SPEED_MULT_STORAGE_KEY } from './gameSpeedDebug'
 import { SUN_LIGHT_ANGLES_STORAGE_KEY, SUN_LIGHT_DEBUG_STORAGE_KEY } from './settingsClientPersist'
 
 /** Debug subsection text filter; persisted per browser. */
@@ -49,6 +50,7 @@ const PRESET_KEYS: readonly string[] = [
   FONT_STORAGE_KEY,
   PICK_THUD_DEBUG_STORAGE_KEY,
   DEBUG_FILTER_STORAGE_KEY,
+  GAME_SPEED_MULT_STORAGE_KEY,
 ]
 
 const presetKeySet = new Set(PRESET_KEYS)

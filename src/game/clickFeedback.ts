@@ -658,6 +658,32 @@ export function createMineRippleElement(): HTMLDivElement {
   return el
 }
 
+/** Persistent contact indicator while hoover / laser tools are held (positioned from `main.ts`). */
+export function createToolHoldRingElement(): HTMLDivElement {
+  const el = document.createElement('div')
+  el.id = 'tool-hold-ring'
+  el.setAttribute('aria-hidden', 'true')
+  el.hidden = true
+  return el
+}
+
+export function updateToolHoldRing(
+  el: HTMLDivElement,
+  visible: boolean,
+  clientX: number,
+  clientY: number,
+  viewport: HTMLElement,
+): void {
+  if (!visible) {
+    el.hidden = true
+    return
+  }
+  const r = viewport.getBoundingClientRect()
+  el.style.left = `${clientX - r.left}px`
+  el.style.top = `${clientY - r.top}px`
+  el.hidden = false
+}
+
 export function triggerMineRipple(
   el: HTMLDivElement,
   clientX: number,

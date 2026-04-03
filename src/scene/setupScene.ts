@@ -32,7 +32,7 @@ export function setupScene(container: HTMLElement): SceneBundle {
   camera.position.set(0, 0, 42)
 
   const renderer = new WebGLRenderer({ antialias: true, alpha: false })
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+  // Pixel ratio applied in main via `applyRendererPixelRatio` (Settings cap).
   renderer.outputColorSpace = SRGBColorSpace
   container.appendChild(renderer.domElement)
 

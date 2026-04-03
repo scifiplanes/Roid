@@ -1,6 +1,5 @@
 import type { GameBalance } from './gameBalance'
-import type { LaserUnlockApply } from './computroniumSim'
-import { applyResearchTierGrant } from './computroniumSim'
+import { applyResearchStepsCompletedGrant, type ComputroniumUnlockId, type LaserUnlockApply } from './computroniumResearchQueue'
 import { RESOURCE_DEFS, RESOURCE_IDS_ORDERED, ROOT_RESOURCE_IDS, type ResourceId } from './resources'
 import type { VoxelKind } from './voxelKinds'
 import type { VoxelPos } from '../scene/asteroid/generateAsteroidVoxels'
@@ -350,13 +349,14 @@ export function rollDiscoveryOffer(
   }
 }
 
-/** Apply accepted discovery: resources, research tiers (mirrors computronium thresholds), unlock points sync. */
+/** Apply accepted discovery: resources, research steps (mirrors computronium thresholds), unlock points sync. */
 export function applyDiscoveryAccept(
   offer: DiscoveryOffer,
   tallies: Record<ResourceId, number>,
   laserFlags: LaserUnlockApply,
   unlockPoints: { current: number },
   balance: GameBalance,
+  researchOrder: readonly ComputroniumUnlockId[],
 ): void {
   for (const id of RESOURCE_IDS_ORDERED) {
     const d = offer.resourceDelta[id]
@@ -365,10 +365,12 @@ export function applyDiscoveryAccept(
   }
 
   if (offer.researchTierGrant !== null) {
-    applyResearchTierGrant(offer.researchTierGrant, laserFlags)
-    const per = balance.computroniumPointsPerStage
-    const t = offer.researchTierGrant
-    const threshold = per * t
-    unlockPoints.current = Math.max(unlockPoints.current, threshold)
+    applyResearchStepsCompletedGrant(
+      researchOrder,
+      offer.researchTierGrant,
+      unlockPoints,
+      balance,
+      laserFlags,
+    )
   }
 }

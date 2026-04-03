@@ -53,6 +53,12 @@ export function stepDepthReveal(
   )
   const usePairPrune = pairMax < maxGridManhattan
 
+  /** Precompute falloff(d) — avoids repeated pow in hot loops when many scanners exist. */
+  const falloffByDist = new Float64Array(maxGridManhattan + 1)
+  for (let d = 0; d <= maxGridManhattan; d++) {
+    falloffByDist[d] = falloff(d, d0, p)
+  }
+
   let changed = false
 
   const stepOneCell = (cell: VoxelCell, sum: number): void => {
@@ -75,7 +81,7 @@ export function stepDepthReveal(
       const cell = cells[i]
       if (!cellParticipatesInDepthReveal(cell)) continue
       const d = manhattan(cell.pos, s0)
-      const sum = falloff(d, d0, p)
+      const sum = falloffByDist[d]!
       stepOneCell(cell, sum)
     }
     return changed
@@ -92,7 +98,7 @@ export function stepDepthReveal(
     for (const s of scanners) {
       const d = manhattan(cell.pos, s)
       if (usePairPrune && d > pairMax) continue
-      sum += falloff(d, d0, p)
+      sum += falloffByDist[d]!
     }
 
     stepOneCell(cell, sum)

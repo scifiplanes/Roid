@@ -92,6 +92,12 @@ export interface SettingsMenuOptions {
   /** UI font for all text (persisted). */
   initialFontId?: FontId
   onFontChange?: (next: FontId) => void
+  /** Cap for `renderer.setPixelRatio` vs device (localStorage). */
+  initialMaxPixelRatioCap?: 1 | 1.5 | 2
+  onMaxPixelRatioCapChange?: (cap: 1 | 1.5 | 2) => void
+  /** Debug: multiplies simulated delta time per frame (persisted). */
+  initialGameSpeedMult?: number
+  onGameSpeedMultChange?: (mult: number) => void
   /** Key light azimuth/elevation while rotating (authoritative azimuth lives in main). */
   sunLightDebug: SunLightDebug
   getSunAnglesForLight: () => { az: number; el: number }
@@ -105,6 +111,9 @@ export interface SettingsMenuOptions {
   getReplicatorTransformDebugLines?: () => string[]
   /** After toggling Debug → Starting tools checkboxes; main refreshes the tools dock. */
   onDebugInitialToolConfigChange?: () => void
+  /** Dev-only: show FPS / timings overlay (Settings → Debug → Performance). */
+  initialPerfDebugOverlayVisible?: boolean
+  onPerfDebugOverlayChange?: (visible: boolean) => void
 }
 
 export interface SettingsLightControlsApi {
@@ -295,14 +304,14 @@ const GAMEPLAY_BALANCE_SLIDERS: SliderRow[] = [
     key: 'debrisLifetimeMinSec',
     label: 'Debris shard lifetime min (s)',
     min: 0.2,
-    max: 20,
+    max: 60,
     step: 0.1,
   },
   {
     key: 'debrisLifetimeMaxSec',
     label: 'Debris shard lifetime max (s)',
     min: 0.2,
-    max: 20,
+    max: 60,
     step: 0.1,
   },
   {
@@ -831,6 +840,10 @@ export function createSettingsMenu(
     onColorSchemeChange,
     initialFontId = 'disketMono',
     onFontChange,
+    initialMaxPixelRatioCap = 2,
+    onMaxPixelRatioCapChange,
+    initialGameSpeedMult = 1,
+    onGameSpeedMultChange,
     sunLightDebug,
     getSunAnglesForLight,
     onSunLightDebugChange,
@@ -840,6 +853,8 @@ export function createSettingsMenu(
     onAudioMasterDebugChange,
     getReplicatorTransformDebugLines,
     onDebugInitialToolConfigChange,
+    initialPerfDebugOverlayVisible = false,
+    onPerfDebugOverlayChange,
   }: SettingsMenuOptions,
 ): SettingsLightControlsApi {
   const overlay = document.createElement('div')
@@ -991,6 +1006,33 @@ export function createSettingsMenu(
   matterHudCompactInput.addEventListener('change', () => {
     onMatterHudCompactChange?.(matterHudCompactInput.checked)
   })
+
+  const maxPixelRatioRow = document.createElement('div')
+  maxPixelRatioRow.className = 'settings-row'
+  const maxPixelRatioLabel = document.createElement('label')
+  maxPixelRatioLabel.className = 'settings-label'
+  maxPixelRatioLabel.htmlFor = 'settings-max-pixel-ratio'
+  maxPixelRatioLabel.textContent = 'Max canvas pixel ratio'
+  const maxPixelRatioSelect = document.createElement('select')
+  maxPixelRatioSelect.id = 'settings-max-pixel-ratio'
+  const maxPixelRatioChoices: { label: string; value: string }[] = [
+    { label: '1x (lower GPU load)', value: '1' },
+    { label: '1.5x', value: '1.5' },
+    { label: '2x (default)', value: '2' },
+  ]
+  for (const c of maxPixelRatioChoices) {
+    const opt = document.createElement('option')
+    opt.value = c.value
+    opt.textContent = c.label
+    maxPixelRatioSelect.appendChild(opt)
+  }
+  maxPixelRatioSelect.value = String(initialMaxPixelRatioCap)
+  maxPixelRatioSelect.addEventListener('change', () => {
+    const v = Number(maxPixelRatioSelect.value)
+    const cap = v === 1 ? 1 : v <= 1 ? 1 : v <= 1.5 ? 1.5 : 2
+    onMaxPixelRatioCapChange?.(cap)
+  })
+  maxPixelRatioRow.append(maxPixelRatioLabel, maxPixelRatioSelect)
 
   const sandboxRow = document.createElement('div')
   sandboxRow.className = 'settings-row'
@@ -1397,6 +1439,13 @@ export function createSettingsMenu(
     id: 'debug-section-balance',
   })
 
+  const sectionSimulation = createDebugSection('Simulation', { id: 'debug-section-simulation' })
+
+  const sectionPerformance =
+    import.meta.env.DEV && onPerfDebugOverlayChange
+      ? createDebugSection('Performance', { id: 'debug-section-performance' })
+      : null
+
   const debugNav = document.createElement('div')
   debugNav.className = 'settings-debug-nav'
   debugNav.setAttribute('role', 'navigation')
@@ -1404,6 +1453,8 @@ export function createSettingsMenu(
 
   const navTargets: { label: string; el: HTMLDetailsElement }[] = [
     { label: 'Persist', el: sectionPersist },
+    { label: 'Sim', el: sectionSimulation },
+    ...(sectionPerformance ? ([{ label: 'Perf', el: sectionPerformance }] as const) : []),
     { label: 'Lodes', el: sectionLodeDebug },
     { label: 'Light', el: sectionKeyLight },
     { label: 'Scan', el: sectionScanDepth },
@@ -1516,6 +1567,8 @@ export function createSettingsMenu(
     debugFilterRow,
     debugNav,
     sectionPersist,
+    sectionSimulation,
+    ...(sectionPerformance ? [sectionPerformance] : []),
     sectionLodeDebug,
     sectionKeyLight,
     sectionScanDepth,
@@ -1557,6 +1610,65 @@ export function createSettingsMenu(
     sectionPersist.appendChild(cheatRow)
   }
   sectionPersist.append(debugHint, autoSaveRow, saveAllRow, saveRow, musicSaveRow, presetRow, clearStorageRow)
+
+  if (sectionPerformance && onPerfDebugOverlayChange) {
+    const perfHeading = document.createElement('h3')
+    perfHeading.className = 'settings-debug-subheading'
+    perfHeading.textContent = 'Performance overlay (dev)'
+    sectionPerformance.appendChild(perfHeading)
+
+    const perfRow = document.createElement('div')
+    perfRow.className = 'settings-row settings-debug-row'
+    const perfLabel = document.createElement('label')
+    perfLabel.className = 'settings-checkbox-label'
+    const perfInput = document.createElement('input')
+    perfInput.type = 'checkbox'
+    perfInput.id = 'settings-perf-debug-overlay'
+    perfInput.checked = initialPerfDebugOverlayVisible
+    const perfText = document.createElement('span')
+    perfText.textContent = 'Show performance overlay (frame ms, draw calls, timings)'
+    perfLabel.append(perfInput, perfText)
+    perfRow.appendChild(perfLabel)
+    perfInput.addEventListener('change', () => {
+      onPerfDebugOverlayChange(perfInput.checked)
+    })
+    sectionPerformance.appendChild(perfRow)
+  }
+
+  {
+    const simSpeedHeading = document.createElement('h3')
+    simSpeedHeading.className = 'settings-debug-subheading'
+    simSpeedHeading.textContent = 'Simulation time scale (debug)'
+
+    const simSpeedHint = document.createElement('p')
+    simSpeedHint.className = 'settings-debug-hint'
+    simSpeedHint.textContent =
+      'Multiplies simulated delta time each frame: below 1 slows the world; above 1 speeds it and increases CPU per real second. Procedural music uses real time. Some wall-clock timers (explosive fuse, lifter arm, debris lifetime, etc.) do not scale with this slider.'
+
+    const simSpeedRow = document.createElement('div')
+    simSpeedRow.className = 'settings-row settings-debug-row'
+    const simSpeedLabel = document.createElement('label')
+    simSpeedLabel.className = 'settings-label'
+    simSpeedLabel.htmlFor = 'settings-game-speed-mult'
+    simSpeedLabel.textContent = 'Game speed multiplier'
+    const simSpeedInput = document.createElement('input')
+    simSpeedInput.type = 'range'
+    simSpeedInput.id = 'settings-game-speed-mult'
+    simSpeedInput.min = '0.05'
+    simSpeedInput.max = '8'
+    simSpeedInput.step = '0.05'
+    simSpeedInput.value = String(initialGameSpeedMult)
+    const simSpeedValue = document.createElement('span')
+    simSpeedValue.className = 'settings-secondary'
+    simSpeedValue.textContent = initialGameSpeedMult.toFixed(2)
+    simSpeedRow.append(simSpeedLabel, simSpeedInput, simSpeedValue)
+    simSpeedInput.addEventListener('input', () => {
+      const n = Number(simSpeedInput.value)
+      simSpeedValue.textContent = n.toFixed(2)
+      onGameSpeedMultChange?.(n)
+    })
+    sectionSimulation.append(simSpeedHeading, simSpeedHint, simSpeedRow)
+  }
 
   function setAzimuthSliderDisabled(disabled: boolean): void {
     azimuthInput.disabled = disabled
@@ -1845,6 +1957,12 @@ export function createSettingsMenu(
   startingToolsHeading.className = 'settings-debug-subheading'
   startingToolsHeading.textContent = 'Starting tools (new asteroid / Regenerate)'
   sectionGameBalance.appendChild(startingToolsHeading)
+
+  const startingToolsHint = document.createElement('p')
+  startingToolsHint.className = 'settings-debug-hint'
+  startingToolsHint.textContent =
+    'Unchecked boxes block those baseline tools (and Replicator/Seed when used with progression). Lasers, structures, explosives, and other computronium-gated tools are not hidden by these checkboxes; they follow in-game research.'
+  sectionGameBalance.appendChild(startingToolsHint)
 
   function appendToolCheckboxRow(
     parent: HTMLElement,
@@ -3211,6 +3329,78 @@ export function createSettingsMenu(
       read: () => asteroidMusicDebug.satelliteWeight,
       write: (n) => {
         asteroidMusicDebug.satelliteWeight = n
+      },
+    },
+    {
+      id: 'settings-music-interaction-poke-equiv',
+      label: 'Interaction — poke satellite equiv (while post-poke boost active)',
+      min: 0,
+      max: 30,
+      step: 0.25,
+      decimals: 2,
+      read: () => asteroidMusicDebug.interactionPokeSatelliteEquiv,
+      write: (n) => {
+        asteroidMusicDebug.interactionPokeSatelliteEquiv = n
+      },
+    },
+    {
+      id: 'settings-music-interaction-poke-duration',
+      label: 'Interaction — poke boost duration (s)',
+      min: 0,
+      max: 10,
+      step: 0.05,
+      decimals: 2,
+      read: () => asteroidMusicDebug.interactionPokeDurationSec,
+      write: (n) => {
+        asteroidMusicDebug.interactionPokeDurationSec = n
+      },
+    },
+    {
+      id: 'settings-music-interaction-orbital-laser-hold',
+      label: 'Interaction — orbital laser hold (satellite equiv per tick)',
+      min: 0,
+      max: 30,
+      step: 0.25,
+      decimals: 2,
+      read: () => asteroidMusicDebug.interactionOrbitalLaserHoldSatelliteEquiv,
+      write: (n) => {
+        asteroidMusicDebug.interactionOrbitalLaserHoldSatelliteEquiv = n
+      },
+    },
+    {
+      id: 'settings-music-interaction-excavating-laser-hold',
+      label: 'Interaction — excavating laser hold (satellite equiv per tick)',
+      min: 0,
+      max: 30,
+      step: 0.25,
+      decimals: 2,
+      read: () => asteroidMusicDebug.interactionExcavatingLaserHoldSatelliteEquiv,
+      write: (n) => {
+        asteroidMusicDebug.interactionExcavatingLaserHoldSatelliteEquiv = n
+      },
+    },
+    {
+      id: 'settings-music-interaction-tool-tap-equiv',
+      label: 'Interaction — tool tap satellite equiv (while tap boost active)',
+      min: 0,
+      max: 30,
+      step: 0.25,
+      decimals: 2,
+      read: () => asteroidMusicDebug.interactionToolTapSatelliteEquiv,
+      write: (n) => {
+        asteroidMusicDebug.interactionToolTapSatelliteEquiv = n
+      },
+    },
+    {
+      id: 'settings-music-interaction-tool-tap-duration',
+      label: 'Interaction — tool tap boost duration (s)',
+      min: 0,
+      max: 10,
+      step: 0.05,
+      decimals: 2,
+      read: () => asteroidMusicDebug.interactionToolTapDurationSec,
+      write: (n) => {
+        asteroidMusicDebug.interactionToolTapDurationSec = n
       },
     },
     {
@@ -4816,6 +5006,7 @@ export function createSettingsMenu(
     sfxVolRow,
     discoveryAutoResolveRow,
     matterHudCompactRow,
+    maxPixelRatioRow,
     sandboxRow,
     fontRow,
     colorSchemeRow,

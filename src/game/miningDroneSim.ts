@@ -9,6 +9,8 @@ import type { GameBalance } from './gameBalance'
 import { voxelHasCompositionIntel } from './inspectVoxel'
 import { clearDepthRevealState, clearSurfaceScanTint } from './scanVisualization'
 import { hpForVoxelKind, type VoxelCell } from './voxelState'
+import { buildPosIndex } from './replicatorSim'
+import { packVoxelKey } from './spatialKey'
 
 const NEIGHBOR_OFFSETS: ReadonlyArray<readonly [number, number, number]> = [
   [1, 0, 0],
@@ -18,18 +20,6 @@ const NEIGHBOR_OFFSETS: ReadonlyArray<readonly [number, number, number]> = [
   [0, 0, 1],
   [0, 0, -1],
 ]
-
-function posKey(p: VoxelPos): string {
-  return `${p.x},${p.y},${p.z}`
-}
-
-function buildPosIndex(cells: VoxelCell[]): Map<string, VoxelCell> {
-  const m = new Map<string, VoxelCell>()
-  for (const c of cells) {
-    m.set(posKey(c.pos), c)
-  }
-  return m
-}
 
 function manhattan(a: VoxelPos, b: VoxelPos): number {
   return Math.abs(a.x - b.x) + Math.abs(a.y - b.y) + Math.abs(a.z - b.z)
@@ -48,13 +38,14 @@ function shuffleInPlace<T>(arr: T[]): void {
 function pickNearestRockTeleportTarget(
   droneCell: VoxelCell,
   cells: VoxelCell[],
-  claimedTargets: Set<string>,
+  claimedTargets: Set<number>,
+  gridSize: number,
 ): VoxelCell | null {
   let bestDist = Infinity
   const atBest: VoxelCell[] = []
   for (const c of cells) {
     if (!ROCK_LITHOLOGY_KINDS.has(c.kind)) continue
-    const key = posKey(c.pos)
+    const key = packVoxelKey(c.pos.x, c.pos.y, c.pos.z, gridSize)
     if (claimedTargets.has(key)) continue
     const d = manhattan(droneCell.pos, c.pos)
     if (d < bestDist) {
@@ -133,21 +124,23 @@ export function initMiningDroneCell(cell: VoxelCell): void {
 
 export interface StepMiningDronesOptions extends ConvertRockToPmOptions {
   balance: GameBalance
+  /** Grid edge for packed spatial keys (default 33). */
+  gridSize?: number
 }
 
 export function stepMiningDrones(cells: VoxelCell[], options: StepMiningDronesOptions): boolean {
-  const { balance, ...pmOptions } = options
+  const { balance, gridSize = 33, ...pmOptions } = options
   if (!balance.miningDroneEnabled || cells.length === 0) return false
 
   let maxMoves = Math.max(0, Math.floor(balance.miningDroneMaxMovesPerTick))
   if (maxMoves <= 0) return false
 
-  const claimedTargets = new Set<string>()
+  const claimedTargets = new Set<number>()
   let changed = false
 
   const drones = cells.filter((c) => c.kind === 'miningDrone')
   shuffleInPlace(drones)
-  const index = buildPosIndex(cells)
+  const index = buildPosIndex(cells, gridSize)
 
   for (const droneCell of drones) {
     if (!cells.includes(droneCell) || droneCell.kind !== 'miningDrone') continue
@@ -156,7 +149,7 @@ export function stepMiningDrones(cells: VoxelCell[], options: StepMiningDronesOp
     const candidates: VoxelCell[] = []
     const { x, y, z } = droneCell.pos
     for (const [dx, dy, dz] of NEIGHBOR_OFFSETS) {
-      const key = posKey({ x: x + dx, y: y + dy, z: z + dz })
+      const key = packVoxelKey(x + dx, y + dy, z + dz, gridSize)
       const n = index.get(key)
       if (!n || !ROCK_LITHOLOGY_KINDS.has(n.kind)) continue
       if (claimedTargets.has(key)) continue
@@ -166,11 +159,11 @@ export function stepMiningDrones(cells: VoxelCell[], options: StepMiningDronesOp
     let pick: VoxelCell | null =
       candidates.length > 0 ? candidates[Math.floor(Math.random() * candidates.length)]! : null
     if (pick === null) {
-      pick = pickNearestRockTeleportTarget(droneCell, cells, claimedTargets)
+      pick = pickNearestRockTeleportTarget(droneCell, cells, claimedTargets, gridSize)
     }
     if (pick === null) continue
 
-    const tKey = posKey(pick.pos)
+    const tKey = packVoxelKey(pick.pos.x, pick.pos.y, pick.pos.z, gridSize)
     if (claimedTargets.has(tKey)) continue
     if (!ROCK_LITHOLOGY_KINDS.has(pick.kind)) continue
 
