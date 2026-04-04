@@ -1,6 +1,9 @@
 import type { GameBalance } from './gameBalance'
 import { ROOT_RESOURCE_IDS, type RootResourceId } from './resources'
 
+/** Global refinery mode: a root recipe, or idle (no consumption / no refined output). */
+export type RefineryRecipeSelection = RootResourceId | 'idle'
+
 export type InitialRefineryRecipesPreset = 'default' | 'none' | 'basicBand'
 
 /**

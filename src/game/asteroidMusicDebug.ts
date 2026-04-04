@@ -181,6 +181,15 @@ export interface AsteroidMusicDebug {
   voicePitchBandpassCenterSemitones: number
   /** Bandpass resonance (Q); one macro shared by all voices. */
   voicePitchBandpassQ: number
+  /**
+   * Bandpass path only (ignored for reese highpass): if **> 0**, overrides `voicePitchBandpassQ` with
+   * `Q ≈ centerHz / bandwidthHz` (clamped 0.25…30). **0** = use Q slider.
+   */
+  voicePitchBandpassBandwidthHz: number
+  /**
+   * Bandpass path only: linear gain after `pitchBandpass` (dB). Reese path keeps unity gain.
+   */
+  voicePitchBandpassPostGainDb: number
 
   /** Which pitch-class set (relative to procedural root) note snapping uses. */
   scaleClampMode: ScaleClampMode
@@ -1186,6 +1195,8 @@ export function createDefaultAsteroidMusicDebug(): AsteroidMusicDebug {
     voicePitchBandpassEnabled: false,
     voicePitchBandpassCenterSemitones: 0,
     voicePitchBandpassQ: 5,
+    voicePitchBandpassBandwidthHz: 0,
+    voicePitchBandpassPostGainDb: 0,
     scaleClampMode: 'major',
     scaleCycleEnabled: true,
     scaleCycleIntervalSec: 180,

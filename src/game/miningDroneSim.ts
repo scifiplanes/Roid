@@ -108,6 +108,7 @@ export function initMiningDroneCell(cell: VoxelCell): void {
   cell.rareLodeStrength01 = undefined
   cell.processedMatterUnits = undefined
   cell.processedMatterRootComposition = undefined
+  cell.reactorDisabled = undefined
   cell.hubDisabled = undefined
   cell.refineryDisabled = undefined
   cell.computroniumDisabled = undefined

@@ -525,6 +525,22 @@ export function playRefineryToggle(isNowActive: boolean): void {
   }
 }
 
+/** Reactor toggled on (generating) vs off (standby). */
+export function playReactorToggle(isNowActive: boolean): void {
+  try {
+    const c = getAudioContext()
+    if (!c || c.state !== 'running') return
+    const t0 = c.currentTime
+    if (isNowActive) {
+      scheduleReplicatorClick(c, t0, 0.054, 2100, 0.021, 0.008)
+    } else {
+      scheduleReplicatorClick(c, t0, 0.039, 480, 0.056, 0.012)
+    }
+  } catch {
+    /* ignore blocked / unsupported audio */
+  }
+}
+
 export function playReplicatorConsumeClicks(tickCount: number): void {
   if (tickCount <= 0) return
   try {

@@ -62,6 +62,7 @@ import {
   createEmptyResourceTallies,
   defaultUniformRootComposition,
   formatEnergyHudLine,
+  formatResourceAmountForHud,
   formatResourceCostWithTallies,
   matterHudRefinedEntries,
   matterHudRootEntries,
@@ -161,6 +162,7 @@ import {
   stopHooverSustain,
   stopOrbitalLaserSustain,
   playHubToggle,
+  playReactorToggle,
   playRefineryToggle,
   playReplicatorPlaceClick,
   playReplicatorTapClick,
@@ -223,7 +225,12 @@ import { updateDrossFog } from './scene/drossFog'
 import { createPauseButton } from './ui/pauseButton'
 import { createDrossParticlesGroup } from './scene/drossParticles'
 import { createSatelliteDotsGroup } from './scene/satelliteDots'
-import { getSandboxModeEnabled, subscribeSandboxMode } from './game/sandboxMode'
+import {
+  getSandboxModeEnabled,
+  notifySandboxModeListeners,
+  setSandboxModeEnabled,
+  subscribeSandboxMode,
+} from './game/sandboxMode'
 import {
   projectVoxelPosToClient,
   segmentFirstBorderHitTowardRect,
@@ -267,13 +274,18 @@ import {
   stepReplicators,
   type ReplicatorNeighborIndex,
 } from './game/replicatorSim'
+import {
+  clampComputroniumResearchSpeedMult,
+  loadComputroniumResearchSpeedMult,
+  saveComputroniumResearchSpeedMult,
+} from './game/computroniumResearchSpeedDebug'
 import { clampGameSpeedMult, loadGameSpeedMult, saveGameSpeedMult } from './game/gameSpeedDebug'
 import { applyRendererPixelRatio, loadMaxPixelRatioCap, saveMaxPixelRatioCap } from './game/rendererPrefs'
 import { packVoxelKey } from './game/spatialKey'
-import { stepHubs } from './game/hubSim'
+import { resetHubEnergyBudget, stepHubs } from './game/hubSim'
 import { stepCargoDrones } from './game/cargoDroneSim'
-import { defaultRefineryRecipeSelection } from './game/refineryRecipeUnlock'
-import { stepRefineryProcessing } from './game/refineryProcessSim'
+import { defaultRefineryRecipeSelection, type RefineryRecipeSelection } from './game/refineryRecipeUnlock'
+import { resetRefineryEnergyBudget, stepRefineryProcessing } from './game/refineryProcessSim'
 import {
   createAudioContextNow,
   ensureAudioContextInitialized,
@@ -311,6 +323,14 @@ import { SEED_DEFS, type SeedId } from './game/seedDefs'
 import { createEmptyResourceTalliesBySource, type ResourceTalliesBySource } from './game/resources'
 import type { CoreAsset } from './game/coreAssets'
 import { deriveWreckProfile } from './game/wreckGenProfile'
+import {
+  clearPlayerProgressFromLocalStorage,
+  PLAYER_PROGRESS_SNAPSHOT_VERSION,
+  serializePlayerProgressSnapshot,
+  tryReadPlayerProgressFromLocalStorage,
+  tryWritePlayerProgressToLocalStorage,
+  type PlayerProgressSnapshotV1,
+} from './game/playerProgressPersist'
 
 maybeApplyBundledProjectDefaultsOnProductionStartup(
   persistedSnapshot,
@@ -324,6 +344,7 @@ seedSettingsClientLocalStorageFromBundleIfMissing(settingsClientSnapshot)
 let musicVolumeLinear = loadMusicVolumeLinear()
 let sfxVolumeLinear = loadSfxVolumeLinear()
 let gameSpeedMult = loadGameSpeedMult()
+let computroniumResearchSpeedMult = loadComputroniumResearchSpeedMult()
 applySfxVolumeLinear(sfxVolumeLinear)
 const asteroidMusicDebug = createDefaultAsteroidMusicDebug()
 const sunLightDebug = createDefaultSunLightDebug()
@@ -487,6 +508,12 @@ function onLightAngleChange(azimuthDeg: number, elevationDeg: number): void {
 
 const gridSize = 33
 const voxelSize = 0.92
+
+/** Wall-clock throttle anchor for player progress autosave. */
+let lastPlayerProgressSaveWallMs = 0
+
+/** Skips sandbox subscriber side effects while applying a saved snapshot (restored tallies must stay exact). */
+let applyingPlayerProgressLoad = false
 
 let currentSeed = 42
 starTintComposer.setTintFromSeed(currentSeed)
@@ -788,13 +815,15 @@ function flushPendingMatterHudGainFloats(): void {
   const totalEntries: { id: ResourceId; n: number }[] = []
   for (const id of RESOURCE_IDS_ORDERED) {
     const n = pendingGainFloatMergeById[id] ?? 0
-    if (n > 0) totalEntries.push({ id, n })
+    if (n > 0 && formatResourceAmountForHud(n) !== '0') totalEntries.push({ id, n })
   }
   if (
     totalEntries.length === 0 &&
     pendingGainFloatAnchoredAccum.size === 0 &&
     pendingGainFloatHooverPointer === null
   ) {
+    // Still clear merge map (e.g. sub-display fractional leftovers) so state cannot grow unbounded.
+    Object.assign(pendingGainFloatMergeById, createEmptyResourceTallies())
     return
   }
 
@@ -831,46 +860,7 @@ function flushPendingMatterHudGainFloats(): void {
   const remainderFloatCount = remainder.length > 0 ? 1 : 0
   const wouldSpawnMultipleFloats = anchoredVoxelCount + remainderFloatCount > 1
 
-  // #region agent log
-  fetch('http://127.0.0.1:7481/ingest/59523295-7b3c-4817-bc0e-c2fb63f1b767', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'fd2cbb' },
-    body: JSON.stringify({
-      sessionId: 'fd2cbb',
-      location: 'main.ts:flushPendingMatterHudGainFloats',
-      message: 'gain_float_flush_plan',
-      data: {
-        wouldSpawnMultipleFloats,
-        anchoredVoxelCount,
-        hasRemainder: remainder.length > 0,
-        remainderIds: remainder.map((e) => e.id),
-        totalEntryIds: totalEntries.map((e) => e.id),
-      },
-      timestamp: Date.now(),
-      hypothesisId: 'H1',
-    }),
-  }).catch(() => {})
-  // #endregion
-
   if (wouldSpawnMultipleFloats) {
-    // #region agent log
-    fetch('http://127.0.0.1:7481/ingest/59523295-7b3c-4817-bc0e-c2fb63f1b767', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'fd2cbb' },
-      body: JSON.stringify({
-        sessionId: 'fd2cbb',
-        location: 'main.ts:flushPendingMatterHudGainFloats',
-        message: 'append_gain_float',
-        data: {
-          placement: 'pointer',
-          reason: 'collapse_multi_float',
-          entries: totalEntries.map((e) => ({ id: e.id, n: e.n })),
-        },
-        timestamp: Date.now(),
-        hypothesisId: 'H1',
-      }),
-    }).catch(() => {})
-    // #endregion
     appendMatterHudGainFloatDom(totalEntries, 'pointer', 0)
   } else {
     const canvasRect = renderer.domElement.getBoundingClientRect()
@@ -894,48 +884,8 @@ function flushPendingMatterHudGainFloats(): void {
       )
       const idx = gainFloatStagger++
       if (onScreen) {
-        // #region agent log
-        fetch('http://127.0.0.1:7481/ingest/59523295-7b3c-4817-bc0e-c2fb63f1b767', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'fd2cbb' },
-          body: JSON.stringify({
-            sessionId: 'fd2cbb',
-            location: 'main.ts:flushPendingMatterHudGainFloats',
-            message: 'append_gain_float',
-            data: {
-              placement: 'voxel_projected',
-              reason: 'anchored_on_screen',
-              pos: { x: pos.x, y: pos.y, z: pos.z },
-              clientX,
-              clientY,
-              entries: anchoredEntries.map((e) => ({ id: e.id, n: e.n })),
-            },
-            timestamp: Date.now(),
-            hypothesisId: 'H2',
-          }),
-        }).catch(() => {})
-        // #endregion
         appendMatterHudGainFloatDom(anchoredEntries, { clientX, clientY }, idx)
       } else {
-        // #region agent log
-        fetch('http://127.0.0.1:7481/ingest/59523295-7b3c-4817-bc0e-c2fb63f1b767', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'fd2cbb' },
-          body: JSON.stringify({
-            sessionId: 'fd2cbb',
-            location: 'main.ts:flushPendingMatterHudGainFloats',
-            message: 'append_gain_float',
-            data: {
-              placement: 'default_hud_strip',
-              reason: 'anchored_off_screen',
-              pos: { x: pos.x, y: pos.y, z: pos.z },
-              entries: anchoredEntries.map((e) => ({ id: e.id, n: e.n })),
-            },
-            timestamp: Date.now(),
-            hypothesisId: 'H2',
-          }),
-        }).catch(() => {})
-        // #endregion
         appendMatterHudGainFloatDom(anchoredEntries, 'default', idx)
       }
     }
@@ -962,24 +912,6 @@ function flushPendingMatterHudGainFloats(): void {
     }
 
     if (remainder.length > 0) {
-      // #region agent log
-      fetch('http://127.0.0.1:7481/ingest/59523295-7b3c-4817-bc0e-c2fb63f1b767', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'fd2cbb' },
-        body: JSON.stringify({
-          sessionId: 'fd2cbb',
-          location: 'main.ts:flushPendingMatterHudGainFloats',
-          message: 'append_gain_float',
-          data: {
-            placement: 'pointer',
-            reason: 'remainder_unanchored_or_refined',
-            entries: remainder.map((e) => ({ id: e.id, n: e.n })),
-          },
-          timestamp: Date.now(),
-          hypothesisId: 'H2',
-        }),
-      }).catch(() => {})
-      // #endregion
       appendMatterHudGainFloatDom(remainder, 'pointer', gainFloatStagger++)
     }
   }
@@ -1028,7 +960,7 @@ function mergePendingHooverPointerRootGains(
 function mergePendingWorldAnchoredRootGains(
   pos: VoxelPos,
   delta: Partial<Record<RootResourceId, number>>,
-  anchoredGainSource: 'lifter_discovery' | 'hub_pm' | 'cargo_drone',
+  _anchoredGainSource: 'lifter_discovery' | 'hub_pm' | 'cargo_drone',
 ): void {
   let nonempty = false
   for (const id of ROOT_RESOURCE_IDS) {
@@ -1038,24 +970,6 @@ function mergePendingWorldAnchoredRootGains(
     }
   }
   if (!nonempty) return
-  // #region agent log
-  fetch('http://127.0.0.1:7481/ingest/59523295-7b3c-4817-bc0e-c2fb63f1b767', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'fd2cbb' },
-    body: JSON.stringify({
-      sessionId: 'fd2cbb',
-      location: 'main.ts:mergePendingWorldAnchoredRootGains',
-      message: 'anchored_root_gain_queued',
-      data: {
-        anchoredGainSource,
-        pos: { x: pos.x, y: pos.y, z: pos.z },
-        deltaKeys: ROOT_RESOURCE_IDS.filter((id) => (delta[id] ?? 0) > 0),
-      },
-      timestamp: Date.now(),
-      hypothesisId: 'H5',
-    }),
-  }).catch(() => {})
-  // #endregion
   const k = packVoxelKey(pos.x, pos.y, pos.z, gridSize)
   const prev = pendingWorldAnchoredRootGainsByKey.get(k)
   if (!prev) {
@@ -1250,6 +1164,7 @@ registerSettingsClientSnapshot(() => ({
   colorScheme,
   fontId,
   gameSpeedMult,
+  computroniumResearchSpeedMult,
 }))
 /** Last scanner hit refined-material preview (HUD); cleared on regenerate. */
 let lastScanRefinedPreviewLine: string | null = null
@@ -1323,7 +1238,7 @@ function borrowTintColorForScanMap(): Color {
  * Live debug sliders call `invalidateRockTintCaches` via `onScanVisualizationDebugChange`.
  */
 function buildSurfaceScanTintIndexMap(): Map<number, Color> | null {
-  if (!surfaceScanOverlayVisible) return null
+  if (!surfaceScanTintActive()) return null
   if (lastBuiltSurfaceScanTintGen === rockTintCacheGeneration) {
     return surfaceScanTintIndexMapReuse.size > 0 ? surfaceScanTintIndexMapReuse : null
   }
@@ -1344,7 +1259,7 @@ function buildSurfaceScanTintIndexMap(): Map<number, Color> | null {
 /** When non-null, those voxel indices are drawn with the rare-lode density heatmap (Settings → Debug). */
 let debugLodeDisplayIndices: Set<number> | null = null
 
-function reapplyAllRockColorsNoLaser(): void {
+function reapplyAllRockColorsNoLaser(rockInstancesResortedThisFrame = false): void {
   const onlyCellIndices =
     rockColorDirtySubset !== null &&
     rockColorDirtySubset.size > 0 &&
@@ -1365,6 +1280,7 @@ function reapplyAllRockColorsNoLaser(): void {
     buildDiscoveryScanHintIndices(),
     debugLodeDisplayIndices,
     onlyCellIndices,
+    rockInstancesResortedThisFrame,
   )
   rockColorDirtySubset = null
   syncDepthOverlayMaterials()
@@ -1432,7 +1348,7 @@ function spawnDebrisPickupFloat(
     const span = document.createElement('span')
     span.className = 'debris-pickup-float-res'
     span.style.color = resourceHudCssColorForId(id)
-    span.textContent = `${RESOURCE_DEFS[id].hudAbbrev} +${n}`
+    span.textContent = `${RESOURCE_DEFS[id].hudAbbrev} +${formatResourceAmountForHud(n)}`
     wrap.appendChild(span)
     if (i < entries.length - 1) wrap.appendChild(document.createTextNode(', '))
   }
@@ -1526,7 +1442,7 @@ function appendMatterHudGainFloatDom(
     const span = document.createElement('span')
     span.className = 'matter-hud-gain-float-res'
     span.style.color = resourceHudCssColorForId(id)
-    span.textContent = `${RESOURCE_DEFS[id].hudAbbrev} +${n}`
+    span.textContent = `${RESOURCE_DEFS[id].hudAbbrev} +${formatResourceAmountForHud(n)}`
     wrap.appendChild(span)
     if (hudAdjacent && i < entries.length - 1) wrap.appendChild(document.createTextNode(', '))
   }
@@ -1544,7 +1460,7 @@ function syncMatterHudResourceGainFloats(): void {
     const curr = resourceTallies[id] ?? 0
     const prev = resourceTalliesFloatBaseline[id] ?? 0
     const d = curr - prev
-    if (d > 0) totalEntries.push({ id, n: d })
+    if (d > 0 && formatResourceAmountForHud(d) !== '0') totalEntries.push({ id, n: d })
   }
   for (const id of RESOURCE_IDS_ORDERED) {
     resourceTalliesFloatBaseline[id] = resourceTallies[id] ?? 0
@@ -1552,24 +1468,6 @@ function syncMatterHudResourceGainFloats(): void {
   if (totalEntries.length === 0) {
     return
   }
-
-  // #region agent log
-  fetch('http://127.0.0.1:7481/ingest/59523295-7b3c-4817-bc0e-c2fb63f1b767', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'fd2cbb' },
-    body: JSON.stringify({
-      sessionId: 'fd2cbb',
-      location: 'main.ts:syncMatterHudResourceGainFloats',
-      message: 'tally_delta_gain_detected',
-      data: {
-        entries: totalEntries.map((e) => ({ id: e.id, n: e.n })),
-        pendingAnchoredKeysBeforeMerge: pendingWorldAnchoredRootGainsByKey.size,
-      },
-      timestamp: Date.now(),
-      hypothesisId: 'H3',
-    }),
-  }).catch(() => {})
-  // #endregion
 
   for (const e of totalEntries) {
     pendingGainFloatMergeById[e.id] = (pendingGainFloatMergeById[e.id] ?? 0) + e.n
@@ -1588,7 +1486,7 @@ function appendMatterHudColoredResourceLine(
     const span = document.createElement('span')
     span.className = 'matter-hud-res'
     span.style.color = resourceHudCssColorForId(id)
-    span.textContent = `${RESOURCE_DEFS[id].hudAbbrev} ${n}`
+    span.textContent = `${RESOURCE_DEFS[id].hudAbbrev} ${formatResourceAmountForHud(n)}`
     frag.appendChild(span)
     if (i < entries.length - 1) frag.appendChild(document.createTextNode(', '))
   }
@@ -1724,6 +1622,8 @@ function generateNewAsteroidGeometry(): void {
 
 function resetEconomyAndDrossForNewRockBody(): void {
   resetReplicatorSimAccumulators()
+  resetHubEnergyBudget()
+  resetRefineryEnergyBudget()
   replicatorKillswitchEngaged = false
   Object.assign(resourceTallies, createEmptyResourceTallies())
   Object.assign(resourceTalliesFloatBaseline, createEmptyResourceTallies())
@@ -1835,6 +1735,8 @@ function regenerateAsteroid(): void {
   resetEconomyAndDrossForNewRockBody()
   resetAllResearchAndUnlocksForRegenerate()
   finalizeNewAsteroidPresentation({ zeroSatelliteDots: true })
+  savePlayerProgressNow()
+  lastPlayerProgressSaveWallMs = Date.now()
 }
 
 function emCatapultToNewAsteroid(): void {
@@ -1865,6 +1767,8 @@ function emCatapultToNewAsteroid(): void {
   clampRefinerySelection()
   finalizeNewAsteroidPresentation({ zeroSatelliteDots: false })
   bumpMusicToolTapActivity()
+  savePlayerProgressNow()
+  lastPlayerProgressSaveWallMs = Date.now()
 }
 
 let orbitalLaserUnlocked = false
@@ -1877,6 +1781,15 @@ let miningDroneUnlocked = false
 let orbitalSatelliteCount = 0
 let excavatingSatelliteCount = 0
 let scannerSatelliteCount = 0
+
+function surfaceScanUnlocked(): boolean {
+  return scannerSatelliteCount > 0
+}
+
+function surfaceScanTintActive(): boolean {
+  return surfaceScanOverlayVisible && surfaceScanUnlocked()
+}
+
 let drossCollectorUnlocked = false
 let drossCollectorSatelliteCount = 0
 /** Cargo drone orbit fleet count. Reset on Regenerate; preserved on EM catapult. */
@@ -1952,8 +1865,8 @@ function researchPhaseState(): ResearchPhaseState {
   }
 }
 
-/** Global refinery recipe: which root active refineries consume (see Refinery tool → Recipes). */
-let selectedRefineryRoot: RootResourceId = 'regolithMass'
+/** Global refinery recipe selection: root to consume or idle (see Refinery tool → Recipes). */
+let selectedRefineryRoot: RefineryRecipeSelection = 'regolithMass'
 
 /** Discovery modal RNG counter; reset on Regenerate. */
 const discoveryCounter = { current: 0 }
@@ -1968,7 +1881,7 @@ const discoveryConsumedPos = new Set<string>()
 const discoveryScanHintIndicesReuse = new Set<number>()
 
 function buildDiscoveryScanHintIndices(): Set<number> | null {
-  if (!surfaceScanOverlayVisible && !depthOverlayTintActive()) return null
+  if (!surfaceScanTintActive() && !depthOverlayTintActive()) return null
   if (gameBalance.discoverySiteDensity <= 0) return null
   if (lastBuiltDiscoveryHintGen === rockTintCacheGeneration) {
     return discoveryScanHintIndicesReuse.size > 0 ? discoveryScanHintIndicesReuse : null
@@ -2075,6 +1988,7 @@ function onDeploySatellite(kind: SatelliteDeployKind): boolean {
     cargoDroneSatelliteCount,
     orbitVisualRadius,
   )
+  syncOverlaysDepthRow()
   return true
 }
 
@@ -2113,6 +2027,7 @@ function decommissionSatelliteByKind(kind: SatelliteInspectKind, count: number =
     cargoDroneSatelliteCount,
     orbitVisualRadius,
   )
+  syncOverlaysDepthRow()
   invalidateRockTintCaches()
   reapplyAllRockColorsNoLaser()
 }
@@ -2163,6 +2078,11 @@ function onBalanceChange(): void {
 const overlaysMenu = createOverlaysMenu(app, {
   initialSurfaceScanVisible: surfaceScanOverlayVisible,
   initialDepthOverlayVisible: depthOverlayVisible,
+  getSurfaceScanUnlocked: () => surfaceScanUnlocked(),
+  getSurfaceScanLockedHint: () =>
+    scannerLaserUnlocked
+      ? 'Deploy at least one scanner satellite (+sat → Scanner)'
+      : 'Unlock the scanner laser via computronium research, then deploy a scanner satellite',
   getDepthOverlayUnlocked: () => depthOverlayUnlocked(),
   getDepthOverlayLockedHint: () =>
     depthScanUnlocked
@@ -2195,7 +2115,10 @@ const overlaysMenu = createOverlaysMenu(app, {
     reapplyAllRockColorsNoLaser()
   },
 })
-syncOverlaysDepthRow = overlaysMenu.syncDepthOverlayUnlock
+syncOverlaysDepthRow = () => {
+  overlaysMenu.syncSurfaceScanUnlock()
+  overlaysMenu.syncDepthOverlayUnlock()
+}
 
 const pauseButton = createPauseButton(app, {
   initialPaused: false,
@@ -2215,6 +2138,7 @@ const debugUnlockAllToolsHandlers: { apply: () => void } = {
 }
 
 subscribeSandboxMode((on) => {
+  if (applyingPlayerProgressLoad) return
   if (on && !debugUnlockAllTools) {
     debugUnlockAllToolsHandlers.apply()
     addResourceYields(resourceTallies, DEBUG_RESOURCE_GRANT)
@@ -2254,6 +2178,17 @@ const { syncSunRotationSpeed, syncLightAngleSliders } = createSettingsMenu(app, 
   onOpenTips: () => {
     gameStartTipsModal.show()
   },
+  onResetSavedProgress: () => {
+    if (
+      !window.confirm(
+        'Clear saved progress and start a fresh asteroid? This cannot be undone.',
+      )
+    ) {
+      return
+    }
+    clearPlayerProgressFromLocalStorage()
+    regenerateAsteroid()
+  },
   onRegenerate: regenerateAsteroid,
   onLightAngleChange,
   initialAzimuthDeg: sunAzimuthDeg,
@@ -2281,6 +2216,12 @@ const { syncSunRotationSpeed, syncLightAngleSliders } = createSettingsMenu(app, 
   onGameSpeedMultChange: (mult: number) => {
     gameSpeedMult = clampGameSpeedMult(mult)
     saveGameSpeedMult(gameSpeedMult)
+    schedulePersistSettingsClient()
+  },
+  initialComputroniumResearchSpeedMult: computroniumResearchSpeedMult,
+  onComputroniumResearchSpeedMultChange: (mult: number) => {
+    computroniumResearchSpeedMult = clampComputroniumResearchSpeedMult(mult)
+    saveComputroniumResearchSpeedMult(computroniumResearchSpeedMult)
     schedulePersistSettingsClient()
   },
   initialColorScheme: colorScheme,
@@ -2419,6 +2360,7 @@ function unlockedSeedIdsFromResearch(): SeedId[] {
 }
 
 function clampRefinerySelection(): void {
+  if (selectedRefineryRoot === 'idle') return
   const st = refineryRecipeUiState()
   if (isRefineryRecipeUnlocked(selectedRefineryRoot, st, gameBalance)) return
   selectedRefineryRoot = defaultRefineryRecipeSelection((r) => isRefineryRecipeUnlocked(r, st, gameBalance))
@@ -2737,6 +2679,208 @@ const satelliteInspectModal = createSatelliteInspectModal(app, {
   onDecommission: decommissionSatelliteByKind,
 })
 
+function buildPlayerProgressSnapshot(): PlayerProgressSnapshotV1 {
+  const u = laserUnlockApplyFromVars()
+  return {
+    v: PLAYER_PROGRESS_SNAPSHOT_VERSION,
+    savedAtMs: Date.now(),
+    gridSize,
+    currentSeed,
+    coreAsset: structuredClone(currentAsset),
+    voxelCells: voxelCells.map((c) => structuredClone(c)),
+    resourceTallies: { ...resourceTallies },
+    resourceTalliesFloatBaseline: { ...resourceTalliesFloatBaseline },
+    resourceTalliesBySource: {
+      asteroid: { ...resourceTalliesBySource.asteroid },
+      wreck: { ...resourceTalliesBySource.wreck },
+    },
+    energyCurrent: energyState.current,
+    debugEnergyCapBonus,
+    selectedRefineryRoot,
+    unlocks: {
+      scourgeUnlocked: u.scourgeUnlocked,
+      locustUnlocked: u.locustUnlocked,
+      miningDroneUnlocked: u.miningDroneUnlocked,
+      orbitalLaserUnlocked: u.orbitalLaserUnlocked,
+      excavatingLaserUnlocked: u.excavatingLaserUnlocked,
+      orbitalSatelliteCount: u.orbitalSatelliteCount,
+      excavatingSatelliteCount: u.excavatingSatelliteCount,
+      scannerLaserUnlocked: u.scannerLaserUnlocked,
+      scannerSatelliteCount: u.scannerSatelliteCount,
+      depthScanUnlocked: u.depthScanUnlocked,
+      drossCollectorUnlocked: u.drossCollectorUnlocked,
+      drossCollectorSatelliteCount: u.drossCollectorSatelliteCount,
+      cargoDroneSatelliteCount: u.cargoDroneSatelliteCount,
+      emCatapultUnlocked: u.emCatapultUnlocked,
+      explosiveChargeUnlocked: u.explosiveChargeUnlocked,
+      lifterUnlocked: u.lifterUnlocked,
+      cargoDroneToolUnlocked: u.cargoDroneToolUnlocked,
+      drillUnlocked: u.drillUnlocked,
+      debugUnlockAllTools,
+      computroniumUnlockPoints: computroniumUnlockPoints.current,
+      computroniumResearchOrder: computroniumResearchOrder.slice(),
+      replicatorKillswitchEngaged,
+    },
+    discoveryCounter: discoveryCounter.current,
+    discoveryConsumedPos: [...discoveryConsumedPos],
+    pendingDiscoveries: pendingDiscoveries.map((o) => structuredClone(o)),
+    drossState: structuredClone(drossState),
+    debrisState: structuredClone(debrisState),
+    lifterFlights: lifterFlights.map((f) => structuredClone(f)),
+    asteroidRotX,
+    asteroidRotY,
+    asteroidRotZ,
+    lastScanRefinedPreviewLine,
+    lastInspectHudLines: lastInspectHudLines ? lastInspectHudLines.slice() : null,
+    sandboxMode: getSandboxModeEnabled(),
+    selectedTool: getSelectedTool(),
+    notifiedRootForToolsDock,
+    notifiedComputroniumForToolsDock,
+  }
+}
+
+function savePlayerProgressNow(): void {
+  try {
+    const snap = buildPlayerProgressSnapshot()
+    tryWritePlayerProgressToLocalStorage(serializePlayerProgressSnapshot(snap))
+  } catch {
+    /* ignore corrupt / oversized snapshot */
+  }
+}
+
+function applyPlayerProgressFromSnapshot(snap: PlayerProgressSnapshotV1): void {
+  applyingPlayerProgressLoad = true
+  try {
+  currentSeed = snap.currentSeed
+  currentAsset = structuredClone(snap.coreAsset)
+  voxelCells = snap.voxelCells.map((c) => structuredClone(c))
+
+  for (const id of RESOURCE_IDS_ORDERED) {
+    resourceTallies[id] = snap.resourceTallies[id] ?? 0
+    resourceTalliesFloatBaseline[id] = snap.resourceTalliesFloatBaseline[id] ?? 0
+    resourceTalliesBySource.asteroid[id] = snap.resourceTalliesBySource.asteroid[id] ?? 0
+    resourceTalliesBySource.wreck[id] = snap.resourceTalliesBySource.wreck[id] ?? 0
+  }
+
+  energyState.current = snap.energyCurrent
+  debugEnergyCapBonus = snap.debugEnergyCapBonus
+  selectedRefineryRoot = snap.selectedRefineryRoot
+
+  const u = snap.unlocks
+  applyLaserUnlockApply({
+    orbitalLaserUnlocked: u.orbitalLaserUnlocked,
+    excavatingLaserUnlocked: u.excavatingLaserUnlocked,
+    scannerLaserUnlocked: u.scannerLaserUnlocked,
+    depthScanUnlocked: u.depthScanUnlocked,
+    drossCollectorUnlocked: u.drossCollectorUnlocked,
+    emCatapultUnlocked: u.emCatapultUnlocked,
+    orbitalSatelliteCount: u.orbitalSatelliteCount,
+    excavatingSatelliteCount: u.excavatingSatelliteCount,
+    scannerSatelliteCount: u.scannerSatelliteCount,
+    drossCollectorSatelliteCount: u.drossCollectorSatelliteCount,
+    cargoDroneSatelliteCount: u.cargoDroneSatelliteCount,
+    explosiveChargeUnlocked: u.explosiveChargeUnlocked,
+    scourgeUnlocked: u.scourgeUnlocked,
+    locustUnlocked: u.locustUnlocked,
+    miningDroneUnlocked: u.miningDroneUnlocked,
+    lifterUnlocked: u.lifterUnlocked,
+    cargoDroneToolUnlocked: u.cargoDroneToolUnlocked,
+    drillUnlocked: u.drillUnlocked,
+  })
+  computroniumUnlockPoints.current = u.computroniumUnlockPoints
+  computroniumResearchOrder = u.computroniumResearchOrder.slice()
+  debugUnlockAllTools = u.debugUnlockAllTools
+  replicatorKillswitchEngaged = u.replicatorKillswitchEngaged
+
+  discoveryCounter.current = snap.discoveryCounter
+  discoveryConsumedPos.clear()
+  for (const k of snap.discoveryConsumedPos) discoveryConsumedPos.add(k)
+  pendingDiscoveries.length = 0
+  for (const o of snap.pendingDiscoveries) pendingDiscoveries.push(structuredClone(o))
+
+  resetDrossState(drossState)
+  for (const c of snap.drossState.clusters) {
+    drossState.clusters.push(structuredClone(c))
+  }
+  for (const id of RESOURCE_IDS_ORDERED) {
+    const y = snap.drossState.yieldRemainder[id]
+    if (y !== undefined) drossState.yieldRemainder[id] = y
+  }
+
+  debrisState.shards.length = 0
+  for (const s of snap.debrisState.shards) {
+    debrisState.shards.push(structuredClone(s))
+  }
+  debrisState.nextId = snap.debrisState.nextId
+
+  lifterFlights.length = 0
+  for (const f of snap.lifterFlights) lifterFlights.push(structuredClone(f))
+
+  asteroidRotX = snap.asteroidRotX
+  asteroidRotY = snap.asteroidRotY
+  asteroidRotZ = snap.asteroidRotZ
+  lastScanRefinedPreviewLine = snap.lastScanRefinedPreviewLine
+  lastInspectHudLines = snap.lastInspectHudLines ? snap.lastInspectHudLines.slice() : null
+  notifiedRootForToolsDock = snap.notifiedRootForToolsDock
+  notifiedComputroniumForToolsDock = snap.notifiedComputroniumForToolsDock
+
+  orbitVisualRadius = currentAsteroidProfile().shape.baseRadius * voxelSize * 1.5
+
+  setSandboxModeEnabled(snap.sandboxMode)
+  notifySandboxModeListeners()
+
+  invalidateVoxelPosIndexMap()
+  replaceAsteroidMesh(voxelCells)
+  applyAsteroidGroupRotation()
+  debrisVisual.syncFromState(debrisState)
+  drossParticles.syncFromState(
+    drossState,
+    gridSize,
+    voxelSize,
+    currentSeed,
+    performance.now(),
+    getActiveScanVisualizationDebug(),
+  )
+  starTintComposer.setTintFromSeed(currentSeed)
+  asteroidAmbientMusic.setSeed(currentSeed)
+  asteroidAmbientMusic.resetVoiceSmoothing()
+  satelliteDots.setCounts(
+    orbitalSatelliteCount,
+    excavatingSatelliteCount,
+    scannerSatelliteCount,
+    drossCollectorSatelliteCount,
+    cargoDroneSatelliteCount,
+    orbitVisualRadius,
+  )
+  satelliteInspectModal.hide()
+  setSelectedTool(snap.selectedTool, { skipBeforeToolChange: true })
+  ensureSelectedToolRosterFromPanel()
+  clampRefinerySelection()
+  lifterFlightsVisual.syncPositions(lifterFlights.map((fl) => fl.pos))
+  invalidateRockTintCaches()
+  reapplyAllRockColorsNoLaser()
+  syncOverlaysDepthRow()
+  syncDiscoveryHud()
+  markMatterHudDirty()
+  setResourceHud()
+  refreshToolCosts()
+  } finally {
+    applyingPlayerProgressLoad = false
+  }
+}
+
+function tryApplySavedPlayerProgress(): void {
+  const snap = tryReadPlayerProgressFromLocalStorage(gridSize)
+  if (!snap) return
+  applyPlayerProgressFromSnapshot(snap)
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    savePlayerProgressNow()
+  }
+})
+
 function syncDiscoveryHud(): void {
   discoveryPendingChips.replaceChildren()
   discoveryPendingSvg.replaceChildren()
@@ -2942,9 +3086,6 @@ function syncPressHoldToolFeedback(): void {
   }
 }
 
-const ORBITAL_LASER_ENERGY_BASE = 2.75
-const EXCAVATING_LASER_ENERGY_BASE = 2.1
-const SCANNER_ENERGY_BASE = 1.65
 
 const NEIGHBOR_DELTAS: ReadonlyArray<[number, number, number]> = [
   [1, 0, 0],
@@ -3076,7 +3217,7 @@ function hasActiveExplosiveFuse(nowMs: number): boolean {
   return false
 }
 
-function refreshExplosiveFuseRockColors(): void {
+function refreshExplosiveFuseRockColors(rockInstancesResortedThisFrame = false): void {
   const meshOpts = { voxelSize, gridSize }
   const t = performance.now()
   const pulse = 0.58 + 0.42 * (0.5 + 0.5 * Math.sin(t * 0.095))
@@ -3097,6 +3238,8 @@ function refreshExplosiveFuseRockColors(): void {
     depthOverlayTintActive(),
     buildDiscoveryScanHintIndices(),
     debugLodeDisplayIndices,
+    null,
+    rockInstancesResortedThisFrame,
   )
   syncDepthOverlayMaterials()
 }
@@ -3110,7 +3253,7 @@ function hasActiveLifterCharge(nowMs: number): boolean {
   return false
 }
 
-function refreshLifterRockColors(): void {
+function refreshLifterRockColors(rockInstancesResortedThisFrame = false): void {
   const meshOpts = { voxelSize, gridSize }
   const t = performance.now()
   const pulse = 0.55 + 0.45 * (0.5 + 0.5 * Math.sin(t * 0.088))
@@ -3132,6 +3275,8 @@ function refreshLifterRockColors(): void {
     depthOverlayTintActive(),
     buildDiscoveryScanHintIndices(),
     debugLodeDisplayIndices,
+    null,
+    rockInstancesResortedThisFrame,
   )
   syncDepthOverlayMaterials()
 }
@@ -3347,7 +3492,7 @@ function tryScannerAt(clientX: number, clientY: number): void {
   const scanVol = (2 * r + 1) ** 3
   const baseScanVol = 27
   const cost =
-    SCANNER_ENERGY_BASE *
+    gameBalance.scannerEnergyBase *
     gameBalance.scannerEnergyMult *
     scannerSatelliteCount *
     (scanVol / baseScanVol)
@@ -3401,7 +3546,7 @@ function getOrbitalHighlightIndices(clientX: number, clientY: number): number[] 
   return collectOrbitalLaserVisualHighlightIndices(i, orbitalSatelliteCount, voxelCells, posMap)
 }
 
-function refreshLaserRockHighlightColors(): void {
+function refreshLaserRockHighlightColors(rockInstancesResortedThisFrame = false): void {
   const meshOpts = { voxelSize, gridSize }
   /** ~7.6 Hz pulse (rad/ms); strong swing for visible emissive flicker. */
   const t = performance.now()
@@ -3420,6 +3565,8 @@ function refreshLaserRockHighlightColors(): void {
       depthOverlayTintActive(),
       buildDiscoveryScanHintIndices(),
       debugLodeDisplayIndices,
+      null,
+      rockInstancesResortedThisFrame,
     )
     syncDepthOverlayMaterials()
     return
@@ -3444,6 +3591,8 @@ function refreshLaserRockHighlightColors(): void {
       depthOverlayTintActive(),
       buildDiscoveryScanHintIndices(),
       debugLodeDisplayIndices,
+      null,
+      rockInstancesResortedThisFrame,
     )
     syncDepthOverlayMaterials()
   }
@@ -3462,6 +3611,8 @@ function clearLaserRockHighlightColors(): void {
     depthOverlayTintActive(),
     buildDiscoveryScanHintIndices(),
     debugLodeDisplayIndices,
+    null,
+    false,
   )
   syncDepthOverlayMaterials()
 }
@@ -3503,6 +3654,7 @@ function asteroidVoxelPickMeshes(bundle: AsteroidRenderBundle): InstancedMesh[] 
     bundle.solid,
     bundle.eating,
     bundle.reactor,
+    bundle.reactorStandby,
     bundle.battery,
     bundle.hub,
     bundle.hubStandby,
@@ -3901,6 +4053,30 @@ function tryPlaceDepthScannerAt(clientX: number, clientY: number): void {
   bumpMusicToolTapActivity()
 }
 
+function tryReactorToolAt(clientX: number, clientY: number): void {
+  if (voxelCells.length === 0) return
+
+  const i = asteroidRaycastCellIndex(clientX, clientY)
+  if (i === null) return
+
+  const cell = voxelCells[i]
+  if (cell.kind === 'reactor') {
+    const wasDisabled = cell.reactorDisabled === true
+    if (wasDisabled) {
+      cell.reactorDisabled = undefined
+      playReactorToggle(true)
+    } else {
+      cell.reactorDisabled = true
+      playReactorToggle(false)
+    }
+    replaceAsteroidMesh(voxelCells)
+    bumpMusicToolTapActivity()
+    return
+  }
+
+  tryConvertStructure(clientX, clientY, 'reactor')
+}
+
 function tryHubToolAt(clientX: number, clientY: number): void {
   if (voxelCells.length === 0) return
 
@@ -3986,7 +4162,7 @@ function tryOrbitalLaserHit(clientX: number, clientY: number): void {
   if (targets.length === 0) return
 
   const cost =
-    ORBITAL_LASER_ENERGY_BASE * gameBalance.orbitalLaserEnergyMult * orbitalSatelliteCount
+    gameBalance.orbitalLaserEnergyBase * gameBalance.orbitalLaserEnergyMult * orbitalSatelliteCount
   if (energyState.current < cost) return
 
   trySpendEnergy(energyState, cost)
@@ -4014,7 +4190,9 @@ function tryExcavatingLaserHit(clientX: number, clientY: number): void {
   const cell = voxelCells[i]
 
   const cost =
-    EXCAVATING_LASER_ENERGY_BASE * gameBalance.excavatingLaserEnergyMult * excavatingSatelliteCount
+    gameBalance.excavatingLaserEnergyBase *
+    gameBalance.excavatingLaserEnergyMult *
+    excavatingSatelliteCount
   if (energyState.current < cost) return
 
   trySpendEnergy(energyState, cost)
@@ -4311,7 +4489,7 @@ canvas.addEventListener('pointerup', (e) => {
   } else if (tool === 'seed') {
     trySeedToolAt(e.clientX, e.clientY)
   } else if (tool === 'reactor') {
-    tryConvertStructure(e.clientX, e.clientY, 'reactor')
+    tryReactorToolAt(e.clientX, e.clientY)
   } else if (tool === 'battery') {
     tryConvertStructure(e.clientX, e.clientY, 'battery')
   } else if (tool === 'hub') {
@@ -4588,6 +4766,7 @@ function tick(): void {
       laserUnlockApply,
       gameBalance,
       computroniumResearchOrder,
+      computroniumResearchSpeedMult,
     )
     perfMark('roid-computronium-end')
     perfMeasure('roid-computronium', 'roid-computronium-start', 'roid-computronium-end')
@@ -4782,6 +4961,11 @@ function tick(): void {
       reactorMat.emissiveIntensity = 0.98 + 0.05 * Math.sin(now * 0.0009)
     }
 
+    const reactorStandbyMat = asteroidBundle.reactorStandby.material as MeshStandardMaterial
+    if (asteroidBundle.reactorStandby.visible && asteroidBundle.reactorStandby.count > 0) {
+      reactorStandbyMat.emissiveIntensity = 0.055 + 0.022 * Math.sin(now * 0.00048)
+    }
+
     const hubMat = asteroidBundle.hub.material as MeshStandardMaterial
     if (asteroidBundle.hub.visible && asteroidBundle.hub.count > 0) {
       hubMat.emissiveIntensity = 0.52 + 0.12 * Math.sin(now * 0.00072)
@@ -4954,7 +5138,7 @@ function tick(): void {
           camera.position,
         )
       }
-      refreshLaserRockHighlightColors()
+      refreshLaserRockHighlightColors(viewChanged)
     } else if (fuseActive) {
       if (viewChanged) {
         sortDepthOverlayRockInstancesByViewDistance(
@@ -4965,7 +5149,7 @@ function tick(): void {
           camera.position,
         )
       }
-      refreshExplosiveFuseRockColors()
+      refreshExplosiveFuseRockColors(viewChanged)
     } else if (lifterChargeActive) {
       if (viewChanged) {
         sortDepthOverlayRockInstancesByViewDistance(
@@ -4976,7 +5160,7 @@ function tick(): void {
           camera.position,
         )
       }
-      refreshLifterRockColors()
+      refreshLifterRockColors(viewChanged)
     } else if (viewChanged || rockInstanceColorsDirty) {
       if (viewChanged) {
         sortDepthOverlayRockInstancesByViewDistance(
@@ -4987,7 +5171,7 @@ function tick(): void {
           camera.position,
         )
       }
-      reapplyAllRockColorsNoLaser()
+      reapplyAllRockColorsNoLaser(viewChanged)
       rockInstanceColorsDirty = false
     }
   } else {
@@ -5005,6 +5189,12 @@ function tick(): void {
   }
   perfMark('roid-depth-overlay-end')
   perfMeasure('roid-depth-overlay', 'roid-depth-overlay-start', 'roid-depth-overlay-end')
+
+  const wallAutosave = Date.now()
+  if (wallAutosave - lastPlayerProgressSaveWallMs >= 5000) {
+    lastPlayerProgressSaveWallMs = wallAutosave
+    savePlayerProgressNow()
+  }
 
   perfMark('roid-render-start')
   starTintComposer.composer.render()
@@ -5037,5 +5227,8 @@ if (!loadGameStartTipsDismissed()) {
     gameStartTipsModal.show()
   })
 }
+
+/** After pointer/laser input state exists — `replaceAsteroidMesh` reads those flags. */
+tryApplySavedPlayerProgress()
 
 tick()

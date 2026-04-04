@@ -1,7 +1,12 @@
+import {
+  clearAmbientVoiceCeilingMeters,
+  wireAmbientVoiceCeilingMeters,
+} from './audioMeters'
 import { getAudioContext, resumeAudioContext, isAudioContextReady } from './audioContext'
 import { getMusicPostChainInput } from './masterOutputChain'
 import {
   type AsteroidMusicDebug,
+  type AsteroidMusicVoiceDebug,
   ASTEROID_MUSIC_VOICE_COUNT,
   applyVoiceMacrosToVoices,
 } from './asteroidMusicDebug'
@@ -36,6 +41,11 @@ const CHORUS_MAX_DELAY_SEC = 0.06
  */
 const MUSIC_VOICE_GAIN_SCALE = 0.1
 
+/**
+ * Max allowed worst-case `vca.gain` (DC 0.5 + aligned tremolo layers). Above this, `levelGain` is scaled down.
+ */
+const VCA_GAIN_PEAK_CAP = 1.5
+
 /** Pre-delay into convolver (music wet path). */
 const REVERB_MAX_PRE_DELAY_SEC = 0.15
 /** Wet feedback loop delay (after convolver). */
@@ -50,6 +60,12 @@ const PRE_DELAY_JIT_SPEED_HZ_MIN = 1e-8
 const PRE_DELAY_JIT_MAIN_HEADROOM_HZ = 1e-10
 
 const PRE_SHAPER_CURVE = makePreShaperCurve()
+
+/**
+ * Per-voice soft ceiling after `levelGain`, before the shared `masterGain` bus.
+ * Reuses `PRE_SHAPER_CURVE` (tanh) so stacked VCA + filter peaks do not hit chorus/drive hot.
+ */
+const VOICE_OUTPUT_OVERSAMPLE: OverSampleType = '2x'
 
 export function countStructureVoxelsForMusic(cells: readonly { kind: string }[]): number {
   let n = 0
@@ -67,6 +83,17 @@ function midiToHz(m: number): number {
 /** Avoids Web Audio `setValueAtTime(NaN)` which throws. */
 function audioFinite(n: number, fallback: number): number {
   return typeof n === 'number' && Number.isFinite(n) ? n : fallback
+}
+
+/** Worst-case peak `vca.gain` (aligned sines); depth mapping matches tick / graph wiring. */
+function estimateVcaGainPeak(vd: AsteroidMusicVoiceDebug): number {
+  const d1 = Math.max(0, audioFinite(vd.ampLfoDepth, 0))
+  const t1 = Math.min(1, d1 / 1.6)
+  const d2 = Math.max(0, audioFinite(vd.ampLfo2Depth, 0))
+  const t2 = Math.min(1, d2 / 1.6)
+  const fastD = Math.min(1.6, Math.max(0, audioFinite(vd.fastAmpLfoDepth, 0)))
+  const fastSwing = 0.4 * (fastD / 1.6)
+  return 0.5 + 0.5 * t1 + 0.5 * t2 + fastSwing
 }
 
 /** Deterministic [0, 1) — same style as `u01` in asteroidMusicDebug; varies by seed + salt. */
@@ -188,6 +215,8 @@ type VoiceNodes = {
   carrier: OscillatorNode
   carrierDetuned: OscillatorNode
   pitchBandpass: BiquadFilterNode
+  /** After `pitchBandpass`; bandpass path only uses `voicePitchBandpassPostGainDb`, reese keeps unity. */
+  pitchBandpassOutGain: GainNode
   bpDryGain: GainNode
   bpWetGain: GainNode
   toneLowpass: BiquadFilterNode
@@ -210,6 +239,8 @@ type VoiceNodes = {
   panLfo: OscillatorNode
   panLfoDepth: GainNode
   levelGain: GainNode
+  /** Soft peak limit per voice before summing into `masterGain`. */
+  voiceCeiling: WaveShaperNode
 }
 
 type BusFxNodes = {
@@ -494,6 +525,9 @@ export function createAsteroidAmbientMusic(options: {
   }
 
   function dispose(): void {
+    if (import.meta.env.DEV) {
+      clearAmbientVoiceCeilingMeters()
+    }
     stopVoices()
     disposeBus()
     try {
@@ -974,6 +1008,8 @@ export function createAsteroidAmbientMusic(options: {
         )
         const driveGain = 1 + drive * 4
         v.reeseDriveGain.gain.setValueAtTime(driveGain, t)
+        v.pitchBandpassOutGain.gain.cancelScheduledValues(t)
+        v.pitchBandpassOutGain.gain.setValueAtTime(1, t)
       } else {
         const bpOn = d.voicePitchBandpassEnabled === true
         if (v.pitchBandpass.type !== 'bandpass') {
@@ -985,8 +1021,23 @@ export function createAsteroidAmbientMusic(options: {
         )
         const centerHz = audioFinite(hzOut * 2 ** (semi / 12), hzOut)
         setVoiceParamIfChanged(lastSentAtVoice.pitchBpHz, i, centerHz, v.pitchBandpass.frequency, t, 1e-3)
-        const bpQ = Math.min(30, Math.max(0.25, busNum(d as AsteroidMusicDebug, 'voicePitchBandpassQ', 5)))
+        const bwHz = Math.max(
+          0,
+          busNum(d as AsteroidMusicDebug, 'voicePitchBandpassBandwidthHz', 0),
+        )
+        let bpQ: number
+        if (bwHz > 0 && centerHz > 1e-6) {
+          bpQ = Math.min(30, Math.max(0.25, centerHz / bwHz))
+        } else {
+          bpQ = Math.min(30, Math.max(0.25, busNum(d as AsteroidMusicDebug, 'voicePitchBandpassQ', 5)))
+        }
         setVoiceParamIfChanged(lastSentAtVoice.pitchBpQ, i, bpQ, v.pitchBandpass.Q, t, 1e-5)
+        const postDb = Math.min(
+          24,
+          Math.max(-24, busNum(d as AsteroidMusicDebug, 'voicePitchBandpassPostGainDb', 0)),
+        )
+        v.pitchBandpassOutGain.gain.cancelScheduledValues(t)
+        v.pitchBandpassOutGain.gain.setValueAtTime(10 ** (postDb / 20), t)
         v.bpDryGain.gain.setValueAtTime(bpOn ? 0 : 1, t)
         v.bpWetGain.gain.setValueAtTime(bpOn ? 1 : 0, t)
 
@@ -1163,7 +1214,9 @@ export function createAsteroidAmbientMusic(options: {
         }
       }
 
-      v.levelGain.gain.setValueAtTime(audioFinite(smoothedVoiceGain[i], 0), t)
+      const gMax = estimateVcaGainPeak(vd)
+      const headroom = Math.min(1, VCA_GAIN_PEAK_CAP / Math.max(gMax, 1e-6))
+      v.levelGain.gain.setValueAtTime(audioFinite(smoothedVoiceGain[i], 0) * headroom, t)
     }
   }
 
@@ -1485,12 +1538,18 @@ export function createAsteroidAmbientMusic(options: {
       const levelGain = c.createGain()
       levelGain.gain.value = 0
 
+      const voiceCeiling = c.createWaveShaper()
+      voiceCeiling.curve = PRE_SHAPER_CURVE
+      voiceCeiling.oversample = VOICE_OUTPUT_OVERSAMPLE
+
       const pitchBandpass = c.createBiquadFilter()
       pitchBandpass.type = 'bandpass'
       pitchBandpass.Q.value = Math.min(
         30,
         Math.max(0.25, busNum(getDebug(), 'voicePitchBandpassQ', 5)),
       )
+      const pitchBandpassOutGain = c.createGain()
+      pitchBandpassOutGain.gain.value = 1
       const toneLowpass = c.createBiquadFilter()
       toneLowpass.type = 'lowpass'
       toneLowpass.frequency.value = c.sampleRate * 0.48
@@ -1513,7 +1572,8 @@ export function createAsteroidAmbientMusic(options: {
       if (i === reeseIndexAtBuild) {
         carrierDetuned.connect(pitchBandpass)
       }
-      pitchBandpass.connect(toneLowpass)
+      pitchBandpass.connect(pitchBandpassOutGain)
+      pitchBandpassOutGain.connect(toneLowpass)
       toneLowpass.connect(bpWetGain)
       if (isReeseAtBuild) {
         bpWetGain.connect(reeseDriveGain)
@@ -1523,7 +1583,8 @@ export function createAsteroidAmbientMusic(options: {
         bpWetGain.connect(vca)
       }
       vca.connect(levelGain)
-      levelGain.connect(stereoPanner)
+      levelGain.connect(voiceCeiling)
+      voiceCeiling.connect(stereoPanner)
       stereoPanner.connect(masterGain)
 
       ampLfo.connect(lfoDepth)
@@ -1550,6 +1611,7 @@ export function createAsteroidAmbientMusic(options: {
         carrier,
         carrierDetuned,
         pitchBandpass,
+        pitchBandpassOutGain,
         bpDryGain,
         bpWetGain,
         toneLowpass,
@@ -1572,7 +1634,15 @@ export function createAsteroidAmbientMusic(options: {
         panLfo,
         panLfoDepth,
         levelGain,
+        voiceCeiling,
       })
+    }
+
+    if (import.meta.env.DEV) {
+      wireAmbientVoiceCeilingMeters(
+        c,
+        voices.map((v) => ({ levelGain: v.levelGain, voiceCeiling: v.voiceCeiling })),
+      )
     }
 
     startOscillatorAtPhase(chorusLfo, c, randomLfoPhase01())

@@ -129,6 +129,8 @@ export interface VoxelCell {
   bulkComposition?: Record<RootResourceId, number>
   /** Spectral rare-lode field strength at generation (0–1); preserved on processed matter from parent rock. */
   rareLodeStrength01?: number
+  /** When true, this reactor does not contribute to global energy generation (toggle with Reactor tool). */
+  reactorDisabled?: boolean
   /** When true, this hub does not pull or spend energy (toggle with Hub tool). */
   hubDisabled?: boolean
   /** When true, this refinery does not process tallies or spend energy (toggle with Refinery tool). */

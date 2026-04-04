@@ -58,6 +58,8 @@ export interface SettingsMenuOptions {
   /** Opens the game tips modal (Settings panel). */
   onOpenTips?: () => void
   onRegenerate: () => void
+  /** Clear persisted run + regenerate (Settings primary actions). */
+  onResetSavedProgress?: () => void
   onLightAngleChange: (azimuthDeg: number, elevationDeg: number) => void
   initialAzimuthDeg: number
   initialElevationDeg: number
@@ -99,6 +101,9 @@ export interface SettingsMenuOptions {
   /** Debug: multiplies simulated delta time per frame (persisted). */
   initialGameSpeedMult?: number
   onGameSpeedMultChange?: (mult: number) => void
+  /** Debug: multiplies computronium unlock-point accrual only (persisted). */
+  initialComputroniumResearchSpeedMult?: number
+  onComputroniumResearchSpeedMultChange?: (mult: number) => void
   /** Key light azimuth/elevation while rotating (authoritative azimuth lives in main). */
   sunLightDebug: SunLightDebug
   getSunAnglesForLight: () => { az: number; el: number }
@@ -167,9 +172,30 @@ const GAMEPLAY_BALANCE_SLIDERS: SliderRow[] = [
   { key: 'energyBaseCapMult', label: 'Base energy capacity', min: 0.1, max: 4, step: 0.05 },
   { key: 'batteryStorageMult', label: 'Energy per battery voxel', min: 0.1, max: 4, step: 0.05 },
   { key: 'passiveIncomeMult', label: 'Replicator passive income', min: 0.1, max: 4, step: 0.05 },
-  { key: 'orbitalLaserEnergyMult', label: 'Mining laser energy cost', min: 0.1, max: 4, step: 0.05 },
-  { key: 'excavatingLaserEnergyMult', label: 'Excavating laser energy cost', min: 0.1, max: 4, step: 0.05 },
-  { key: 'scannerEnergyMult', label: 'Scanner satellite energy cost', min: 0.1, max: 4, step: 0.05 },
+  {
+    key: 'orbitalLaserEnergyBase',
+    label: 'Mining laser — base energy per satellite (before × mult × sats)',
+    min: 0.05,
+    max: 32,
+    step: 0.05,
+  },
+  { key: 'orbitalLaserEnergyMult', label: 'Mining laser energy cost (× mult)', min: 0.1, max: 4, step: 0.05 },
+  {
+    key: 'excavatingLaserEnergyBase',
+    label: 'Excavating laser — base energy per satellite (before × mult × sats)',
+    min: 0.05,
+    max: 32,
+    step: 0.05,
+  },
+  { key: 'excavatingLaserEnergyMult', label: 'Excavating laser energy cost (× mult)', min: 0.1, max: 4, step: 0.05 },
+  {
+    key: 'scannerEnergyBase',
+    label: 'Scanner — base energy for 3³ neighborhood (before volume × mult × sats)',
+    min: 0.05,
+    max: 24,
+    step: 0.05,
+  },
+  { key: 'scannerEnergyMult', label: 'Scanner satellite energy cost (× mult)', min: 0.1, max: 4, step: 0.05 },
   {
     key: 'scannerScanRadius',
     label: 'Scanner neighborhood radius (voxels from center)',
@@ -254,6 +280,20 @@ const GAMEPLAY_BALANCE_SLIDERS: SliderRow[] = [
     step: 0.05,
   },
   {
+    key: 'hubEnergyPerPull',
+    label: 'Hub energy per pull (one PM unit or one root)',
+    min: 0.04,
+    max: 2,
+    step: 0.02,
+  },
+  {
+    key: 'hubMaxEnergySpendBasePerSec',
+    label: 'Hub max energy / sec — base (before × hub count × hub max mult)',
+    min: 0,
+    max: 48,
+    step: 0.25,
+  },
+  {
     key: 'refineryProcessMult',
     label: 'Refinery process throughput (roots → second-order in tallies)',
     min: 0.1,
@@ -266,6 +306,20 @@ const GAMEPLAY_BALANCE_SLIDERS: SliderRow[] = [
     min: 0.1,
     max: 4,
     step: 0.05,
+  },
+  {
+    key: 'refineryEnergyPerRoot',
+    label: 'Refinery energy per root unit processed',
+    min: 0.04,
+    max: 2,
+    step: 0.02,
+  },
+  {
+    key: 'refineryMaxEnergySpendBasePerSec',
+    label: 'Refinery max energy / sec — base (before × refinery count × refinery max mult)',
+    min: 0,
+    max: 48,
+    step: 0.25,
   },
   {
     key: 'computroniumEnergyDrainPerSecPerCell',
@@ -826,6 +880,7 @@ export function createSettingsMenu(
     leadingActions,
     onOpenTips,
     onRegenerate,
+    onResetSavedProgress,
     onLightAngleChange,
     initialAzimuthDeg,
     initialElevationDeg,
@@ -855,6 +910,8 @@ export function createSettingsMenu(
     onMaxPixelRatioCapChange,
     initialGameSpeedMult = 1,
     onGameSpeedMultChange,
+    initialComputroniumResearchSpeedMult = 1,
+    onComputroniumResearchSpeedMultChange,
     sunLightDebug,
     getSunAnglesForLight,
     onSunLightDebugChange,
@@ -901,6 +958,20 @@ export function createSettingsMenu(
   regenBtn.type = 'button'
   regenBtn.className = 'settings-primary'
   regenBtn.textContent = 'Regenerate asteroid'
+
+  let resetSavedBtn: HTMLButtonElement | undefined
+  if (onResetSavedProgress) {
+    const resetSaved = onResetSavedProgress
+    resetSavedBtn = document.createElement('button')
+    resetSavedBtn.type = 'button'
+    resetSavedBtn.className = 'settings-secondary'
+    resetSavedBtn.textContent = 'Reset saved game'
+    resetSavedBtn.title = 'Delete autosaved progress and start a fresh asteroid'
+    resetSavedBtn.setAttribute('aria-label', 'Reset saved game')
+    resetSavedBtn.addEventListener('click', () => {
+      resetSaved()
+    })
+  }
 
   const azRow = document.createElement('div')
   azRow.className = 'settings-row'
@@ -1688,7 +1759,31 @@ export function createSettingsMenu(
       simSpeedValue.textContent = n.toFixed(2)
       onGameSpeedMultChange?.(n)
     })
-    sectionSimulation.append(simSpeedHeading, simSpeedHint, simSpeedRow)
+
+    const researchSpeedRow = document.createElement('div')
+    researchSpeedRow.className = 'settings-row settings-debug-row'
+    const researchSpeedLabel = document.createElement('label')
+    researchSpeedLabel.className = 'settings-label'
+    researchSpeedLabel.htmlFor = 'settings-computronium-research-speed-mult'
+    researchSpeedLabel.textContent = 'Computronium research speed'
+    const researchSpeedInput = document.createElement('input')
+    researchSpeedInput.type = 'range'
+    researchSpeedInput.id = 'settings-computronium-research-speed-mult'
+    researchSpeedInput.min = '0.05'
+    researchSpeedInput.max = '100'
+    researchSpeedInput.step = '0.05'
+    researchSpeedInput.value = String(initialComputroniumResearchSpeedMult)
+    const researchSpeedValue = document.createElement('span')
+    researchSpeedValue.className = 'settings-secondary'
+    researchSpeedValue.textContent = initialComputroniumResearchSpeedMult.toFixed(2)
+    researchSpeedRow.append(researchSpeedLabel, researchSpeedInput, researchSpeedValue)
+    researchSpeedInput.addEventListener('input', () => {
+      const n = Number(researchSpeedInput.value)
+      researchSpeedValue.textContent = n.toFixed(2)
+      onComputroniumResearchSpeedMultChange?.(n)
+    })
+
+    sectionSimulation.append(simSpeedHeading, simSpeedHint, simSpeedRow, researchSpeedRow)
   }
 
   function setAzimuthSliderDisabled(disabled: boolean): void {
@@ -3742,6 +3837,32 @@ export function createSettingsMenu(
     },
   })
 
+  appendMusicSliderRow(sectionAsteroidMusic, {
+    id: 'settings-music-voice-pitch-bandpass-bw-hz',
+    label: 'Pitch bandpass only — bandwidth override (Hz); 0 = use Q above',
+    min: 0,
+    max: 4000,
+    step: 1,
+    decimals: 0,
+    read: () => asteroidMusicDebug.voicePitchBandpassBandwidthHz,
+    write: (n) => {
+      asteroidMusicDebug.voicePitchBandpassBandwidthHz = Math.max(0, n)
+    },
+  })
+
+  appendMusicSliderRow(sectionAsteroidMusic, {
+    id: 'settings-music-voice-pitch-bandpass-post-gain-db',
+    label: 'Pitch bandpass only — post filter gain (dB); reese path unchanged',
+    min: -24,
+    max: 24,
+    step: 0.5,
+    decimals: 1,
+    read: () => asteroidMusicDebug.voicePitchBandpassPostGainDb,
+    write: (n) => {
+      asteroidMusicDebug.voicePitchBandpassPostGainDb = n
+    },
+  })
+
   const macroMusicHeading = document.createElement('h4')
   macroMusicHeading.className = 'settings-debug-subheading'
   macroMusicHeading.style.marginTop = '14px'
@@ -5246,6 +5367,7 @@ export function createSettingsMenu(
     heading,
     ...(tipsRow ? [tipsRow] : []),
     regenBtn,
+    ...(resetSavedBtn ? [resetSavedBtn] : []),
     azRow,
     elRow,
     musicVolRow,

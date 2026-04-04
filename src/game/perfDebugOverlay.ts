@@ -1,6 +1,6 @@
 import type { WebGLRenderer } from 'three'
 
-import { formatAudioMeterLines } from './audioMeters'
+import { formatAudioMeterLinesHtml } from './audioMeters'
 
 const STORAGE_KEY = 'roid-perf-debug-overlay-visible'
 
@@ -84,6 +84,14 @@ function formatMsCell(ms: number, threshold = 0.01): string {
   return ms.toFixed(2).padStart(8)
 }
 
+function escapePerfPlainLine(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
 export function createPerfDebugOverlay(container: HTMLElement): PerfDebugOverlayHandle {
   const el = document.createElement('div')
   el.className = 'perf-debug-overlay'
@@ -146,33 +154,41 @@ export function createPerfDebugOverlay(container: HTMLElement): PerfDebugOverlay
           ? rawSpikeMax
           : emaSpikeMs + EMA_SPIKE_ALPHA * (rawSpikeMax - emaSpikeMs)
 
-      const lines: string[] = []
-      lines.push(`frame ${emaFrameMs.toFixed(1)} ms  avg ${avgMs.toFixed(1)} ms  ~${fps.toFixed(0)} fps`)
-      lines.push(`spike ~${emaSpikeMs.toFixed(1)} ms  (${spikeWindowMs} ms window, smoothed)`)
+      const parts: string[] = []
+      parts.push(escapePerfPlainLine(`frame ${emaFrameMs.toFixed(1)} ms  avg ${avgMs.toFixed(1)} ms  ~${fps.toFixed(0)} fps`))
+      parts.push(
+        escapePerfPlainLine(`spike ~${emaSpikeMs.toFixed(1)} ms  (${spikeWindowMs} ms window, smoothed)`),
+      )
 
       const ri = renderer.info.render
       const mem = renderer.info.memory
-      lines.push(`draw ${String(ri.calls).padStart(5)} calls   ${String(ri.triangles).padStart(8)} tris`)
-      lines.push(`mem ${String(mem.geometries).padStart(5)} geo   ${String(mem.textures).padStart(5)} tex`)
-      lines.push(
-        `cells ${String(voxels).padStart(6)}   debris ${String(debrisShards).padStart(5)}   dross ${String(drossClusters).padStart(4)}`,
+      parts.push(
+        escapePerfPlainLine(`draw ${String(ri.calls).padStart(5)} calls   ${String(ri.triangles).padStart(8)} tris`),
+      )
+      parts.push(escapePerfPlainLine(`mem ${String(mem.geometries).padStart(5)} geo   ${String(mem.textures).padStart(5)} tex`))
+      parts.push(
+        escapePerfPlainLine(
+          `cells ${String(voxels).padStart(6)}   debris ${String(debrisShards).padStart(5)}   dross ${String(drossClusters).padStart(4)}`,
+        ),
       )
 
       const heap = (performance as unknown as { memory?: { usedJSHeapSize?: number } }).memory
-      lines.push(
-        heap?.usedJSHeapSize !== undefined
-          ? `JS heap ${(heap.usedJSHeapSize / (1024 * 1024)).toFixed(2).padStart(7)} MB`
-          : 'JS heap       n/a',
+      parts.push(
+        escapePerfPlainLine(
+          heap?.usedJSHeapSize !== undefined
+            ? `JS heap ${(heap.usedJSHeapSize / (1024 * 1024)).toFixed(2).padStart(7)} MB`
+            : 'JS heap       n/a',
+        ),
       )
 
-      lines.push(...formatAudioMeterLines())
-      lines.push('— ms (fixed rows; — = <0.01) —')
+      parts.push(...formatAudioMeterLinesHtml())
+      parts.push(escapePerfPlainLine('— ms (fixed rows; — = <0.01) —'))
       for (const name of MEASURE_NAMES) {
         const ms = sumMeasureDurations(name)
-        lines.push(`${padMeasureLabel(name)} ${formatMsCell(ms)}`)
+        parts.push(escapePerfPlainLine(`${padMeasureLabel(name)} ${formatMsCell(ms)}`))
       }
 
-      el.textContent = lines.join('\n')
+      el.innerHTML = parts.join('<br>')
     },
   }
 }

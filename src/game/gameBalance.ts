@@ -16,10 +16,16 @@ export interface GameBalance {
   energyBaseCapMult: number
   batteryStorageMult: number
   passiveIncomeMult: number
+  /** Base energy per mining-laser use, before `orbitalLaserEnergyMult` × satellite count. */
+  orbitalLaserEnergyBase: number
   /** Multiplier on mining laser energy per voxel converted. */
   orbitalLaserEnergyMult: number
+  /** Base energy per excavating-laser damage tick, before `excavatingLaserEnergyMult` × satellite count. */
+  excavatingLaserEnergyBase: number
   /** Multiplier on excavating laser energy per damage tick. */
   excavatingLaserEnergyMult: number
+  /** Base scan energy for default 3³ neighborhood, before volume ratio × `scannerEnergyMult` × sats. */
+  scannerEnergyBase: number
   /** Multiplier on scanner satellite energy per neighborhood scan. */
   scannerEnergyMult: number
   /**
@@ -54,12 +60,24 @@ export interface GameBalance {
    * Multiplier on max hub energy draw per second, scaled by **active** hub count.
    */
   hubMaxEnergySpendMult: number
+  /** Energy per successful hub pull (one PM unit or one root from the network). */
+  hubEnergyPerPull: number
+  /**
+   * Max hub energy draw per second before `hubMaxEnergySpendMult` (× active hub count).
+   */
+  hubMaxEnergySpendBasePerSec: number
   /** Multiplier on refinery processing throughput (global root tallies → children). */
   refineryProcessMult: number
   /**
    * Multiplier on max refinery energy draw per second for tally processing, scaled by **active** refinery count.
    */
   refineryMaxProcessEnergySpendMult: number
+  /** Energy per refinery root unit processed from global tallies. */
+  refineryEnergyPerRoot: number
+  /**
+   * Max refinery processing energy per second before `refineryMaxProcessEnergySpendMult` (× active refinery count).
+   */
+  refineryMaxEnergySpendBasePerSec: number
   /**
    * Softlock guard: max additional `surfaceIces` units a single active refinery may generate per second
    * when processing any root (independent of the main recipe yields).
@@ -330,8 +348,11 @@ export const defaultGameBalance: GameBalance = {
   batteryStorageMult: 1,
   /** Mature replicator passive trickle; slight bump to offset replicator placement cost. */
   passiveIncomeMult: 1.05,
+  orbitalLaserEnergyBase: 2.75,
   orbitalLaserEnergyMult: 1,
+  excavatingLaserEnergyBase: 2.1,
   excavatingLaserEnergyMult: 1,
+  scannerEnergyBase: 1.65,
   scannerEnergyMult: 1,
   scannerScanRadius: 1,
   explosiveChargeBlastRadius: 1,
@@ -343,8 +364,12 @@ export const defaultGameBalance: GameBalance = {
   impactCraterCountMax: 10,
   hubPullMult: 1,
   hubMaxEnergySpendMult: 1,
+  hubEnergyPerPull: 0.32,
+  hubMaxEnergySpendBasePerSec: 5,
   refineryProcessMult: 1,
   refineryMaxProcessEnergySpendMult: 1,
+  refineryEnergyPerRoot: 0.32,
+  refineryMaxEnergySpendBasePerSec: 5,
   refineryIceBackfillPerSecPerRefinery: 0.015,
   refineryIceBackfillMaxPerSecGlobal: 0.06,
   laserZapVolumeMult: 1,
@@ -508,8 +533,11 @@ export const GAME_BALANCE_KEYS: readonly (keyof GameBalance)[] = [
   'energyBaseCapMult',
   'batteryStorageMult',
   'passiveIncomeMult',
+  'orbitalLaserEnergyBase',
   'orbitalLaserEnergyMult',
+  'excavatingLaserEnergyBase',
   'excavatingLaserEnergyMult',
+  'scannerEnergyBase',
   'scannerEnergyMult',
   'scannerScanRadius',
   'explosiveChargeBlastRadius',
@@ -521,8 +549,12 @@ export const GAME_BALANCE_KEYS: readonly (keyof GameBalance)[] = [
   'impactCraterCountMax',
   'hubPullMult',
   'hubMaxEnergySpendMult',
+  'hubEnergyPerPull',
+  'hubMaxEnergySpendBasePerSec',
   'refineryProcessMult',
   'refineryMaxProcessEnergySpendMult',
+  'refineryEnergyPerRoot',
+  'refineryMaxEnergySpendBasePerSec',
   'refineryIceBackfillPerSecPerRefinery',
   'refineryIceBackfillMaxPerSecGlobal',
   'laserZapVolumeMult',
@@ -670,6 +702,17 @@ const COMPUTRONIUM_BALANCE_CLAMP: Partial<Record<keyof GameBalance, { min: numbe
   computroniumPointsPerStage: { min: 8, max: 400 },
 }
 
+/** Base energy costs before per-tool multipliers (lasers, scanner) and hub/refinery throughput caps. */
+const ENERGY_SPEND_BASE_CLAMP: Partial<Record<keyof GameBalance, { min: number; max: number }>> = {
+  orbitalLaserEnergyBase: { min: 0.05, max: 32 },
+  excavatingLaserEnergyBase: { min: 0.05, max: 32 },
+  scannerEnergyBase: { min: 0.05, max: 24 },
+  hubEnergyPerPull: { min: 0.04, max: 2 },
+  hubMaxEnergySpendBasePerSec: { min: 0, max: 48 },
+  refineryEnergyPerRoot: { min: 0.04, max: 2 },
+  refineryMaxEnergySpendBasePerSec: { min: 0, max: 48 },
+}
+
 const IMPACT_CRATER_RANGE_MULT_CLAMP = { min: 0, max: 3 }
 
 export function clampBalanceField(key: keyof GameBalance, v: number): number {
@@ -690,6 +733,8 @@ export function clampBalanceField(key: keyof GameBalance, v: number): number {
   if (depth) return Math.min(depth.max, Math.max(depth.min, v))
   const comp = COMPUTRONIUM_BALANCE_CLAMP[key]
   if (comp) return Math.min(comp.max, Math.max(comp.min, v))
+  const energySpend = ENERGY_SPEND_BASE_CLAMP[key]
+  if (energySpend) return Math.min(energySpend.max, Math.max(energySpend.min, v))
   if (key === 'impactCraterRangeMult') {
     return Math.min(
       IMPACT_CRATER_RANGE_MULT_CLAMP.max,

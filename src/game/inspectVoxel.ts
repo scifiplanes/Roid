@@ -1,7 +1,12 @@
 import { cellParticipatesInDepthReveal } from './depthScannerSim'
 import { compositeDensityMidpointGcm3 } from './compositionYields'
 import { formatScanRefinedPreviewLine } from './scanVisualization'
-import { RESOURCE_DEFS, RESOURCE_IDS_ORDERED, type ResourceId } from './resources'
+import {
+  formatResourceAmountForHud,
+  RESOURCE_DEFS,
+  RESOURCE_IDS_ORDERED,
+  type ResourceId,
+} from './resources'
 import { SEED_DEFS } from './seedDefs'
 import type { SeedRecipeSlot } from './seedInventory'
 import type { VoxelCell } from './voxelState'
@@ -16,9 +21,9 @@ function formatPartialStoreLine(store: Partial<Record<ResourceId, number>> | und
   const parts: string[] = []
   for (const id of RESOURCE_IDS_ORDERED) {
     const raw = store[id]
-    if (raw === undefined || !Number.isFinite(raw)) continue
-    const n = Math.floor(raw)
-    if (n > 0) parts.push(`${RESOURCE_DEFS[id].hudAbbrev} ${n}`)
+    if (raw === undefined || !Number.isFinite(raw) || raw <= 0) continue
+    const s = formatResourceAmountForHud(raw)
+    if (s !== '0') parts.push(`${RESOURCE_DEFS[id].hudAbbrev} ${s}`)
   }
   return parts.length > 0 ? parts.join(' · ') : null
 }
@@ -57,6 +62,9 @@ export function voxelHasCompositionIntel(cell: VoxelCell): boolean {
 
 function pushStructureNotes(lines: string[], cell: VoxelCell, nowMs: number): void {
   const { kind } = cell
+  if (kind === 'reactor') {
+    lines.push(cell.reactorDisabled === true ? 'Reactor: off' : 'Reactor: on')
+  }
   if (kind === 'hub') {
     lines.push(cell.hubDisabled === true ? 'Hub: standby' : 'Hub: active')
   }

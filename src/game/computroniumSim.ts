@@ -291,6 +291,8 @@ export function stepComputronium(
   flags: LaserUnlockApply,
   balance: GameBalance,
   order: readonly ComputroniumUnlockId[],
+  /** Debug: multiplies unlock-point gain only (default 1). */
+  researchSpeedMult = 1,
 ): boolean {
   if (dtSec <= 0) return false
 
@@ -302,7 +304,11 @@ export function stepComputronium(
       desiredDrain > 0 ? trySpendEnergy(energyState, desiredDrain) : 0
     const scale = desiredDrain > 0 ? spent / desiredDrain : 0
     unlockPoints.current +=
-      balance.computroniumUnlockPointsPerSecPerCell * active * dtSec * scale
+      balance.computroniumUnlockPointsPerSecPerCell *
+      active *
+      dtSec *
+      scale *
+      researchSpeedMult
   }
 
   return syncResearchFlagsFromPoints(order, unlockPoints.current, balance, flags)

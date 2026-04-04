@@ -1,6 +1,8 @@
 import type { LaserToolUiPhase } from '../game/computroniumSim'
+import type { RefineryRecipeSelection } from '../game/refineryRecipeUnlock'
 import { resourceHudCssColorForId } from '../game/resourceOriginDepth'
 import {
+  formatResourceAmountForHud,
   refinementYieldForParent,
   RESOURCE_DEFS,
   RESOURCE_IDS_ORDERED,
@@ -47,6 +49,9 @@ function shortSelectedRecipeTooltip(root: RootResourceId): string {
   return `One ${def.displayName.toLowerCase()} per step when in stock. Yields: ${yields}.`
 }
 
+const IDLE_SELECTED_TOOLTIP =
+  'Refineries stay enabled structurally but do not consume global root stock or produce refined materials.'
+
 function fillRecipeTickers(
   wrap: HTMLElement,
   root: RootResourceId,
@@ -58,7 +63,7 @@ function fillRecipeTickers(
   const rootSpan = document.createElement('span')
   rootSpan.className = 'matter-hud-res'
   rootSpan.style.color = resourceHudCssColorForId(root)
-  rootSpan.textContent = `${RESOURCE_DEFS[root].hudAbbrev} ${Math.floor(tallies[root] ?? 0)}`
+  rootSpan.textContent = `${RESOURCE_DEFS[root].hudAbbrev} ${formatResourceAmountForHud(tallies[root] ?? 0)}`
   frag.appendChild(rootSpan)
 
   const children = childIdsForRecipe(root)
@@ -69,7 +74,7 @@ function fillRecipeTickers(
       const span = document.createElement('span')
       span.className = 'matter-hud-res'
       span.style.color = resourceHudCssColorForId(cid)
-      span.textContent = `${RESOURCE_DEFS[cid].hudAbbrev} ${Math.floor(tallies[cid] ?? 0)}`
+      span.textContent = `${RESOURCE_DEFS[cid].hudAbbrev} ${formatResourceAmountForHud(tallies[cid] ?? 0)}`
       frag.appendChild(span)
       if (i < children.length - 1) frag.appendChild(document.createTextNode(', '))
     }
@@ -79,14 +84,14 @@ function fillRecipeTickers(
 }
 
 function phaseSignature(getRecipePhase: (root: RootResourceId) => LaserToolUiPhase): string {
-  return ROOT_RESOURCE_IDS.map((r) => getRecipePhase(r)).join('')
+  return `${ROOT_RESOURCE_IDS.map((r) => getRecipePhase(r)).join('')}i`
 }
 
 export function createRefineryRecipesModal(
   container: HTMLElement,
   options: {
-    getSelectedRoot: () => RootResourceId
-    onSelectRoot: (root: RootResourceId) => void
+    getSelectedRoot: () => RefineryRecipeSelection
+    onSelectRoot: (root: RefineryRecipeSelection) => void
     getRecipePhase: (root: RootResourceId) => LaserToolUiPhase
     /** Current tallies — same numbers as the matter HUD / resources display. */
     getResourceTallies: () => Record<ResourceId, number>
@@ -133,28 +138,51 @@ export function createRefineryRecipesModal(
   rootEl.append(scrim, panel)
   container.appendChild(rootEl)
 
-  type RowMeta = {
-    root: RootResourceId
-    phase: LaserToolUiPhase
-    nameEl: HTMLSpanElement
-    row: HTMLDivElement
-    tickersWrap: HTMLDivElement
-  }
+  type RowMeta =
+    | {
+        kind: 'idle'
+        row: HTMLDivElement
+        tickersWrap: HTMLDivElement
+      }
+    | {
+        kind: 'root'
+        root: RootResourceId
+        phase: LaserToolUiPhase
+        nameEl: HTMLSpanElement
+        row: HTMLDivElement
+        tickersWrap: HTMLDivElement
+      }
   let rowMeta: RowMeta[] = []
   let lastPhaseSig = ''
+
+  function fillIdleTickers(wrap: HTMLElement): void {
+    wrap.replaceChildren()
+    const dash = document.createElement('span')
+    dash.className = 'refinery-recipes-modal-sub refinery-recipes-modal-sub--muted'
+    dash.textContent = '—'
+    wrap.appendChild(dash)
+  }
 
   function applyRowTitles(): void {
     const sel = options.getSelectedRoot()
     for (const r of rowMeta) {
-      const isSel = r.root === sel && r.phase === 'unlocked'
-      r.row.title = isSel ? shortSelectedRecipeTooltip(r.root) : ''
+      if (r.kind === 'idle') {
+        r.row.title = sel === 'idle' ? IDLE_SELECTED_TOOLTIP : ''
+      } else {
+        const isSel = r.root === sel && r.phase === 'unlocked'
+        r.row.title = isSel ? shortSelectedRecipeTooltip(r.root) : ''
+      }
     }
   }
 
   function updateAllTickers(): void {
     const tallies = options.getResourceTallies()
     for (const r of rowMeta) {
-      fillRecipeTickers(r.tickersWrap, r.root, tallies)
+      if (r.kind === 'idle') {
+        fillIdleTickers(r.tickersWrap)
+      } else {
+        fillRecipeTickers(r.tickersWrap, r.root, tallies)
+      }
     }
   }
 
@@ -163,6 +191,49 @@ export function createRefineryRecipesModal(
     rowMeta = []
     const selected = options.getSelectedRoot()
     const tallies = options.getResourceTallies()
+
+    {
+      const row = document.createElement('div')
+      row.className = 'refinery-recipes-modal-row'
+      const radio = document.createElement('input')
+      radio.type = 'radio'
+      radio.name = 'refinery-recipe-root'
+      radio.value = 'idle'
+      radio.className = 'refinery-recipes-modal-radio'
+      radio.checked = selected === 'idle'
+      const inputId = 'refinery-recipe-idle'
+      radio.id = inputId
+
+      const label = document.createElement('label')
+      label.className = 'refinery-recipes-modal-label'
+      label.htmlFor = inputId
+
+      const nameEl = document.createElement('span')
+      nameEl.className = 'refinery-recipes-modal-name'
+      nameEl.textContent = 'Idle'
+
+      const sub = document.createElement('div')
+      sub.className = 'refinery-recipes-modal-sub refinery-recipes-modal-sub--muted'
+      sub.textContent = 'No root consumption or refined output'
+
+      const tickersWrap = document.createElement('div')
+      tickersWrap.className = 'refinery-recipes-modal-tickers'
+      fillIdleTickers(tickersWrap)
+
+      label.append(nameEl, sub, tickersWrap)
+      row.append(radio, label)
+
+      radio.addEventListener('change', () => {
+        if (radio.checked) {
+          options.onSelectRoot('idle')
+          applyRowTitles()
+        }
+      })
+
+      list.appendChild(row)
+      rowMeta.push({ kind: 'idle', row, tickersWrap })
+    }
+
     for (const rid of ROOT_RESOURCE_IDS) {
       const phase = options.getRecipePhase(rid)
       const row = document.createElement('div')
@@ -222,7 +293,7 @@ export function createRefineryRecipesModal(
       })
 
       list.appendChild(row)
-      rowMeta.push({ root: rid, phase, nameEl, row, tickersWrap })
+      rowMeta.push({ kind: 'root', root: rid, phase, nameEl, row, tickersWrap })
     }
     lastPhaseSig = phaseSignature(options.getRecipePhase)
     applyRowTitles()
@@ -235,7 +306,7 @@ export function createRefineryRecipesModal(
     const now = performance.now()
     let anyResearching = false
     for (const r of rowMeta) {
-      if (r.phase === 'researching') anyResearching = true
+      if (r.kind === 'root' && r.phase === 'researching') anyResearching = true
     }
     if (!anyResearching) {
       lastGibberishMs = 0
@@ -244,7 +315,7 @@ export function createRefineryRecipesModal(
     if (lastGibberishMs === 0 || now - lastGibberishMs >= GIBBERISH_INTERVAL_MS) {
       lastGibberishMs = now
       for (const r of rowMeta) {
-        if (r.phase === 'researching') {
+        if (r.kind === 'root' && r.phase === 'researching') {
           const n = Math.max(8, RESOURCE_DEFS[r.root].displayName.length)
           r.nameEl.textContent = randomGibberish(n)
         }

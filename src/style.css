@@ -150,7 +150,9 @@ body {
   padding: 6px 8px;
   z-index: 12;
   pointer-events: none;
-  white-space: pre;
+  /* pre-wrap: keep explicit newlines from code; wrap long meter rows instead of clipping */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   font-family: var(--ui-font);
   font-size: 11px;
   line-height: 1.35;
@@ -159,6 +161,25 @@ body {
   background: rgba(0, 0, 40, 0.82);
   border: 1px solid var(--nc-border);
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+}
+
+.perf-debug-overlay .perf-meter-warn {
+  color: #e6c200;
+  /* no font-weight change — bold reflows wrapped voice rows and jitters the overlay */
+}
+
+.perf-debug-overlay .perf-meter-clip {
+  color: #ff5555;
+}
+
+/* Voice meter rows: one line each, monospace so digit updates do not reflow layout */
+.perf-debug-overlay .perf-vc-line {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
 }
 
 .debris-bracket {

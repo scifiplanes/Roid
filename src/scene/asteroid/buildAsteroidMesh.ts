@@ -4,6 +4,7 @@ import {
   Color,
   DynamicDrawUsage,
   Group,
+  InstancedBufferAttribute,
   InstancedMesh,
   Matrix4,
   MeshStandardMaterial,
@@ -34,19 +35,16 @@ import {
   addDepthOverlayAlphaMulAttribute,
   flagDepthOverlayAlphaMulNeedsUpdate,
   patchMeshStandardMaterialDepthOverlayAlphaMul,
-  setDepthOverlayAlphaMulAt,
 } from './depthOverlayAlphaInstancing'
 import {
   addScanOverlayUnlitAttribute,
   flagScanOverlayUnlitNeedsUpdate,
   patchMeshStandardMaterialScanOverlayUnlit,
-  setScanOverlayUnlitAt,
 } from './scanOverlayUnlitInstancing'
 import {
   addScanEmissiveSuppressAttribute,
   flagScanEmissiveSuppressNeedsUpdate,
   patchMeshStandardMaterialScanEmissiveSuppress,
-  setScanEmissiveSuppressAt,
 } from './scanEmissiveInstancing'
 import {
   addConstructionPulseEmissiveAttribute,
@@ -73,6 +71,7 @@ export interface AsteroidRenderBundle {
   solid: InstancedMesh
   eating: InstancedMesh
   reactor: InstancedMesh
+  reactorStandby: InstancedMesh
   battery: InstancedMesh
   hub: InstancedMesh
   hubStandby: InstancedMesh
@@ -84,6 +83,51 @@ export interface AsteroidRenderBundle {
   computroniumStandby: InstancedMesh
   /** Optional external group attached for debris visuals. */
   debrisGroup?: Group
+}
+
+const INSTANCE_ATTR_FLOAT_EPS = 1e-4
+
+const ATTR_SCAN_EMISSIVE_SUPPRESS = 'scanEmissiveSuppress'
+const ATTR_DEPTH_OVERLAY_ALPHA_MUL = 'depthOverlayAlphaMul'
+const ATTR_SCAN_OVERLAY_UNLIT = 'scanOverlayUnlit'
+const ATTR_CONSTRUCTION_PULSE = 'constructionPulseEmissive'
+
+/** When debug toggles suppress off, buffers that held 0 must be reset to 1. */
+let prevSuppressEmissiveWhenScannedForRockReapply: boolean | null = null
+
+function writeInstancedAttrFloatIfChanged(
+  mesh: InstancedMesh,
+  attrName: string,
+  index: number,
+  value: number,
+  orderChanged: boolean,
+  useEpsilon: boolean,
+): boolean {
+  const attr = mesh.geometry.getAttribute(attrName) as InstancedBufferAttribute | undefined
+  if (!attr) return false
+  const arr = attr.array as Float32Array
+  const prev = arr[index]!
+  if (orderChanged) {
+    arr[index] = value
+    return true
+  }
+  if (useEpsilon) {
+    if (Math.abs(prev - value) > INSTANCE_ATTR_FLOAT_EPS) {
+      arr[index] = value
+      return true
+    }
+  } else if (prev !== value) {
+    arr[index] = value
+    return true
+  }
+  return false
+}
+
+function fillScanEmissiveSuppressToOne(mesh: InstancedMesh): void {
+  const attr = mesh.geometry.getAttribute(ATTR_SCAN_EMISSIVE_SUPPRESS) as InstancedBufferAttribute | undefined
+  if (!attr) return
+  ;(attr.array as Float32Array).fill(1)
+  attr.needsUpdate = true
 }
 
 const _m = new Matrix4()
@@ -98,12 +142,6 @@ const _surfaceHeatmap = new Color()
 const _debugLodeHeatmap = new Color()
 const _depthSortInv = new Matrix4()
 const _depthSortCamLocal = new Vector3()
-const _dbgRepS0 = new Color()
-const _dbgRepS1 = new Color()
-const _dbgRepS2 = new Color()
-const _dbgRepS3 = new Color()
-const _dbgRepS4 = new Color()
-let __dbgRepPipeLastMs = 0
 /** Reused for depth-overlay back-to-front sort (avoid slice + O(n log n) world transforms in comparator). */
 const _depthSortDistSq: number[] = []
 const _depthSortOrder: number[] = []
@@ -383,6 +421,14 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
     emissiveIntensity: 1.05,
   })
 
+  const reactorStandbyMat = new MeshStandardMaterial({
+    color: new Color(0.04, 0.12, 0.11),
+    metalness: 0.14,
+    roughness: 0.68,
+    emissive: new Color(0.04, 0.22, 0.2),
+    emissiveIntensity: 0.065,
+  })
+
   const batteryMat = new MeshStandardMaterial({
     color: new Color(0.04, 0.08, 0.22),
     metalness: 0.18,
@@ -458,6 +504,7 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
   for (const m of [
     eatingMat,
     reactorMat,
+    reactorStandbyMat,
     batteryMat,
     hubMat,
     hubStandbyMat,
@@ -499,6 +546,7 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
   const solidIndices: number[] = []
   const eatingIndices: number[] = []
   const reactorIndices: number[] = []
+  const reactorStandbyIndices: number[] = []
   const batteryIndices: number[] = []
   const hubIndices: number[] = []
   const hubStandbyIndices: number[] = []
@@ -511,6 +559,7 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
   for (let i = 0; i < n; i++) {
     const cell = cells[i]
     if (isEatingRock(cell) || isScourgeCell(cell) || isLocustCell(cell)) eatingIndices.push(i)
+    else if (cell.kind === 'reactor' && cell.reactorDisabled === true) reactorStandbyIndices.push(i)
     else if (cell.kind === 'reactor') reactorIndices.push(i)
     else if (cell.kind === 'battery') batteryIndices.push(i)
     else if (cell.kind === 'depthScanner') depthScannerIndices.push(i)
@@ -528,6 +577,7 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
   const ns = Math.max(solidIndices.length, 1)
   const ne = Math.max(eatingIndices.length, 1)
   const nr = Math.max(reactorIndices.length, 1)
+  const nrs = Math.max(reactorStandbyIndices.length, 1)
   const nb = Math.max(batteryIndices.length, 1)
   const nd = Math.max(depthScannerIndices.length, 1)
   const nmd = Math.max(miningDroneIndices.length, 1)
@@ -548,6 +598,12 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
 
   const eating = emissiveInstancedMesh(eatingMat, ne, 'asteroid-eating', eatingIndices, true)
   const reactor = emissiveInstancedMesh(reactorMat, nr, 'asteroid-reactor', reactorIndices)
+  const reactorStandby = emissiveInstancedMesh(
+    reactorStandbyMat,
+    nrs,
+    'asteroid-reactor-standby',
+    reactorStandbyIndices,
+  )
   const battery = emissiveInstancedMesh(batteryMat, nb, 'asteroid-battery', batteryIndices)
   const depthScanner = emissiveInstancedMesh(depthScannerMat, nd, 'asteroid-depth-scanner', depthScannerIndices)
   const miningDrone = emissiveInstancedMesh(miningDroneMat, nmd, 'asteroid-mining-drone', miningDroneIndices)
@@ -577,6 +633,7 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
       solid,
       eating,
       reactor,
+      reactorStandby,
       battery,
       depthScanner,
       miningDrone,
@@ -593,6 +650,7 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
     }
     eating.visible = false
     reactor.visible = false
+    reactorStandby.visible = false
     battery.visible = false
     depthScanner.visible = false
     miningDrone.visible = false
@@ -687,6 +745,27 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
         reactor.setColorAt(j, _c)
       }
       reactor.count = reactorIndices.length
+    }
+
+    if (reactorStandbyIndices.length === 0) {
+      _m.makeScale(0, 0, 0)
+      reactorStandby.setMatrixAt(0, _m)
+      reactorStandby.setColorAt(0, _c)
+      reactorStandby.count = 0
+      reactorStandby.visible = false
+    } else {
+      reactorStandby.visible = true
+      for (let j = 0; j < reactorStandbyIndices.length; j++) {
+        const i = reactorStandbyIndices[j]
+        const cell = cells[i]
+        setCellMatrixAt(reactorStandby, j, cell, center, voxelSize)
+        const { pos } = cell
+        const h = (pos.x * 73 + pos.y * 137 + pos.z * 211) >>> 0
+        const tv = 0.72 + (h % 40) / 200
+        _c.copy(baseColor).multiply(reactorTint).multiplyScalar(tv * 0.55)
+        reactorStandby.setColorAt(j, _c)
+      }
+      reactorStandby.count = reactorStandbyIndices.length
     }
 
     const batteryTint = getKindDef('battery').colorTint
@@ -893,6 +972,8 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
     if (eating.instanceColor) eating.instanceColor.needsUpdate = true
     reactor.instanceMatrix.needsUpdate = true
     if (reactor.instanceColor) reactor.instanceColor.needsUpdate = true
+    reactorStandby.instanceMatrix.needsUpdate = true
+    if (reactorStandby.instanceColor) reactorStandby.instanceColor.needsUpdate = true
     battery.instanceMatrix.needsUpdate = true
     if (battery.instanceColor) battery.instanceColor.needsUpdate = true
     depthScanner.instanceMatrix.needsUpdate = true
@@ -919,6 +1000,7 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
     solid,
     eating,
     reactor,
+    reactorStandby,
     battery,
     depthScanner,
     miningDrone,
@@ -936,6 +1018,7 @@ export function buildAsteroidMesh(cells: VoxelCell[], options: AsteroidMeshOptio
     solid,
     eating,
     reactor,
+    reactorStandby,
     battery,
     hub,
     hubStandby,
@@ -984,6 +1067,7 @@ function scanEmissiveSuppressFactor(
  * `debugLodeDisplayIndices` — when set, those rock voxels are drawn with the lode-density heatmap (debug).
  * `highlightPulse` (e.g. 0.78–1 from sin) modulates brightness while the mouse is held or fuse blinks.
  * `onlyCellIndices` — when set, only those voxel indices get new colors (others unchanged); use for small dirty sets when overlays match full reapply semantics.
+ * `rockInstancesResortedThisFrame` — set true when `sortDepthOverlayRockInstancesByViewDistance` ran this frame before this call (instance slots permuted).
  */
 export function reapplyRockInstanceColors(
   bundle: AsteroidRenderBundle,
@@ -998,12 +1082,14 @@ export function reapplyRockInstanceColors(
   discoveryScanHintIndices: ReadonlySet<number> | null = null,
   debugLodeDisplayIndices: ReadonlySet<number> | null = null,
   onlyCellIndices: ReadonlySet<number> | null = null,
+  rockInstancesResortedThisFrame = false,
 ): void {
   const { baseColor = new Color(0.58, 0.52, 0.48) } = options
   const {
     solid,
     eating,
     reactor,
+    reactorStandby,
     battery,
     depthScanner,
     miningDrone,
@@ -1014,41 +1100,35 @@ export function reapplyRockInstanceColors(
     refinery,
     refineryStandby,
   } = bundle
+  const orderChanged = rockInstancesResortedThisFrame
   const nowMs = performance.now()
+
+  const suppressEmissive = scanDebug.suppressEmissiveWhenScanned === true
+  const resetScanSuppressToOne =
+    prevSuppressEmissiveWhenScannedForRockReapply === true && !suppressEmissive
+  prevSuppressEmissiveWhenScannedForRockReapply = suppressEmissive
+
+  if (resetScanSuppressToOne) {
+    for (const m of [
+      eating,
+      reactor,
+      reactorStandby,
+      battery,
+      depthScanner,
+      miningDrone,
+      hub,
+      hubStandby,
+      refinery,
+      refineryStandby,
+      computronium,
+      computroniumStandby,
+    ]) {
+      fillScanEmissiveSuppressToOne(m)
+    }
+  }
 
   const skipCell = (cellIndex: number): boolean =>
     onlyCellIndices !== null && !onlyCellIndices.has(cellIndex)
-
-  // #region agent log
-  let skippedRepInPartial = 0
-  const solidIdxForPartial = solid.userData.cellIndices as number[] | undefined
-  if (onlyCellIndices && solidIdxForPartial && solid.count > 0) {
-    for (let jj = 0; jj < solid.count; jj++) {
-      const ii = solidIdxForPartial[jj]!
-      if (cells[ii]?.kind === 'replicator' && !onlyCellIndices.has(ii)) skippedRepInPartial++
-    }
-    if (skippedRepInPartial > 0) {
-      fetch('http://127.0.0.1:7481/ingest/59523295-7b3c-4817-bc0e-c2fb63f1b767', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '601a65' },
-        body: JSON.stringify({
-          sessionId: '601a65',
-          runId: 'post-fix',
-          hypothesisId: 'H2',
-          location: 'buildAsteroidMesh.ts:reapplyRockInstanceColors:partial',
-          message: 'partial reapply skipped some replicator voxels',
-          data: {
-            onlySize: onlyCellIndices.size,
-            skippedRepInPartial,
-            depthOverlayActive,
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {})
-    }
-  }
-  let repTraceIdx: number | null = null
-  // #endregion
 
   function applyDepthOverlayRock(cell: VoxelCell, out: Color, cellIndex: number): void {
     // Infected fronts should cut through depth-overlay blending.
@@ -1201,14 +1281,14 @@ export function reapplyRockInstanceColors(
 
   const solidIndices = solid.userData.cellIndices as number[] | undefined
   if (solidIndices && solid.count > 0) {
+    let solidDepthMulDirty = orderChanged
+    let solidScanUnlitDirty = orderChanged
+    let solidConstructionDirty = orderChanged
     for (let j = 0; j < solid.count; j++) {
       const i = solidIndices[j]
       if (skipCell(i)) continue
       const cell = cells[i]
       const { pos, kind } = cell
-      // #region agent log
-      if (kind === 'replicator' && repTraceIdx === null) repTraceIdx = i
-      // #endregion
       const rockDef = getKindDef(kind)
       let kindTint = rockDef.colorTint
       const h = (pos.x * 73 + pos.y * 137 + pos.z * 211) >>> 0
@@ -1227,9 +1307,6 @@ export function reapplyRockInstanceColors(
       } else if (kind === 'replicator') {
         const rgb = getReplicatorDisplayColor(cell)
         _c.setRGB(rgb.r, rgb.g, rgb.b)
-        // #region agent log
-        if (i === repTraceIdx) _dbgRepS0.copy(_c)
-        // #endregion
       } else if (kind === 'processedMatter') {
         _c.setRGB(0, 0, 0)
       } else {
@@ -1243,86 +1320,51 @@ export function reapplyRockInstanceColors(
       if (kind === 'replicator') {
         applyMatureReplicatorSolidTintMods(cell, _c, nowMs)
       }
-      // #region agent log
-      if (i === repTraceIdx) _dbgRepS1.copy(_c)
-      // #endregion
       applyDepthOverlayRock(cell, _c, i)
-      // #region agent log
-      if (i === repTraceIdx) _dbgRepS2.copy(_c)
-      // #endregion
       applyScannerTint(i, _c)
-      // #region agent log
-      if (i === repTraceIdx) _dbgRepS3.copy(_c)
-      // #endregion
       applyDiscoveryScanHint(i, _c)
       applyDebugLodeDisplay(i, cell, _c)
       applyLaserHighlight(i, _c)
-      // #region agent log
-      if (i === repTraceIdx) {
-        _dbgRepS4.copy(_c)
-        const t = performance.now()
-        if (t - __dbgRepPipeLastMs > 420) {
-          __dbgRepPipeLastMs = t
-          fetch('http://127.0.0.1:7481/ingest/59523295-7b3c-4817-bc0e-c2fb63f1b767', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '601a65' },
-            body: JSON.stringify({
-              sessionId: '601a65',
-              runId: 'post-fix',
-              hypothesisId: 'H1-H3',
-              location: 'buildAsteroidMesh.ts:reapplyRockInstanceColors:solid-pipeline',
-              message: 'first solid replicator color pipeline',
-              data: {
-                cellIndex: i,
-                afterBaseRgb: { r: _dbgRepS0.r, g: _dbgRepS0.g, b: _dbgRepS0.b },
-                afterMatureModsRgb: { r: _dbgRepS1.r, g: _dbgRepS1.g, b: _dbgRepS1.b },
-                afterDepthRgb: { r: _dbgRepS2.r, g: _dbgRepS2.g, b: _dbgRepS2.b },
-                afterScannerRgb: { r: _dbgRepS3.r, g: _dbgRepS3.g, b: _dbgRepS3.b },
-                finalAfterLaserRgb: { r: _dbgRepS4.r, g: _dbgRepS4.g, b: _dbgRepS4.b },
-                scanTint: scannerTints?.has(i) ?? false,
-              },
-              timestamp: Date.now(),
-            }),
-          }).catch(() => {})
-        }
-      }
-      // #endregion
       solid.setColorAt(j, _c)
       const discoveryHint = discoveryScanHintIndices?.has(i) ?? false
-      setScanOverlayUnlitAt(solid, j, discoveryHint ? 1 : 0)
-      setDepthOverlayAlphaMulAt(
-        solid,
-        j,
+      const unlitV = discoveryHint ? 1 : 0
+      if (writeInstancedAttrFloatIfChanged(solid, ATTR_SCAN_OVERLAY_UNLIT, j, unlitV, orderChanged, false)) {
+        solidScanUnlitDirty = true
+      }
+      const depthMul =
         discoveryHint && depthOverlayActive
           ? Math.min(1 / Math.max(0.05, gameBalance.depthOverlayRockOpacity), 25)
-          : computeDepthOverlayAlphaMulForCell(cell),
-      )
-      setConstructionPulseEmissiveAt(
-        solid,
-        j,
-        kind === 'replicator' ? replicatorConstructionPulseStrength(cell, nowMs) : 0,
-      )
+          : computeDepthOverlayAlphaMulForCell(cell)
+      if (writeInstancedAttrFloatIfChanged(solid, ATTR_DEPTH_OVERLAY_ALPHA_MUL, j, depthMul, orderChanged, true)) {
+        solidDepthMulDirty = true
+      }
+      const pulseV = kind === 'replicator' ? replicatorConstructionPulseStrength(cell, nowMs) : 0
+      if (writeInstancedAttrFloatIfChanged(solid, ATTR_CONSTRUCTION_PULSE, j, pulseV, orderChanged, true)) {
+        solidConstructionDirty = true
+      }
     }
     if (onlyCellIndices !== null) {
       for (let j = 0; j < solid.count; j++) {
         const i = solidIndices[j]!
         const cell = cells[i]
-        setConstructionPulseEmissiveAt(
-          solid,
-          j,
-          cell.kind === 'replicator' ? replicatorConstructionPulseStrength(cell, nowMs) : 0,
-        )
+        const pulseV = cell.kind === 'replicator' ? replicatorConstructionPulseStrength(cell, nowMs) : 0
+        if (writeInstancedAttrFloatIfChanged(solid, ATTR_CONSTRUCTION_PULSE, j, pulseV, orderChanged, true)) {
+          solidConstructionDirty = true
+        }
       }
     }
     if (solid.instanceColor) solid.instanceColor.needsUpdate = true
-    flagDepthOverlayAlphaMulNeedsUpdate(solid)
-    flagScanOverlayUnlitNeedsUpdate(solid)
-    flagConstructionPulseEmissiveNeedsUpdate(solid)
+    if (solidDepthMulDirty) flagDepthOverlayAlphaMulNeedsUpdate(solid)
+    if (solidScanUnlitDirty) flagScanOverlayUnlitNeedsUpdate(solid)
+    if (solidConstructionDirty) flagConstructionPulseEmissiveNeedsUpdate(solid)
   }
 
   if (eating.visible && eating.count > 0) {
     const eatingIndices = eating.userData.cellIndices as number[] | undefined
     if (eatingIndices) {
+      let eatingScanSuppressDirty = orderChanged && suppressEmissive
+      let eatingDepthMulDirty = orderChanged
+      let eatingScanUnlitDirty = orderChanged
       for (let j = 0; j < eating.count; j++) {
         const i = eatingIndices[j]
         if (skipCell(i)) continue
@@ -1363,21 +1405,29 @@ export function reapplyRockInstanceColors(
         applyDebugLodeDisplay(i, cell, _c)
         applyLaserHighlight(i, _c)
         eating.setColorAt(j, _c)
-        setScanEmissiveSuppressAt(eating, j, scanEmissiveSuppressFactor(i, scannerTints, scanDebug))
+        if (suppressEmissive) {
+          const sup = scanEmissiveSuppressFactor(i, scannerTints, scanDebug)
+          if (writeInstancedAttrFloatIfChanged(eating, ATTR_SCAN_EMISSIVE_SUPPRESS, j, sup, orderChanged, false)) {
+            eatingScanSuppressDirty = true
+          }
+        }
         const discoveryHintE = discoveryScanHintIndices?.has(i) ?? false
-        setScanOverlayUnlitAt(eating, j, discoveryHintE ? 1 : 0)
-        setDepthOverlayAlphaMulAt(
-          eating,
-          j,
+        const unlitE = discoveryHintE ? 1 : 0
+        if (writeInstancedAttrFloatIfChanged(eating, ATTR_SCAN_OVERLAY_UNLIT, j, unlitE, orderChanged, false)) {
+          eatingScanUnlitDirty = true
+        }
+        const depthMulE =
           discoveryHintE && depthOverlayActive
             ? Math.min(1 / Math.max(0.05, gameBalance.depthOverlayRockOpacity), 25)
-            : computeDepthOverlayAlphaMulForCell(cell),
-        )
+            : computeDepthOverlayAlphaMulForCell(cell)
+        if (writeInstancedAttrFloatIfChanged(eating, ATTR_DEPTH_OVERLAY_ALPHA_MUL, j, depthMulE, orderChanged, true)) {
+          eatingDepthMulDirty = true
+        }
       }
       if (eating.instanceColor) eating.instanceColor.needsUpdate = true
-      flagScanEmissiveSuppressNeedsUpdate(eating)
-      flagDepthOverlayAlphaMulNeedsUpdate(eating)
-      flagScanOverlayUnlitNeedsUpdate(eating)
+      if (eatingScanSuppressDirty) flagScanEmissiveSuppressNeedsUpdate(eating)
+      if (eatingDepthMulDirty) flagDepthOverlayAlphaMulNeedsUpdate(eating)
+      if (eatingScanUnlitDirty) flagScanOverlayUnlitNeedsUpdate(eating)
     }
   }
 
@@ -1385,6 +1435,7 @@ export function reapplyRockInstanceColors(
   if (reactor.visible && reactor.count > 0) {
     const reactorIndices = reactor.userData.cellIndices as number[] | undefined
     if (reactorIndices) {
+      let reactorScanSuppressDirty = orderChanged && suppressEmissive
       for (let j = 0; j < reactor.count; j++) {
         const i = reactorIndices[j]
         if (skipCell(i)) continue
@@ -1396,10 +1447,44 @@ export function reapplyRockInstanceColors(
         applyScannerTint(i, _c)
         applyLaserHighlight(i, _c)
         reactor.setColorAt(j, _c)
-        setScanEmissiveSuppressAt(reactor, j, scanEmissiveSuppressFactor(i, scannerTints, scanDebug))
+        if (suppressEmissive) {
+          const sup = scanEmissiveSuppressFactor(i, scannerTints, scanDebug)
+          if (writeInstancedAttrFloatIfChanged(reactor, ATTR_SCAN_EMISSIVE_SUPPRESS, j, sup, orderChanged, false)) {
+            reactorScanSuppressDirty = true
+          }
+        }
       }
       if (reactor.instanceColor) reactor.instanceColor.needsUpdate = true
-      flagScanEmissiveSuppressNeedsUpdate(reactor)
+      if (reactorScanSuppressDirty) flagScanEmissiveSuppressNeedsUpdate(reactor)
+    }
+  }
+
+  if (reactorStandby.visible && reactorStandby.count > 0) {
+    const reactorStandbyIndices = reactorStandby.userData.cellIndices as number[] | undefined
+    if (reactorStandbyIndices) {
+      let reactorStandbyScanSuppressDirty = orderChanged && suppressEmissive
+      for (let j = 0; j < reactorStandby.count; j++) {
+        const i = reactorStandbyIndices[j]
+        if (skipCell(i)) continue
+        const cell = cells[i]
+        const { pos } = cell
+        const hh = (pos.x * 73 + pos.y * 137 + pos.z * 211) >>> 0
+        const tv = 0.72 + (hh % 40) / 200
+        _c.copy(baseColor).multiply(reactorTint).multiplyScalar(tv * 0.55)
+        applyScannerTint(i, _c)
+        applyLaserHighlight(i, _c)
+        reactorStandby.setColorAt(j, _c)
+        if (suppressEmissive) {
+          const sup = scanEmissiveSuppressFactor(i, scannerTints, scanDebug)
+          if (
+            writeInstancedAttrFloatIfChanged(reactorStandby, ATTR_SCAN_EMISSIVE_SUPPRESS, j, sup, orderChanged, false)
+          ) {
+            reactorStandbyScanSuppressDirty = true
+          }
+        }
+      }
+      if (reactorStandby.instanceColor) reactorStandby.instanceColor.needsUpdate = true
+      if (reactorStandbyScanSuppressDirty) flagScanEmissiveSuppressNeedsUpdate(reactorStandby)
     }
   }
 
@@ -1407,6 +1492,7 @@ export function reapplyRockInstanceColors(
   if (battery.visible && battery.count > 0) {
     const batteryIndices = battery.userData.cellIndices as number[] | undefined
     if (batteryIndices) {
+      let batteryScanSuppressDirty = orderChanged && suppressEmissive
       for (let j = 0; j < battery.count; j++) {
         const i = batteryIndices[j]
         if (skipCell(i)) continue
@@ -1418,10 +1504,15 @@ export function reapplyRockInstanceColors(
         applyScannerTint(i, _c)
         applyLaserHighlight(i, _c)
         battery.setColorAt(j, _c)
-        setScanEmissiveSuppressAt(battery, j, scanEmissiveSuppressFactor(i, scannerTints, scanDebug))
+        if (suppressEmissive) {
+          const sup = scanEmissiveSuppressFactor(i, scannerTints, scanDebug)
+          if (writeInstancedAttrFloatIfChanged(battery, ATTR_SCAN_EMISSIVE_SUPPRESS, j, sup, orderChanged, false)) {
+            batteryScanSuppressDirty = true
+          }
+        }
       }
       if (battery.instanceColor) battery.instanceColor.needsUpdate = true
-      flagScanEmissiveSuppressNeedsUpdate(battery)
+      if (batteryScanSuppressDirty) flagScanEmissiveSuppressNeedsUpdate(battery)
     }
   }
 
@@ -1429,6 +1520,7 @@ export function reapplyRockInstanceColors(
   if (depthScanner.visible && depthScanner.count > 0) {
     const depthScannerIndices = depthScanner.userData.cellIndices as number[] | undefined
     if (depthScannerIndices) {
+      let depthScannerScanSuppressDirty = orderChanged && suppressEmissive
       for (let j = 0; j < depthScanner.count; j++) {
         const i = depthScannerIndices[j]
         if (skipCell(i)) continue
@@ -1440,10 +1532,17 @@ export function reapplyRockInstanceColors(
         applyScannerTint(i, _c)
         applyLaserHighlight(i, _c)
         depthScanner.setColorAt(j, _c)
-        setScanEmissiveSuppressAt(depthScanner, j, scanEmissiveSuppressFactor(i, scannerTints, scanDebug))
+        if (suppressEmissive) {
+          const sup = scanEmissiveSuppressFactor(i, scannerTints, scanDebug)
+          if (
+            writeInstancedAttrFloatIfChanged(depthScanner, ATTR_SCAN_EMISSIVE_SUPPRESS, j, sup, orderChanged, false)
+          ) {
+            depthScannerScanSuppressDirty = true
+          }
+        }
       }
       if (depthScanner.instanceColor) depthScanner.instanceColor.needsUpdate = true
-      flagScanEmissiveSuppressNeedsUpdate(depthScanner)
+      if (depthScannerScanSuppressDirty) flagScanEmissiveSuppressNeedsUpdate(depthScanner)
     }
   }
 
@@ -1451,6 +1550,7 @@ export function reapplyRockInstanceColors(
   if (miningDrone.visible && miningDrone.count > 0) {
     const miningDroneIndices = miningDrone.userData.cellIndices as number[] | undefined
     if (miningDroneIndices) {
+      let miningDroneScanSuppressDirty = orderChanged && suppressEmissive
       for (let j = 0; j < miningDrone.count; j++) {
         const i = miningDroneIndices[j]
         if (skipCell(i)) continue
@@ -1462,10 +1562,15 @@ export function reapplyRockInstanceColors(
         applyScannerTint(i, _c)
         applyLaserHighlight(i, _c)
         miningDrone.setColorAt(j, _c)
-        setScanEmissiveSuppressAt(miningDrone, j, scanEmissiveSuppressFactor(i, scannerTints, scanDebug))
+        if (suppressEmissive) {
+          const sup = scanEmissiveSuppressFactor(i, scannerTints, scanDebug)
+          if (writeInstancedAttrFloatIfChanged(miningDrone, ATTR_SCAN_EMISSIVE_SUPPRESS, j, sup, orderChanged, false)) {
+            miningDroneScanSuppressDirty = true
+          }
+        }
       }
       if (miningDrone.instanceColor) miningDrone.instanceColor.needsUpdate = true
-      flagScanEmissiveSuppressNeedsUpdate(miningDrone)
+      if (miningDroneScanSuppressDirty) flagScanEmissiveSuppressNeedsUpdate(miningDrone)
     }
   }
 
@@ -1473,6 +1578,7 @@ export function reapplyRockInstanceColors(
   if (hub.visible && hub.count > 0) {
     const hubIndices = hub.userData.cellIndices as number[] | undefined
     if (hubIndices) {
+      let hubScanSuppressDirty = orderChanged && suppressEmissive
       for (let j = 0; j < hub.count; j++) {
         const i = hubIndices[j]
         if (skipCell(i)) continue
@@ -1484,16 +1590,22 @@ export function reapplyRockInstanceColors(
         applyScannerTint(i, _c)
         applyLaserHighlight(i, _c)
         hub.setColorAt(j, _c)
-        setScanEmissiveSuppressAt(hub, j, scanEmissiveSuppressFactor(i, scannerTints, scanDebug))
+        if (suppressEmissive) {
+          const sup = scanEmissiveSuppressFactor(i, scannerTints, scanDebug)
+          if (writeInstancedAttrFloatIfChanged(hub, ATTR_SCAN_EMISSIVE_SUPPRESS, j, sup, orderChanged, false)) {
+            hubScanSuppressDirty = true
+          }
+        }
       }
       if (hub.instanceColor) hub.instanceColor.needsUpdate = true
-      flagScanEmissiveSuppressNeedsUpdate(hub)
+      if (hubScanSuppressDirty) flagScanEmissiveSuppressNeedsUpdate(hub)
     }
   }
 
   if (hubStandby.visible && hubStandby.count > 0) {
     const hubStandbyIndices = hubStandby.userData.cellIndices as number[] | undefined
     if (hubStandbyIndices) {
+      let hubStandbyScanSuppressDirty = orderChanged && suppressEmissive
       for (let j = 0; j < hubStandby.count; j++) {
         const i = hubStandbyIndices[j]
         if (skipCell(i)) continue
@@ -1505,10 +1617,15 @@ export function reapplyRockInstanceColors(
         applyScannerTint(i, _c)
         applyLaserHighlight(i, _c)
         hubStandby.setColorAt(j, _c)
-        setScanEmissiveSuppressAt(hubStandby, j, scanEmissiveSuppressFactor(i, scannerTints, scanDebug))
+        if (suppressEmissive) {
+          const sup = scanEmissiveSuppressFactor(i, scannerTints, scanDebug)
+          if (writeInstancedAttrFloatIfChanged(hubStandby, ATTR_SCAN_EMISSIVE_SUPPRESS, j, sup, orderChanged, false)) {
+            hubStandbyScanSuppressDirty = true
+          }
+        }
       }
       if (hubStandby.instanceColor) hubStandby.instanceColor.needsUpdate = true
-      flagScanEmissiveSuppressNeedsUpdate(hubStandby)
+      if (hubStandbyScanSuppressDirty) flagScanEmissiveSuppressNeedsUpdate(hubStandby)
     }
   }
 
@@ -1516,6 +1633,7 @@ export function reapplyRockInstanceColors(
   if (refinery.visible && refinery.count > 0) {
     const refineryIndices = refinery.userData.cellIndices as number[] | undefined
     if (refineryIndices) {
+      let refineryScanSuppressDirty = orderChanged && suppressEmissive
       for (let j = 0; j < refinery.count; j++) {
         const i = refineryIndices[j]
         if (skipCell(i)) continue
@@ -1527,16 +1645,22 @@ export function reapplyRockInstanceColors(
         applyScannerTint(i, _c)
         applyLaserHighlight(i, _c)
         refinery.setColorAt(j, _c)
-        setScanEmissiveSuppressAt(refinery, j, scanEmissiveSuppressFactor(i, scannerTints, scanDebug))
+        if (suppressEmissive) {
+          const sup = scanEmissiveSuppressFactor(i, scannerTints, scanDebug)
+          if (writeInstancedAttrFloatIfChanged(refinery, ATTR_SCAN_EMISSIVE_SUPPRESS, j, sup, orderChanged, false)) {
+            refineryScanSuppressDirty = true
+          }
+        }
       }
       if (refinery.instanceColor) refinery.instanceColor.needsUpdate = true
-      flagScanEmissiveSuppressNeedsUpdate(refinery)
+      if (refineryScanSuppressDirty) flagScanEmissiveSuppressNeedsUpdate(refinery)
     }
   }
 
   if (refineryStandby.visible && refineryStandby.count > 0) {
     const refineryStandbyIndices = refineryStandby.userData.cellIndices as number[] | undefined
     if (refineryStandbyIndices) {
+      let refineryStandbyScanSuppressDirty = orderChanged && suppressEmissive
       for (let j = 0; j < refineryStandby.count; j++) {
         const i = refineryStandbyIndices[j]
         if (skipCell(i)) continue
@@ -1548,10 +1672,17 @@ export function reapplyRockInstanceColors(
         applyScannerTint(i, _c)
         applyLaserHighlight(i, _c)
         refineryStandby.setColorAt(j, _c)
-        setScanEmissiveSuppressAt(refineryStandby, j, scanEmissiveSuppressFactor(i, scannerTints, scanDebug))
+        if (suppressEmissive) {
+          const sup = scanEmissiveSuppressFactor(i, scannerTints, scanDebug)
+          if (
+            writeInstancedAttrFloatIfChanged(refineryStandby, ATTR_SCAN_EMISSIVE_SUPPRESS, j, sup, orderChanged, false)
+          ) {
+            refineryStandbyScanSuppressDirty = true
+          }
+        }
       }
       if (refineryStandby.instanceColor) refineryStandby.instanceColor.needsUpdate = true
-      flagScanEmissiveSuppressNeedsUpdate(refineryStandby)
+      if (refineryStandbyScanSuppressDirty) flagScanEmissiveSuppressNeedsUpdate(refineryStandby)
     }
   }
 
@@ -1559,6 +1690,7 @@ export function reapplyRockInstanceColors(
   if (computronium.visible && computronium.count > 0) {
     const computroniumIndices = computronium.userData.cellIndices as number[] | undefined
     if (computroniumIndices) {
+      let computroniumScanSuppressDirty = orderChanged && suppressEmissive
       for (let j = 0; j < computronium.count; j++) {
         const i = computroniumIndices[j]
         if (skipCell(i)) continue
@@ -1570,16 +1702,22 @@ export function reapplyRockInstanceColors(
         applyScannerTint(i, _c)
         applyLaserHighlight(i, _c)
         computronium.setColorAt(j, _c)
-        setScanEmissiveSuppressAt(computronium, j, scanEmissiveSuppressFactor(i, scannerTints, scanDebug))
+        if (suppressEmissive) {
+          const sup = scanEmissiveSuppressFactor(i, scannerTints, scanDebug)
+          if (writeInstancedAttrFloatIfChanged(computronium, ATTR_SCAN_EMISSIVE_SUPPRESS, j, sup, orderChanged, false)) {
+            computroniumScanSuppressDirty = true
+          }
+        }
       }
       if (computronium.instanceColor) computronium.instanceColor.needsUpdate = true
-      flagScanEmissiveSuppressNeedsUpdate(computronium)
+      if (computroniumScanSuppressDirty) flagScanEmissiveSuppressNeedsUpdate(computronium)
     }
   }
 
   if (computroniumStandby.visible && computroniumStandby.count > 0) {
     const computroniumStandbyIndices = computroniumStandby.userData.cellIndices as number[] | undefined
     if (computroniumStandbyIndices) {
+      let computroniumStandbyScanSuppressDirty = orderChanged && suppressEmissive
       for (let j = 0; j < computroniumStandby.count; j++) {
         const i = computroniumStandbyIndices[j]
         if (skipCell(i)) continue
@@ -1591,10 +1729,24 @@ export function reapplyRockInstanceColors(
         applyScannerTint(i, _c)
         applyLaserHighlight(i, _c)
         computroniumStandby.setColorAt(j, _c)
-        setScanEmissiveSuppressAt(computroniumStandby, j, scanEmissiveSuppressFactor(i, scannerTints, scanDebug))
+        if (suppressEmissive) {
+          const sup = scanEmissiveSuppressFactor(i, scannerTints, scanDebug)
+          if (
+            writeInstancedAttrFloatIfChanged(
+              computroniumStandby,
+              ATTR_SCAN_EMISSIVE_SUPPRESS,
+              j,
+              sup,
+              orderChanged,
+              false,
+            )
+          ) {
+            computroniumStandbyScanSuppressDirty = true
+          }
+        }
       }
       if (computroniumStandby.instanceColor) computroniumStandby.instanceColor.needsUpdate = true
-      flagScanEmissiveSuppressNeedsUpdate(computroniumStandby)
+      if (computroniumStandbyScanSuppressDirty) flagScanEmissiveSuppressNeedsUpdate(computroniumStandby)
     }
   }
 }
@@ -1637,6 +1789,7 @@ export function disposeAsteroidBundle(bundle: AsteroidRenderBundle): void {
     bundle.solid,
     bundle.eating,
     bundle.reactor,
+    bundle.reactorStandby,
     bundle.battery,
     bundle.depthScanner,
     bundle.miningDrone,
@@ -1653,6 +1806,7 @@ export function disposeAsteroidBundle(bundle: AsteroidRenderBundle): void {
     bundle.solid.material,
     bundle.eating.material,
     bundle.reactor.material,
+    bundle.reactorStandby.material,
     bundle.battery.material,
     bundle.depthScanner.material,
     bundle.miningDrone.material,

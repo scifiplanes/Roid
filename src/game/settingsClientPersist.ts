@@ -29,6 +29,10 @@ import type { ColorSchemeId } from '../ui/colorScheme'
 import { COLOR_SCHEME_STORAGE_KEY, isColorSchemeId } from './colorSchemePrefs'
 import type { FontId } from '../ui/fontTheme'
 import { FONT_STORAGE_KEY, isFontId } from './fontPrefs'
+import {
+  clampComputroniumResearchSpeedMult,
+  COMPUTRONIUM_RESEARCH_SPEED_MULT_STORAGE_KEY,
+} from './computroniumResearchSpeedDebug'
 import { clampGameSpeedMult, GAME_SPEED_MULT_STORAGE_KEY } from './gameSpeedDebug'
 
 export const SUN_LIGHT_ANGLES_STORAGE_KEY = 'roid:sunLightAngles'
@@ -64,6 +68,8 @@ export interface SettingsClientPersistedV1 {
   fontId?: FontId
   /** Debug: multiplies simulated dt (1 = normal). */
   gameSpeedMult?: number
+  /** Debug: multiplies computronium unlock-point accrual only (1 = normal). */
+  computroniumResearchSpeedMult?: number
 }
 
 export interface SettingsClientRuntimeSnapshot {
@@ -83,6 +89,7 @@ export interface SettingsClientRuntimeSnapshot {
   colorScheme: ColorSchemeId
   fontId: FontId
   gameSpeedMult: number
+  computroniumResearchSpeedMult: number
 }
 
 let snapshotGetter: (() => SettingsClientRuntimeSnapshot) | null = null
@@ -114,6 +121,7 @@ export function buildSettingsClientPayload(s: SettingsClientRuntimeSnapshot): Se
     colorScheme: s.colorScheme,
     fontId: s.fontId,
     gameSpeedMult: s.gameSpeedMult,
+    computroniumResearchSpeedMult: s.computroniumResearchSpeedMult,
   }
 }
 
@@ -344,6 +352,15 @@ export function writeSettingsClientBundleToLocalStorage(
   const gsm = imported.gameSpeedMult
   if (typeof gsm === 'number' && Number.isFinite(gsm)) {
     putLocalStorageForBundleMode(mode, GAME_SPEED_MULT_STORAGE_KEY, String(clampGameSpeedMult(gsm)))
+  }
+
+  const crsm = imported.computroniumResearchSpeedMult
+  if (typeof crsm === 'number' && Number.isFinite(crsm)) {
+    putLocalStorageForBundleMode(
+      mode,
+      COMPUTRONIUM_RESEARCH_SPEED_MULT_STORAGE_KEY,
+      String(clampComputroniumResearchSpeedMult(crsm)),
+    )
   }
 }
 

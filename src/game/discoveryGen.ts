@@ -1,6 +1,12 @@
 import type { GameBalance } from './gameBalance'
 import { applyResearchStepsCompletedGrant, type ComputroniumUnlockId, type LaserUnlockApply } from './computroniumResearchQueue'
-import { RESOURCE_DEFS, RESOURCE_IDS_ORDERED, ROOT_RESOURCE_IDS, type ResourceId } from './resources'
+import {
+  formatResourceAmountForHud,
+  RESOURCE_DEFS,
+  RESOURCE_IDS_ORDERED,
+  ROOT_RESOURCE_IDS,
+  type ResourceId,
+} from './resources'
 import type { VoxelKind } from './voxelKinds'
 import type { VoxelPos } from '../scene/asteroid/generateAsteroidVoxels'
 
@@ -249,7 +255,7 @@ function formatResourceDeltaSummary(delta: Partial<Record<ResourceId, number>>):
     const n = delta[id]
     if (n === undefined || n === 0) continue
     const sign = n > 0 ? '+' : ''
-    parts.push(`${sign}${n} ${RESOURCE_DEFS[id].hudAbbrev}`)
+    parts.push(`${sign}${formatResourceAmountForHud(n)} ${RESOURCE_DEFS[id].hudAbbrev}`)
   }
   if (parts.length === 0) return null
   return parts.join(', ')

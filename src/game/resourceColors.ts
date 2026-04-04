@@ -12,8 +12,6 @@ export interface ResourceRgb {
  * Hand-tuned palette for primary resources used as Seed recipes.
  * These are intended to be visually distinct when mapped onto replicator voxels.
  */
-let __dbgRepColorLastTs = 0
-
 const RESOURCE_COLORS: Partial<Record<ResourceId, ResourceRgb>> = {
   regolithMass: { r: 1.0, g: 0.42, b: 0.58 }, // pink
   silicates: { r: 0.06, g: 0.14, b: 0.58 }, // dark blue
@@ -194,46 +192,5 @@ export function getReplicatorDisplayColor(cell: VoxelCell): ResourceRgb {
   }
 
   // Active recipe: vivid resource color (palette is already bright; avoid clipping past 1).
-  const out = base
-  // #region agent log
-  {
-    const t = Date.now()
-    if (cell.kind === 'replicator' && t - __dbgRepColorLastTs > 450) {
-      __dbgRepColorLastTs = t
-      const rid = activeReplicatorRecipeId(cell)
-      const seed = cell.seedRuntime
-      let slotKind: string | null = null
-      if (seed && Array.isArray(seed.slots) && seed.slots.length > 0) {
-        const rawIdx =
-          typeof seed.currentSlotIndex === 'number' && Number.isFinite(seed.currentSlotIndex)
-            ? seed.currentSlotIndex
-            : 0
-        const idx = Math.min(seed.slots.length - 1, Math.max(0, rawIdx))
-        const slot = seed.slots[idx]
-        if (slot) slotKind = String(slot.kind)
-      }
-      fetch('http://127.0.0.1:7481/ingest/59523295-7b3c-4817-bc0e-c2fb63f1b767', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '601a65' },
-        body: JSON.stringify({
-          sessionId: '601a65',
-          runId: 'post-fix',
-          hypothesisId: 'H4',
-          location: 'resourceColors.ts:getReplicatorDisplayColor',
-          message: 'replicator base display color',
-          data: {
-            repRecipeId: rid ?? null,
-            repRecipeField: cell.replicatorRecipeResourceId ?? null,
-            outRgb: { r: out.r, g: out.g, b: out.b },
-            hasSeed: !!seed,
-            slotKind,
-            curSlot: seed?.currentSlotIndex,
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {})
-    }
-  }
-  // #endregion
-  return out
+  return base
 }

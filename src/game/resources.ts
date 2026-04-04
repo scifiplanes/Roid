@@ -132,7 +132,7 @@ export const RESOURCE_DEFS: Record<ResourceId, ResourceDef> = {
     id: 'silicates',
     parent: null,
     displayName: 'Silicates',
-    hudAbbrev: 'Si',
+    hudAbbrev: 'Sil',
     blurb: 'Olivine- and pyroxene-dominated rock, analogous to ordinary chondrite silicates.',
     sortOrder: 10,
     densityRangeGcm3: [2.6, 3.4],
@@ -324,7 +324,7 @@ export const RESOURCE_DEFS: Record<ResourceId, ResourceDef> = {
     id: 'surfaceIces',
     parent: 'ices',
     displayName: 'Surface ices',
-    hudAbbrev: 'SI',
+    hudAbbrev: 'SfI',
     blurb: 'Seasonal and adsorbed surface ice.',
     sortOrder: 81,
   },
@@ -603,6 +603,20 @@ export function createEmptyResourceTallies(): Record<ResourceId, number> {
   return out
 }
 
+/**
+ * Matter HUD and tooltips: hide sub-cent noise; snap near-integers; otherwise truncate to 2 decimal places.
+ */
+export function formatResourceAmountForHud(n: number): string {
+  if (!Number.isFinite(n)) return '0'
+  const neg = n < 0
+  const a = Math.abs(n)
+  if (a < 0.01) return '0'
+  const r = Math.round(a)
+  const body =
+    Math.abs(a - r) < 0.01 ? String(r) : String(Math.trunc(a * 100) / 100)
+  return neg ? `-${body}` : body
+}
+
 export function addResourceYields(
   tallies: Record<ResourceId, number>,
   yields: Partial<Record<ResourceId, number>>,
@@ -617,7 +631,10 @@ export function formatResourceHudLine(tallies: Record<ResourceId, number>): stri
   const parts: string[] = []
   for (const id of ROOT_RESOURCE_IDS) {
     const n = tallies[id]
-    if (n > 0) parts.push(`${RESOURCE_DEFS[id].hudAbbrev} ${n}`)
+    if (n > 0) {
+      const s = formatResourceAmountForHud(n)
+      if (s !== '0') parts.push(`${RESOURCE_DEFS[id].hudAbbrev} ${s}`)
+    }
   }
   return parts.join(' · ')
 }
@@ -628,7 +645,10 @@ export function formatRefinedResourceHudLine(tallies: Record<ResourceId, number>
   for (const id of RESOURCE_IDS_ORDERED) {
     if (isRootResource(id)) continue
     const n = tallies[id]
-    if (n > 0) parts.push(`${RESOURCE_DEFS[id].hudAbbrev} ${n}`)
+    if (n > 0) {
+      const s = formatResourceAmountForHud(n)
+      if (s !== '0') parts.push(`${RESOURCE_DEFS[id].hudAbbrev} ${s}`)
+    }
   }
   return parts.join(' · ')
 }
@@ -640,7 +660,7 @@ export function matterHudRootEntries(
   const out: { id: RootResourceId; n: number }[] = []
   for (const id of ROOT_RESOURCE_IDS) {
     const n = tallies[id]
-    if (n !== undefined && n > 0) out.push({ id, n })
+    if (n !== undefined && n > 0 && formatResourceAmountForHud(n) !== '0') out.push({ id, n })
   }
   return out
 }
@@ -653,7 +673,7 @@ export function matterHudRefinedEntries(
   for (const id of RESOURCE_IDS_ORDERED) {
     if (isRootResource(id)) continue
     const n = tallies[id]
-    if (n !== undefined && n > 0) out.push({ id, n })
+    if (n !== undefined && n > 0 && formatResourceAmountForHud(n) !== '0') out.push({ id, n })
   }
   return out
 }
@@ -676,7 +696,7 @@ export function formatResourceCostWithTallies(
   for (const id of RESOURCE_IDS_ORDERED) {
     const need = cost[id]
     if (need !== undefined && need > 0) {
-      const have = Math.floor(tallies[id] ?? 0)
+      const have = formatResourceAmountForHud(tallies[id] ?? 0)
       parts.push(`${RESOURCE_DEFS[id].hudAbbrev} ${have}/${need}`)
     }
   }

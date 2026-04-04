@@ -357,6 +357,7 @@ export function tryConvertCellToDepthScanner(
   cell.rareLodeStrength01 = undefined
   cell.processedMatterUnits = undefined
   cell.processedMatterRootComposition = undefined
+  cell.reactorDisabled = undefined
   cell.hubDisabled = undefined
   cell.refineryDisabled = undefined
   cell.explosiveFuseEndMs = undefined
@@ -442,7 +443,7 @@ export function stepEnergy(
   if (dtSec <= 0) return
   let reactors = 0
   for (const c of cells) {
-    if (c.kind === 'reactor') reactors++
+    if (c.kind === 'reactor' && c.reactorDisabled !== true) reactors++
   }
   state.current += REACTOR_ENERGY_PER_SEC * gameBalance.reactorOutputMult * reactors * dtSec
   state.current = Math.min(state.current, cap)
@@ -470,6 +471,7 @@ function finalizeReplicatorToStructureKind(cell: VoxelCell, kind: StructureConve
   cell.replicatorEatAccumulatorMs = 0
   cell.replicatorMsPerHp = undefined
   cell.passiveRemainder = undefined
+  if (kind === 'reactor') cell.reactorDisabled = undefined
   if (kind === 'hub') cell.hubDisabled = undefined
   if (kind === 'refinery') cell.refineryDisabled = undefined
   clearReplicatorTransformState(cell)

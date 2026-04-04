@@ -208,6 +208,8 @@ type CostToolKind =
   | 'scourgeInfo'
   | 'locustInfo'
   | 'miningDroneInfo'
+  | 'lifterInfo'
+  | 'drillInfo'
   | 'cargoDroneInfo'
   | 'emCatapultInfo'
 
@@ -271,8 +273,8 @@ const TOOLS: ReadonlyArray<{
     id: 'reactor',
     fKey: '5',
     label: 'Reactor',
-    title: 'Generate energy. Convert a mature replicator into a reactor',
-    short: 'Replicator → reactor; generates energy',
+    title: 'Generate energy. Convert a mature replicator into a reactor; click a reactor to turn it on or off',
+    short: 'Replicator → reactor; tap reactor toggles; on = energy',
     costTool: 'reactor',
   },
   {
@@ -315,6 +317,7 @@ const TOOLS: ReadonlyArray<{
     title:
       'Click processed matter (mining laser) to charge; when ready it flies off and credits roots like a hub pull.',
     short: 'Pickup processed matter → roots (after charge)',
+    costTool: 'lifterInfo',
   },
   {
     id: 'cargoDrone',
@@ -434,6 +437,7 @@ const TOOLS: ReadonlyArray<{
     title:
       'Computronium research unlock. Click rock to remove several voxels in a row along your view ray, spawning dross and debris (voxel count in Debug → balance).',
     short: 'Ray tunnel; rock → dross + debris',
+    costTool: 'drillInfo',
   },
 ]
 
@@ -506,6 +510,8 @@ function costForTool(kind: CostToolKind): Partial<Record<ResourceId, number>> {
   if (kind === 'scourgeInfo') return {}
   if (kind === 'locustInfo') return {}
   if (kind === 'miningDroneInfo') return getScaledMiningDronePlaceCost()
+  if (kind === 'lifterInfo') return {}
+  if (kind === 'drillInfo') return {}
   if (kind === 'cargoDroneInfo') return {}
   if (kind === 'emCatapultInfo') return {}
   return {}
@@ -935,9 +941,11 @@ export function createToolsPanel(
     if (isToolRosterAllowed && !isToolRosterAllowed(tool)) return true
     const cr = getComputroniumResearchToolPhase?.(tool)
     if (cr !== undefined) return cr === 'hidden'
-    // Lifter / cargo have no `costTool` row, so they skip `refreshToolCosts` research styling; hide them
-    // until cleanup tier is **fully** unlocked (not "researching" toward tier 5), same as actual use gates.
-    if (tool === 'lifter' || tool === 'cargoDrone') {
+    // Without shuffled computronium phases wired, fall back to legacy cleanup ladder.
+    if (
+      getComputroniumResearchToolPhase === undefined &&
+      (tool === 'lifter' || tool === 'cargoDrone')
+    ) {
       const ph =
         (getDrossCollectorToolUiPhase ?? getDrossCollectorDeployUiPhase)?.() ?? 'hidden'
       if (ph !== 'unlocked') return true
@@ -968,13 +976,13 @@ export function createToolsPanel(
       if (getLaserToolUiPhase(tool) === 'hidden') return true
     }
     if (
-      tool === 'scourge' ||
-      tool === 'locust' ||
-      tool === 'miningDrone' ||
-      tool === 'lifter' ||
-      tool === 'cargoDrone'
+      getComputroniumResearchToolPhase === undefined &&
+      (tool === 'scourge' ||
+        tool === 'locust' ||
+        tool === 'miningDrone' ||
+        tool === 'lifter' ||
+        tool === 'cargoDrone')
     ) {
-      // Tier-5 cleanup ladder: Scourge, Locust, Mining drone, Lifter, Cargo drone.
       const phase = researchPhaseForTool(tool, {})
       if (phase === 'hidden') return true
     }
@@ -1027,7 +1035,7 @@ export function createToolsPanel(
       toolId === 'lifter' ||
       toolId === 'cargoDrone'
     ) {
-      // Tier 5: Scourge/Locust/Mining drone/Lifter/Cargo drone share the cleanup ladder.
+      // Only reached when `getComputroniumResearchToolPhase` did not return above (unwired or undefined).
       if (!getDrossCollectorToolUiPhase && !getDrossCollectorDeployUiPhase) return 'hidden'
       return (getDrossCollectorToolUiPhase ?? getDrossCollectorDeployUiPhase)!()
     }
@@ -1167,6 +1175,8 @@ export function createToolsPanel(
   }): boolean {
     if (!canAffordResourceCost) return true
     if (ui.kind === 'drossCollectorInfo') return true
+    if (ui.kind === 'lifterInfo') return true
+    if (ui.kind === 'drillInfo') return true
     if (ui.kind === 'cargoDroneInfo') return true
     if (ui.kind === 'emCatapultInfo') return true
     if (ui.kind === 'explosiveChargeArm') {
@@ -1199,6 +1209,20 @@ export function createToolsPanel(
       ui.costSpan.textContent = 'Tier 6'
       setToolBlockedByAffordance(ui.button, false)
       ui.button.title = `${ui.baseTitle} Unlocked: confirm on canvas to move to a new asteroid (research kept).`
+      ui.button.setAttribute('aria-label', ui.button.title)
+      return
+    }
+    if (ui.kind === 'lifterInfo') {
+      ui.costSpan.textContent = 'Computronium'
+      setToolBlockedByAffordance(ui.button, false)
+      ui.button.title = `${ui.baseTitle} Unlocks via computronium research (shuffled tree per asteroid).`
+      ui.button.setAttribute('aria-label', ui.button.title)
+      return
+    }
+    if (ui.kind === 'drillInfo') {
+      ui.costSpan.textContent = 'Computronium'
+      setToolBlockedByAffordance(ui.button, false)
+      ui.button.title = `${ui.baseTitle} Unlocks via computronium research; no placement cost once unlocked.`
       ui.button.setAttribute('aria-label', ui.button.title)
       return
     }
@@ -1662,7 +1686,12 @@ export function createToolsPanel(
           : def.id === 'depthScanner' ||
               def.id === 'explosiveCharge' ||
               def.id === 'drossCollector' ||
-              def.id === 'emCatapult'
+              def.id === 'emCatapult' ||
+              def.id === 'scourge' ||
+              def.id === 'locust' ||
+              def.id === 'miningDrone' ||
+              def.id === 'lifter' ||
+              def.id === 'drill'
             ? {
                 fkeyEl,
                 labelEl,
@@ -1765,7 +1794,7 @@ export function createToolsPanel(
 
     for (const [toolId, btn] of buttons) {
       const byFilter = toolMatchesActiveFilter(toolId)
-      // Tools without a `costTool` never pass through `refreshToolCosts`; filter + unlock roster must set hidden here.
+      // Tools without a `costTool` (e.g. hoover) skip `refreshToolCosts`; filter + roster use `isToolHidden` here.
       btn.hidden = !byFilter || isToolHidden(toolId)
     }
   }

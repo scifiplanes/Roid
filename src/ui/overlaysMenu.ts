@@ -5,6 +5,10 @@ import { loadOverlayLegendCollapsed, saveOverlayLegendCollapsed } from './uiLayo
 export interface OverlaysMenuOptions {
   initialSurfaceScanVisible: boolean
   initialDepthOverlayVisible: boolean
+  /** Enables Surface scan row when true (at least one scanner satellite). */
+  getSurfaceScanUnlocked: () => boolean
+  /** Tooltip when Surface scan is disabled (no scanner satellites yet). */
+  getSurfaceScanLockedHint?: () => string
   /** Called when the eye popover opens and after mesh changes; enables Depth row when true. */
   getDepthOverlayUnlocked: () => boolean
   /** Tooltip when Depth is disabled (research not done yet vs no scanner placed). */
@@ -15,6 +19,7 @@ export interface OverlaysMenuOptions {
 
 export interface OverlaysMenuApi {
   element: HTMLElement
+  syncSurfaceScanUnlock: () => void
   syncDepthOverlayUnlock: () => void
   /** Sync checkbox + app state; no-op if requesting on while depth overlay is still locked. */
   setDepthOverlayChecked: (checked: boolean) => void
@@ -141,6 +146,19 @@ export function createOverlaysMenu(_container: HTMLElement, options: OverlaysMen
   })
   root.append(btn, pop)
 
+  function syncSurfaceScanUnlock(): void {
+    const ok = options.getSurfaceScanUnlocked()
+    cbScan.disabled = !ok
+    const hint = ok
+      ? 'Voxel tint from scanner satellite sweeps (Scanner laser after +sat → Scanner)'
+      : options.getSurfaceScanLockedHint?.() ??
+        'Deploy at least one scanner satellite (+sat → Scanner, after unlock)'
+    rowScan.title = hint
+    cbScan.title = hint
+    spanScan.classList.toggle('overlays-menu-row-locked', !ok)
+    updateLegend()
+  }
+
   function syncDepthOverlayUnlock(): void {
     const ok = options.getDepthOverlayUnlocked()
     cbDepth.disabled = !ok
@@ -154,6 +172,7 @@ export function createOverlaysMenu(_container: HTMLElement, options: OverlaysMen
     updateLegend()
   }
 
+  syncSurfaceScanUnlock()
   syncDepthOverlayUnlock()
 
   function setDepthOverlayChecked(checked: boolean): void {
@@ -169,14 +188,15 @@ export function createOverlaysMenu(_container: HTMLElement, options: OverlaysMen
 
   function updateLegend(): void {
     const open = !pop.hidden
+    const surfaceOk = options.getSurfaceScanUnlocked()
     const depthOk = options.getDepthOverlayUnlocked()
     const anyOverlay =
-      (cbScan.checked && open) || (cbDepth.checked && depthOk && open)
+      (cbScan.checked && surfaceOk && open) || (cbDepth.checked && depthOk && open)
     legend.hidden = !anyOverlay
     pop.classList.toggle('overlays-popover--with-legend', anyOverlay)
     if (!anyOverlay) return
     const parts: string[] = []
-    if (cbScan.checked) {
+    if (cbScan.checked && surfaceOk) {
       parts.push(
         'Surface scan: voxel tint blends refined materials (one refinement hop from bulk). Scanner satellite applies the tint.',
       )
@@ -192,7 +212,10 @@ export function createOverlaysMenu(_container: HTMLElement, options: OverlaysMen
   function setOpen(open: boolean): void {
     pop.hidden = !open
     btn.setAttribute('aria-expanded', String(open))
-    if (open) syncDepthOverlayUnlock()
+    if (open) {
+      syncSurfaceScanUnlock()
+      syncDepthOverlayUnlock()
+    }
     updateLegend()
   }
 
@@ -202,6 +225,11 @@ export function createOverlaysMenu(_container: HTMLElement, options: OverlaysMen
   })
 
   cbScan.addEventListener('change', () => {
+    if (cbScan.disabled) {
+      cbScan.checked = false
+      updateLegend()
+      return
+    }
     options.onSurfaceScanChange(cbScan.checked)
     updateLegend()
   })
@@ -220,5 +248,5 @@ export function createOverlaysMenu(_container: HTMLElement, options: OverlaysMen
     if (!root.contains(e.target as Node)) setOpen(false)
   })
 
-  return { element: root, syncDepthOverlayUnlock, setDepthOverlayChecked }
+  return { element: root, syncSurfaceScanUnlock, syncDepthOverlayUnlock, setDepthOverlayChecked }
 }

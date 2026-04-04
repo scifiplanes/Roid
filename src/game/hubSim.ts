@@ -50,11 +50,19 @@ export function isHubTransitCell(cell: VoxelCell): boolean {
 }
 
 const HUB_DISTANCE_LAMBDA = 0.42
-const HUB_ENERGY_PER_UNIT = 0.32
 const HUB_UNITS_PER_SEC = 5.2
 
-/** Max energy all hubs may spend per second (before `hubMaxEnergySpendMult`). */
-const HUB_MAX_ENERGY_SPEND_PER_SEC = 5
+/**
+ * Accrued hub energy budget (joules). `stepHubs` adds `maxRate * dt` each tick and spends `perPull` per
+ * successful pull. Without this, `Math.max(perPull, rate*dt)` at high FPS lets one pull **per frame**,
+ * i.e. ~`perPull * FPS` J/s instead of the configured max rate.
+ */
+let hubEnergyBudgetAcc = 0
+
+/** Call when starting a new rock body / wiping economy (see `resetEconomyAndDrossForNewRockBody` in `main.ts`). */
+export function resetHubEnergyBudget(): void {
+  hubEnergyBudgetAcc = 0
+}
 
 function buildDistanceMap(
   start: VoxelPos,
@@ -148,13 +156,14 @@ export function stepHubs(
     Math.max(1, Math.ceil(dtSec * HUB_UNITS_PER_SEC * gameBalance.hubPullMult)),
   )
 
-  // `simDt` shrinks with game speed; the raw cap can fall below one pull's cost (0.32), which
-  // blocks all hub activity at low speed / short frames. Always allow at least one pull worth of
-  // budget for the tick (still gated by `energyState` and stock).
-  const scaledHubEnergyCap =
-    HUB_MAX_ENERGY_SPEND_PER_SEC * dtSec * gameBalance.hubMaxEnergySpendMult * activeHubs.length
-  const maxEnergyThisTick = Math.max(HUB_ENERGY_PER_UNIT, scaledHubEnergyCap)
-  let energySpentHub = 0
+  const perPull = gameBalance.hubEnergyPerPull
+  const maxRate =
+    gameBalance.hubMaxEnergySpendBasePerSec *
+    gameBalance.hubMaxEnergySpendMult *
+    activeHubs.length
+  const allowanceThisTick = maxRate * dtSec
+  const maxBank = maxRate * 5
+  hubEnergyBudgetAcc = Math.min(hubEnergyBudgetAcc + allowanceThisTick, maxBank)
 
   let meshDirty = false
   let tallyChanged = false
@@ -187,8 +196,8 @@ export function stepHubs(
     const distMap = buildDistanceMap(hub.pos, index, gridSize)
 
     for (let a = 0; a < attemptsPerHub; a++) {
-      if (energyState.current < HUB_ENERGY_PER_UNIT) break
-      if (energySpentHub + HUB_ENERGY_PER_UNIT > maxEnergyThisTick) break
+      if (hubEnergyBudgetAcc + 1e-9 < perPull) break
+      if (energyState.current < perPull) break
 
       let best: VoxelCell | null = null
       let bestScore = 0
@@ -215,13 +224,13 @@ export function stepHubs(
 
       const pm = best.processedMatterUnits ?? 0
       if (pm > 0) {
-        const spent = trySpendEnergy(energyState, HUB_ENERGY_PER_UNIT)
-        if (spent < HUB_ENERGY_PER_UNIT) break
+        const spent = trySpendEnergy(energyState, perPull)
+        if (spent < perPull) break
         if (!takeOneProcessedMatterUnit(best)) {
           energyState.current += spent
           break
         }
-        energySpentHub += spent
+        hubEnergyBudgetAcc -= perPull
         const comp = best.processedMatterRootComposition ?? defaultUniformRootComposition()
         const credited: Partial<Record<RootResourceId, number>> = {}
         addRootTalliesFromPmComposition(tallies, comp, credited)
@@ -254,13 +263,13 @@ export function stepHubs(
       }
       if (rid === null) break
 
-      const spent = trySpendEnergy(energyState, HUB_ENERGY_PER_UNIT)
-      if (spent < HUB_ENERGY_PER_UNIT) break
+      const spent = trySpendEnergy(energyState, perPull)
+      if (spent < perPull) break
       if (!takeOneResource(best, rid)) {
         energyState.current += spent
         break
       }
-      energySpentHub += spent
+      hubEnergyBudgetAcc -= perPull
       tallies[rid] = (tallies[rid] ?? 0) + 1
       mergeHubCredit({ [rid]: 1 })
       tallyChanged = true

@@ -308,6 +308,8 @@ function mergeTop(p: unknown): Partial<AsteroidMusicDebug> {
   num('voicePitchSpread', 0, 3)
   num('voicePitchBandpassCenterSemitones', -36, 36)
   num('voicePitchBandpassQ', 0.25, 30)
+  num('voicePitchBandpassBandwidthHz', 0, 8000)
+  num('voicePitchBandpassPostGainDb', -24, 24)
   num('chorusMix', 0, 1)
   num('chorusRateHz', 0.05, 6)
   num('chorusDepthMs', 0, 20)

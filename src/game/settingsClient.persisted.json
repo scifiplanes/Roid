@@ -1,7 +1,7 @@
 {
   "v": 1,
-  "sunAzimuthDeg": 45.62045028022408,
-  "sunElevationDeg": -38.804059144588344,
+  "sunAzimuthDeg": 145.6211597275402,
+  "sunElevationDeg": -46.891157892978875,
   "sunLightDebug": {
     "rotateSunAzimuth": true,
     "rotationDegPerSec": 1.52,
@@ -37,9 +37,9 @@
     "eqLowDb": -2.5,
     "eqMidDb": -5.5,
     "eqHighDb": 2.5,
-    "musicPostOutGainDb": 25.5,
+    "musicPostOutGainDb": 20,
     "hooverLowpassBaseHz": 95,
-    "hooverLowpassLfoDepthHz": 10,
+    "hooverLowpassLfoDepthHz": 60,
     "hooverLowpassLfoRateHz": 0.55
   },
   "overlayVisualization": {
@@ -55,5 +55,6 @@
   "matterHudCompact": true,
   "colorScheme": "orange",
   "fontId": "disketMono",
-  "gameSpeedMult": 0.2
+  "gameSpeedMult": 0.1,
+  "computroniumResearchSpeedMult": 1.45
 }
